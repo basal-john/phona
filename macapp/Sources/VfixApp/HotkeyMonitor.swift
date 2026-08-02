@@ -10,8 +10,15 @@ final class HotkeyMonitor {
     var onBegin: () -> Void = {}
     var onEnd: () -> Void = {}
     var onAbort: () -> Void = {}
+    /// Double-tapping Option starts hands-free dictation, which runs until the next
+    /// double tap or Escape. Holding a key down through a long dictation is tiring, and
+    /// this reuses the same key rather than asking the user to learn a second one.
+    var onToggleHandsFree: () -> Void = {}
 
     var holdDelay: TimeInterval = 0.25
+    var doubleTapWindow: TimeInterval = 0.4
+    /// Set by the app while a hands-free dictation is running.
+    var handsFree = false
 
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
@@ -19,6 +26,7 @@ final class HotkeyMonitor {
     private var dirty = false
     private var armed = false
     private var timer: Timer?
+    private var lastTapEnded: Date?
 
     static func hasAccessibility(prompt: Bool) -> Bool {
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
@@ -64,9 +72,15 @@ final class HotkeyMonitor {
         }
 
         if type == .keyDown {
+            let escape: Int64 = 53
+            if handsFree, event.getIntegerValueField(.keyboardEventKeycode) == escape {
+                DispatchQueue.main.async { self.onAbort() }
+                return
+            }
             if optionDown {
                 dirty = true
                 cancelTimer()
+                lastTapEnded = nil
                 if armed { armed = false; DispatchQueue.main.async { self.onAbort() } }
             }
             return
@@ -82,6 +96,14 @@ final class HotkeyMonitor {
             optionDown = true
             dirty = false
             cancelTimer()
+
+            // A second quick tap inside the window means hands-free, not a hold.
+            if let last = lastTapEnded, Date().timeIntervalSince(last) < doubleTapWindow {
+                lastTapEnded = nil
+                DispatchQueue.main.async { self.onToggleHandsFree() }
+                return
+            }
+
             let work = Timer(timeInterval: holdDelay, repeats: false) { [weak self] _ in
                 guard let self, self.optionDown, !self.dirty, !self.armed else { return }
                 self.armed = true
@@ -94,7 +116,11 @@ final class HotkeyMonitor {
             cancelTimer()
             if armed {
                 armed = false
+                lastTapEnded = nil
                 DispatchQueue.main.async { self.onEnd() }
+            } else if !dirty {
+                // Too short to be a hold. Remember it, so a second one counts as a double tap.
+                lastTapEnded = Date()
             }
         } else if optionDown && !altAlone {
             // Another modifier joined, so this is a real shortcut rather than a dictation.

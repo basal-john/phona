@@ -7,6 +7,8 @@ struct SettingsView: View {
     @State private var dictionary: String = ""
     @State private var replacements: String = ""
     @State private var launchAtLogin: Bool = false
+    @State private var biasVocabulary: Bool = false
+    @State private var insertAtCursor: Bool = true
     @State private var status: String = ""
 
     var body: some View {
@@ -23,6 +25,14 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section {
+                Picker("When done", selection: $insertAtCursor) {
+                    Text("Insert at cursor").tag(true)
+                    Text("Copy to clipboard").tag(false)
+                }
+                .pickerStyle(.radioGroup)
+            }
+
             Section("Vocabulary") {
                 Text("Words the transcriber tends to mangle. One per line.")
                     .font(.callout)
@@ -30,6 +40,10 @@ struct SettingsView: View {
                 TextEditor(text: $dictionary)
                     .font(.system(.body, design: .monospaced))
                     .frame(height: 76)
+                Toggle("Bias the transcriber toward these words", isOn: $biasVocabulary)
+                Text("Improves rare names, at the cost of occasionally inventing words in silence.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Replacements") {
@@ -80,6 +94,8 @@ struct SettingsView: View {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
         dictionary = (obj["dictionary"] as? [String] ?? []).joined(separator: "\n")
+        biasVocabulary = obj["use_initial_prompt"] as? Bool ?? false
+        insertAtCursor = (obj["output_action"] as? String ?? "insert") == "insert"
         let pairs = obj["replacements"] as? [String: String] ?? [:]
         replacements = pairs.map { "\($0.key) = \($0.value)" }.sorted().joined(separator: "\n")
     }
@@ -91,6 +107,8 @@ struct SettingsView: View {
             obj = existing
         }
         obj["mode"] = mode.rawValue
+        obj["use_initial_prompt"] = biasVocabulary
+        obj["output_action"] = insertAtCursor ? "insert" : "clipboard"
         obj["dictionary"] = dictionary
             .split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }

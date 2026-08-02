@@ -106,6 +106,19 @@ struct HistoryEntry {
     }
 }
 
+/// App-side settings that the daemon does not need to know about.
+enum Settings {
+    private static func value<T>(_ key: String, default fallback: T) -> T {
+        guard let data = try? Data(contentsOf: Paths.config),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let v = obj[key] as? T
+        else { return fallback }
+        return v
+    }
+
+    static var insertAtCursor: Bool { value("output_action", default: "insert") == "insert" }
+}
+
 /// Correction mode, read from and written to the same config.json the daemon uses.
 enum Mode: String, CaseIterable {
     case grammar, polish, raw

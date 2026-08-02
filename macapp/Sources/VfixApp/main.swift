@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys.onBegin = { [weak self] in self?.beginDictation() }
         hotkeys.onEnd = { [weak self] in self?.endDictation() }
         hotkeys.onAbort = { [weak self] in self?.abortDictation() }
+        hotkeys.onToggleHandsFree = { [weak self] in self?.toggleHandsFree() }
 
         // Never block launch on a modal. Setup happens in its own window while the rest
         // of the app comes up, and the event tap is installed the moment the grant lands.
@@ -91,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func endDictation() {
+        hotkeys.handsFree = false
         levelTimer?.invalidate()
         levelTimer = nil
         guard let take = recorder.stop() else { return }
@@ -119,8 +121,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard mine == self.session else { return }
                 switch outcome {
                 case .success(let result) where result.state == "done" && !result.text.isEmpty:
-                    if let warning = Paster.paste(result.text) {
-                        self.notify("vfix", warning)
+                    // Not every dictation should land in the focused app. Copy-only turns
+                    // vfix into a scratchpad without changing how you trigger it.
+                    if Settings.insertAtCursor {
+                        if let warning = Paster.paste(result.text) {
+                            self.notify("vfix", warning)
+                        }
+                    } else {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(result.text, forType: .string)
                     }
                     NSSound(named: "Glass")?.play()
                     self.hud.finish(success: true)
@@ -138,7 +147,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Double tap Option to dictate without holding. Escape or a second double tap ends it.
+    private func toggleHandsFree() {
+        if hotkeys.handsFree {
+            hotkeys.handsFree = false
+            endDictation()
+        } else {
+            hotkeys.handsFree = true
+            beginDictation()
+        }
+    }
+
     private func abortDictation() {
+        hotkeys.handsFree = false
         session += 1
         levelTimer?.invalidate()
         levelTimer = nil
