@@ -153,10 +153,21 @@ Current state on 29 sentences: 23 exact matches against the expected output. Mos
 remaining six are acceptable paraphrase rather than errors, for example `anyone` where the
 expectation said `anybody`.
 
+Dictation is often an instruction aimed at a colleague, and a small model will happily
+carry it out and hand back an answer instead of correcting the sentence. Saying "can you
+send me the summary" once produced a preamble and a quoted rewrite that was never spoken.
+Three guards now sit in front of that: a few-shot showing a request being corrected rather
+than obeyed, a size check, and a similarity check against the original, which is what
+catches a translation or a curt answer that keeps the length while replacing the words. If
+all of it fails, the raw transcript is returned, because your words are always safer than
+invented ones.
+
 Known weak spots, all in the correction stage rather than the transcription:
 
 - Occasional slips on `since` versus `for` with unusual duration phrasing
 - `rollback` used as a verb where `roll back` is correct
+- Mild over-correction on sentences that were already fine, for example
+  `the deployment finished` becoming `the deployment is finished`
 - Homophones the transcriber gets wrong are invisible to the corrector, because it only
   ever sees text. Say "log" and get "logo" and the grammar pass has no reason to object.
   The replacements list exists for the ones you hit repeatedly.
