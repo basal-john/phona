@@ -9,6 +9,10 @@ import Foundation
 /// quiet, short, and deliberately unalarming.
 enum Cue: String {
     case start = "start"
+    /// Deliberately silent. Start, stop and done fired three cues inside about a second,
+    /// which is more noise than information. The stop is the least useful of the three,
+    /// because releasing the key is something you just did and the done cue follows it
+    /// almost immediately.
     case stop = "stop"
     case done = "done"
     /// Nothing usable was captured. Not a failure, so it must not sound like one.
@@ -17,6 +21,7 @@ enum Cue: String {
     private static var cache: [String: NSSound] = [:]
 
     func play() {
+        if self == .stop { return }
         if let cached = Self.cache[rawValue] {
             cached.stop()
             cached.play()
