@@ -15,6 +15,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissions = PermissionState()
     private var tapInstalled = false
 
+    /// Serialises opening, stopping and cancelling the device, so a release that arrives while
+    /// the device is still opening cannot race the open. Everything that blocks for longer than
+    /// a frame runs here rather than on the main thread, because the main thread is what draws.
+    private let audioQueue = DispatchQueue(label: "com.basalona.phona.audio")
+
+    /// `--trace-timing` logs how long each stage of a dictation took.
+    ///
+    /// It exists because three attempts at a latency problem were made without one, each
+    /// guessing at a stage rather than measuring it, and the one set of numbers that did get
+    /// collected was thrown away afterwards. The stages are what the speaker waits through, and
+    /// the daemon's own transcription and correction figures are folded in so the whole span is
+    /// attributed in one place.
+    private lazy var tracing = CommandLine.arguments.contains("--trace-timing")
+
+    /// When the key came up, so every tail stage is reported against the moment the speaker
+    /// stopped talking rather than against the previous stage.
+    private var releasedAt: CFAbsoluteTime?
+
+    private func trace(_ stage: String, since start: CFAbsoluteTime) {
+        guard tracing else { return }
+        Paths.log(String(format: "tail: %@ at %.0f ms", stage,
+                         (CFAbsoluteTimeGetCurrent() - start) * 1000))
+    }
+
     /// Each hold gets an id. Results arrive asynchronously, so without this a slow result
     /// from the previous hold could tear down the HUD of the next one.
     private var session = 0
@@ -44,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             tapInstalled = hotkeys.start()
             recorder.requestPermission { granted in
                 if granted {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.recorder.warm() }
+                    self.audioQueue.asyncAfter(deadline: .now() + 1.5) { self.recorder.warm() }
                 } else {
                     self.showOnboarding()
                 }
@@ -88,35 +112,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Dictation
 
-    /// Acknowledge the hold before opening the input device.
+    /// Show the HUD, then open the device somewhere else.
     ///
-    /// Opening a cold device costs about a second, measured between 0.83 and 1.20 s, and the
-    /// microphone is warmed only once at launch, so any hold after a few idle minutes pays it
-    /// again. With the HUD and the cue sitting behind that call there was nothing to say the
-    /// hold had registered until it finished, and on a short hold the cue arrived after the
-    /// release, which reads as no cue at all.
+    /// Nothing is drawn until this function returns to the run loop, so any blocking work left
+    /// in it holds the HUD off screen no matter where the statements sit. That is the whole
+    /// reason the HUD felt slow, and it is why reordering alone changed nothing. Measured: 9 ms
+    /// to the first frame with nothing blocking afterwards, 326 ms with 324 ms of blocking work
+    /// afterwards, and `hud.show()` itself returns in under a millisecond because it only
+    /// assigns state.
     ///
-    /// So the acknowledgement comes first and the device opens behind it. A hold that then
-    /// fails to open still resolves the HUD through the catch, at the cost of a start cue for
-    /// a dictation that never began, which is the better way round: a rare stray cue against
-    /// a second of silence on every cold hold.
+    /// Both blocking calls are now off the main thread. `Cue.play()` does it internally, since
+    /// it blocks while the output device wakes, up to 796 ms. Opening the input device costs
+    /// 110 ms warm and over a second cold, and runs on `audioQueue`, which serialises it
+    /// against the stop and cancel that may arrive while it is still opening.
+    ///
+    /// The waveform idles until the first buffer lands, because a flat waveform and a waveform
+    /// with nothing behind it look identical.
     private func beginDictation() {
         session += 1
+        let mine = session
         hud.show(.listening)
         Cue.start.play()
-        do {
-            try recorder.start()
-        } catch {
-            Paths.log("start failed: \(error.localizedDescription)")
-            notify("Phona", error.localizedDescription)
-            hud.finish(.failed)
-            return
+        startLevelTimer()
+        audioQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                try self.recorder.start()
+            } catch {
+                DispatchQueue.main.async {
+                    guard mine == self.session else { return }
+                    Paths.log("start failed: \(error.localizedDescription)")
+                    self.notify("Phona", error.localizedDescription)
+                    self.levelTimer?.invalidate()
+                    self.levelTimer = nil
+                    self.hud.finish(.failed)
+                }
+            }
         }
+    }
 
+    /// Drive the waveform, idling until the device delivers its first buffer.
+    private func startLevelTimer() {
         levelTimer?.invalidate()
+        let began = CFAbsoluteTimeGetCurrent()
         levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.hud.model.level = self.recorder.level
+            if self.recorder.hasAudio {
+                self.hud.model.level = self.recorder.level
+            } else {
+                let phase = (CFAbsoluteTimeGetCurrent() - began) * 5
+                self.hud.model.level = 0.10 + 0.09 * (0.5 + 0.5 * sin(phase))
+            }
         }
     }
 
@@ -132,12 +178,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys.handsFree = false
         levelTimer?.invalidate()
         levelTimer = nil
-        guard let take = recorder.stop() else { return }
 
         let mine = session
         hud.show(.working)
         Cue.stop.play()
+        let released = CFAbsoluteTimeGetCurrent()
+        releasedAt = released
 
+        audioQueue.async { [weak self] in
+            guard let self else { return }
+            let take = self.recorder.stop()
+            self.trace("device closed", since: released)
+            DispatchQueue.main.async {
+                guard mine == self.session else {
+                    if let take { try? FileManager.default.removeItem(at: take.url) }
+                    return
+                }
+                guard let take else {
+                    /// Nothing to stop, so the open must have failed. The HUD is already showing
+                    /// "working" by this point and would otherwise sit there for good.
+                    Paths.log("nothing to stop, the device never opened")
+                    self.hud.finish(.cancelled)
+                    return
+                }
+                self.deliver(take, session: mine)
+            }
+        }
+    }
+
+    /// Transcribe a finished take and put the result where the settings say.
+    ///
+    /// Split out from `endDictation` because stopping the device now happens on `audioQueue`,
+    /// so the take arrives back here asynchronously rather than being in hand already.
+    private func deliver(_ take: (url: URL, seconds: Double), session mine: Int) {
         let minSeconds = 0.4
         guard take.seconds >= minSeconds else {
             try? FileManager.default.removeItem(at: take.url)
@@ -151,9 +224,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer { try? FileManager.default.removeItem(at: take.url) }
 
             if !DaemonClient.isAlive() { DaemonClient.startAndWait() }
+            if let released = self.releasedAt { self.trace("daemon request sent", since: released) }
             let outcome = Result { try DaemonClient.process(url: take.url,
                                                             seconds: take.seconds,
                                                             mode: nil) }
+            if let released = self.releasedAt, case .success(let r) = outcome {
+                self.trace(String(format: "daemon replied, its own stt %.2fs llm %.2fs",
+                                  r.sttSeconds, r.llmSeconds), since: released)
+            }
             DispatchQueue.main.async {
                 guard mine == self.session else { return }
                 switch outcome {
@@ -175,6 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         NSPasteboard.general.setString(result.text, forType: .string)
                     }
                     Cue.done.play()
+                    if let released = self.releasedAt { self.trace("pasted", since: released) }
                     self.hud.finish(.done)
                 case .success(let result):
                     Paths.log("nothing heard, state=\(result.state) raw=\(result.raw)")
@@ -206,7 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         session += 1
         levelTimer?.invalidate()
         levelTimer = nil
-        recorder.cancel()
+        audioQueue.async { [weak self] in self?.recorder.cancel() }
         hud.dismiss()
     }
 
@@ -280,7 +359,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openReleases() { NSWorkspace.shared.open(UpdateCheck.releasesPage) }
     @objc private func openHistory() { NSWorkspace.shared.open(Paths.history) }
     @objc private func openReadme() { NSWorkspace.shared.open(Paths.readme) }
-    @objc private func warmMic() { recorder.warm() }
+    @objc private func warmMic() {
+        audioQueue.async { [weak self] in self?.recorder.warm() }
+    }
     @objc private func quit() { NSApp.terminate(nil) }
 
     @objc private func restartDaemon() {

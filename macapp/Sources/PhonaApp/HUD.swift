@@ -41,6 +41,13 @@ struct HUDView: View {
     /// damping. Critically damped, because overshoot on something that merely appeared reads
     /// as noise.
     private var surfaceSpring: Animation { .spring(duration: 0.34, bounce: 0) }
+    /// Presence is not motion, so it does not get the spring.
+    ///
+    /// A `spring(duration: 0.34)` settles in 0.500 s, not 0.34, and reaches only half opacity
+    /// at 118 ms and 90 percent at 235 ms. Fading the capsule in on it was the difference
+    /// between a HUD that has arrived and one that is still arriving. The lift and the scale
+    /// keep the spring, because those are motion and reading as physical is the point.
+    private var presence: Animation { .easeOut(duration: 0.09) }
     /// Looser than the surface, since the bars track something physical.
     private var barSpring: Animation { .spring(duration: 0.16, bounce: 0.28) }
 
@@ -118,8 +125,9 @@ struct HUDView: View {
         .shadow(color: .black.opacity(0.28), radius: 14, y: 6)
         .scaleEffect(shown ? 1 : 0.94)
         .offset(y: shown ? 0 : 14)
-        .opacity(shown ? 1 : 0)
         .animation(surfaceSpring, value: shown)
+        .opacity(shown ? 1 : 0)
+        .animation(presence, value: shown)
         .frame(width: 260, height: 120)
     }
 }

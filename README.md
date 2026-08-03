@@ -257,6 +257,19 @@ structure but never content, and that is what stops the model padding an enumera
 items nobody said. If all of it fails, the transcript is tidied and returned, because your
 words are always safer than invented ones.
 
+The waiting is the two models and almost nothing else. Measured from releasing Option to the
+text landing: 31 ms to close the device and hand off, 95 ms of daemon overhead, **1670 ms of
+Whisper and Qwen**, 21 ms to paste. Whisper is near constant at about 0.8 s whatever the
+length of the recording. The correction scales with how much you said, 0.6 s under fifteen
+words and 2.5 s past forty, because it generates a token at a time. Run the app with
+`--trace-timing` to get that breakdown in the log for your own dictations.
+
+The cues are inaudible on an idle Bluetooth speaker. They run 215 to 260 ms and a Bluetooth
+output that has gone quiet takes about half a second to start carrying audio again, so the
+sound is over before the link is up. Wired and built-in output are fine, and so is Bluetooth
+while something else is already playing. Left alone deliberately, since the alternatives are
+padding every cue with silence or holding an audio stream open all day.
+
 Known weak spots, all in the correction stage rather than the transcription:
 
 - A single short invented list item can fit inside the size budget. Two do not

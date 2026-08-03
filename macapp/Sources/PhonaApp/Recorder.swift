@@ -24,6 +24,11 @@ final class Recorder {
     /// 0...1 loudness for the waveform, updated on every buffer.
     private(set) var level: Double = 0
 
+    /// True once a real buffer has arrived, so the HUD knows whether a flat waveform means
+    /// silence or means the device has not finished opening yet. Those look identical on
+    /// screen, and on a cold device the second one lasts over a second.
+    private(set) var hasAudio = false
+
     private let engine = AVAudioEngine()
     private var file: AVAudioFile?
     private var converter: AVAudioConverter?
@@ -56,6 +61,7 @@ final class Recorder {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             throw Failure.noPermission
         }
+        hasAudio = false
 
         let input = engine.inputNode
         let hardware = input.outputFormat(forBus: 0)
@@ -103,6 +109,7 @@ final class Recorder {
         lock.unlock()
 
         level = 0
+        hasAudio = false
         let seconds = startedAt.map { Date().timeIntervalSince($0) } ?? 0
         startedAt = nil
         guard let url = outputURL else { return nil }
@@ -119,20 +126,25 @@ final class Recorder {
         file = nil
         lock.unlock()
         level = 0
+        hasAudio = false
         startedAt = nil
         if let url = outputURL { try? FileManager.default.removeItem(at: url) }
         outputURL = nil
     }
 
     /// Open and immediately close the device so the first real dictation is not delayed.
+    ///
+    /// Both halves run on the caller's queue, which is the same serial queue the real start and
+    /// stop use. Hopping to the main thread for the close would let a warm-up cancel land in the
+    /// middle of a real open.
     func warm() {
         try? start()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            self?.cancel()
-        }
+        Thread.sleep(forTimeInterval: 0.4)
+        cancel()
     }
 
     private func handle(_ buffer: AVAudioPCMBuffer) {
+        hasAudio = true
         updateLevel(buffer)
 
         guard let converter, let target = AVAudioPCMBuffer(
