@@ -21,13 +21,40 @@ final class Recorder {
         }
     }
 
+    /// The waveform meter, written by the tap and read by the HUD.
+    ///
+    /// Both live behind `meterLock` because the tap callback runs on an audio thread while the
+    /// HUD reads them from a timer on the main thread. Unsynchronised they are a data race, and
+    /// a torn read would show the HUD a level or a readiness flag that was never set.
+    ///
+    /// A separate lock from `lock`, which guards the file. Sharing one would make the HUD's
+    /// thirty-times-a-second read wait behind a disk write for no reason.
+    private let meterLock = NSLock()
+    private var meterLevel: Double = 0
+    private var meterHasAudio = false
+
     /// 0...1 loudness for the waveform, updated on every buffer.
-    private(set) var level: Double = 0
+    var level: Double {
+        meterLock.lock()
+        defer { meterLock.unlock() }
+        return meterLevel
+    }
 
     /// True once a real buffer has arrived, so the HUD knows whether a flat waveform means
     /// silence or means the device has not finished opening yet. Those look identical on
-    /// screen, and on a cold device the second one lasts over a second.
-    private(set) var hasAudio = false
+    /// screen, and on an idle device the second one lasts over half a second.
+    var hasAudio: Bool {
+        meterLock.lock()
+        defer { meterLock.unlock() }
+        return meterHasAudio
+    }
+
+    private func setMeter(level: Double? = nil, hasAudio: Bool? = nil) {
+        meterLock.lock()
+        if let level { meterLevel = level }
+        if let hasAudio { meterHasAudio = hasAudio }
+        meterLock.unlock()
+    }
 
     private let engine = AVAudioEngine()
     private var file: AVAudioFile?
@@ -61,7 +88,7 @@ final class Recorder {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             throw Failure.noPermission
         }
-        hasAudio = false
+        setMeter(level: 0, hasAudio: false)
 
         let input = engine.inputNode
         let hardware = input.outputFormat(forBus: 0)
@@ -84,7 +111,12 @@ final class Recorder {
                                commonFormat: .pcmFormatInt16, interleaved: true)
         converter = AVAudioConverter(from: hardware, to: Self.targetFormat)
 
-        input.installTap(onBus: 0, bufferSize: 2048, format: hardware) { [weak self] buffer, _ in
+        /// Smaller than the 2048 it used to be, because the first buffer is what the speaker is
+        /// waiting for. At 48 kHz, 2048 frames is 43 ms of audio before anything is handed over,
+        /// against 21 ms at 1024. The engine treats the size as a hint and may decline it. When
+        /// it does honour it the callback runs twice as often, which is more CPU on an audio
+        /// thread, and that is the price of halving the wait for the first buffer.
+        input.installTap(onBus: 0, bufferSize: 1024, format: hardware) { [weak self] buffer, _ in
             self?.handle(buffer)
         }
 
@@ -108,8 +140,7 @@ final class Recorder {
         file = nil          // closing the AVAudioFile flushes the header
         lock.unlock()
 
-        level = 0
-        hasAudio = false
+        setMeter(level: 0, hasAudio: false)
         let seconds = startedAt.map { Date().timeIntervalSince($0) } ?? 0
         startedAt = nil
         guard let url = outputURL else { return nil }
@@ -125,8 +156,7 @@ final class Recorder {
         lock.lock()
         file = nil
         lock.unlock()
-        level = 0
-        hasAudio = false
+        setMeter(level: 0, hasAudio: false)
         startedAt = nil
         if let url = outputURL { try? FileManager.default.removeItem(at: url) }
         outputURL = nil
@@ -144,7 +174,7 @@ final class Recorder {
     }
 
     private func handle(_ buffer: AVAudioPCMBuffer) {
-        hasAudio = true
+        setMeter(hasAudio: true)
         updateLevel(buffer)
 
         guard let converter, let target = AVAudioPCMBuffer(
@@ -183,10 +213,10 @@ final class Recorder {
             sum += sample * sample
         }
         let rms = sqrt(sum / Float(max(1, count / 4)))
-        guard rms > 0 else { level = 0; return }
+        guard rms > 0 else { setMeter(level: 0); return }
 
         let db = 20 * log10(Double(rms))
         let floorDb = -52.0, ceilDb = -12.0
-        level = min(1, max(0, (db - floorDb) / (ceilDb - floorDb)))
+        setMeter(level: min(1, max(0, (db - floorDb) / (ceilDb - floorDb))))
     }
 }

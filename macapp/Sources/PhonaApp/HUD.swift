@@ -18,6 +18,15 @@ enum HUDState: Equatable {
 final class HUDModel: ObservableObject {
     @Published var state: HUDState = .hidden
     @Published var level: Double = 0
+    /// False until the input device has delivered its first buffer.
+    ///
+    /// The capsule is on screen about 180 ms after the key goes down. The first buffer was
+    /// measured 568 ms after the hold armed, so around 700 ms after the keypress, on a device
+    /// idle for under a minute. For that whole stretch the HUD is up and listening to nothing.
+    /// Showing a moving waveform through it invited speech the microphone could not hear yet,
+    /// and the first word went missing. The bars now sit dim and still until there is genuinely
+    /// something to draw.
+    @Published var capturing = false
 }
 
 /// The capsule. Real vibrancy underneath, so it picks up whatever is behind it rather
@@ -52,6 +61,9 @@ struct HUDView: View {
     private var barSpring: Animation { .spring(duration: 0.16, bounce: 0.28) }
 
     private var shown: Bool { model.state != .hidden }
+
+    /// Listening, but the device has not produced a buffer yet.
+    private var waitingForAudio: Bool { model.state == .listening && !model.capturing }
 
     private var showsGlyph: Bool {
         model.state == .done || model.state == .failed || model.state == .clipboard
@@ -94,10 +106,11 @@ struct HUDView: View {
             HStack(spacing: barGap) {
                 ForEach(0..<barCount, id: \.self) { i in
                     Capsule()
-                        .fill(Color.white.opacity(0.92))
+                        .fill(Color.white.opacity(waitingForAudio ? 0.30 : 0.92))
                         .frame(width: barWidth, height: barHeight(i))
                         .animation(barSpring, value: model.level)
                         .animation(surfaceSpring, value: model.state)
+                        .animation(presence, value: waitingForAudio)
                 }
             }
             .opacity(showsGlyph ? 0 : 1)

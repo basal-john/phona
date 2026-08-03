@@ -134,10 +134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hud.show(.listening)
         Cue.start.play()
         startLevelTimer()
+        let armed = CFAbsoluteTimeGetCurrent()
         audioQueue.async { [weak self] in
             guard let self else { return }
             do {
                 try self.recorder.start()
+                self.trace("device open", since: armed)
             } catch {
                 DispatchQueue.main.async {
                     guard mine == self.session else { return }
@@ -151,18 +153,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Drive the waveform, idling until the device delivers its first buffer.
+    /// Drive the waveform, and tell the HUD when there is genuinely audio to draw.
+    ///
+    /// An earlier version drew a synthetic pulse while waiting for the device, to stop a flat
+    /// line reading as broken. It read as listening instead, so speech started before the
+    /// microphone was open and the first word was lost. The bars now stay dim and still until
+    /// the first buffer arrives, which is the honest signal and also the useful one.
     private func startLevelTimer() {
         levelTimer?.invalidate()
-        let began = CFAbsoluteTimeGetCurrent()
+        let armed = CFAbsoluteTimeGetCurrent()
+        var announced = false
+        hud.model.capturing = false
         levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             guard let self else { return }
-            if self.recorder.hasAudio {
-                self.hud.model.level = self.recorder.level
-            } else {
-                let phase = (CFAbsoluteTimeGetCurrent() - began) * 5
-                self.hud.model.level = 0.10 + 0.09 * (0.5 + 0.5 * sin(phase))
+            let live = self.recorder.hasAudio
+            if live, !announced {
+                announced = true
+                self.trace("first audio buffer", since: armed)
             }
+            self.hud.model.capturing = live
+            self.hud.model.level = live ? self.recorder.level : 0
         }
     }
 
