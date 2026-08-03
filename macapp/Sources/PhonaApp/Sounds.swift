@@ -3,10 +3,19 @@ import Foundation
 
 /// Audio cues.
 ///
-/// The cues are bundled rather than taken from the system set, because the system set has
-/// nothing suitable for "heard nothing". `Basso` is the macOS error alert, and using it
-/// when a dictation simply had no speech in it scolds the user for a non-event. These are
-/// quiet, short, and deliberately unalarming.
+/// Bundled rather than taken from the system set. Partly because the system set has
+/// nothing suitable for "heard nothing" (`Basso` is the error alert, and using it when a
+/// dictation simply had no speech in it scolds the user for a non-event), and partly so
+/// the three cues can be one family instead of three unrelated noises.
+///
+/// They share two pitches, A and D, and let direction and register carry the meaning:
+///
+///   start    A4 -> D5    rising, opening
+///   done     D5 -> A5    the same interval an octave up, resolved
+///   nothing  D5 -> A4    the mirror of start, falling, nothing landed
+///
+/// So a completed dictation is heard as a phrase that opens and closes, and a cancelled
+/// one as the same phrase turned back on itself.
 enum Cue: String {
     case start = "start"
     /// Deliberately silent. Start, stop and done fired three cues inside about a second,
