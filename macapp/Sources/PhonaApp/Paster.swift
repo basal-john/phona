@@ -3,9 +3,9 @@ import Foundation
 
 enum Paths {
     static let base = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".local/share/vfix")
+        .appendingPathComponent(".local/share/phona")
     static let python = base.appendingPathComponent("venv/bin/python")
-    static let daemon = base.appendingPathComponent("vfixd.py")
+    static let daemon = base.appendingPathComponent("phonad.py")
     static let config = base.appendingPathComponent("config.json")
     static let history = base.appendingPathComponent("history.jsonl")
     static let readme = base.appendingPathComponent("README.md")
@@ -146,7 +146,7 @@ enum Mode: String, CaseIterable {
         }
         let kill = Process()
         kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        kill.arguments = ["-f", "vfixd.py"]
+        kill.arguments = ["-f", "phonad.py"]
         try? kill.run()
         kill.waitUntilExit()
         DispatchQueue.global().async { DaemonClient.startAndWait() }

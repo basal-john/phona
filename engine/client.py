@@ -1,17 +1,17 @@
-"""vfix client. Records audio, then asks the warm vfix daemon to transcribe and correct it.
+"""phona client. Records audio, then asks the warm phona daemon to transcribe and correct it.
 
 Recording lives here rather than in the daemon on purpose. macOS grants microphone
 access to the responsible process, so a launchd daemon can never obtain it, while this
 client inherits the grant of whatever launches it (Alfred, Terminal, a Shortcut).
 
 Usage:
-  vfix                 toggle recording, print corrected text
-  vfix --paste         toggle, and paste the result at the cursor when done
-  vfix start|stop|cancel|status|ping
-  vfix fix "text"      correct text without recording, reads stdin when given no text
-  vfix clip            correct whatever is on the clipboard, in place
-  vfix history [n]     show the last n dictations
-  vfix restart|stop-daemon|logs|config
+  phona                 toggle recording, print corrected text
+  phona --paste         toggle, and paste the result at the cursor when done
+  phona start|stop|cancel|status|ping
+  phona fix "text"      correct text without recording, reads stdin when given no text
+  phona clip            correct whatever is on the clipboard, in place
+  phona history [n]     show the last n dictations
+  phona restart|stop-daemon|logs|config
 Options:
   --mode grammar|polish|raw   override the configured correction mode
   --json                      print the raw daemon reply
@@ -28,12 +28,12 @@ import sys
 import time
 from pathlib import Path
 
-BASE = Path.home() / ".local/share/vfix"
-SOCK = BASE / "vfixd.sock"
-LOG = BASE / "vfixd.log"
+BASE = Path.home() / ".local/share/phona"
+SOCK = BASE / "phonad.sock"
+LOG = BASE / "phonad.log"
 HISTORY = BASE / "history.jsonl"
 CONFIG = BASE / "config.json"
-DAEMON = BASE / "vfixd.py"
+DAEMON = BASE / "phonad.py"
 PYTHON = BASE / "venv/bin/python"
 REC = BASE / "recording.wav"
 RECPID = BASE / "recording.pid"
@@ -44,7 +44,7 @@ CLIENTLOG = BASE / "client.log"
 MAX_LOG_BYTES = 2_000_000
 
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
-PLIST_LABEL = "com.basalona.vfixd"
+PLIST_LABEL = "com.basalona.phonad"
 
 SOUND_START = "/System/Library/Sounds/Tink.aiff"
 SOUND_STOP = "/System/Library/Sounds/Pop.aiff"
@@ -52,7 +52,7 @@ SOUND_DONE = "/System/Library/Sounds/Glass.aiff"
 SOUND_ERR = "/System/Library/Sounds/Basso.aiff"
 
 STATE_WORDS = {
-    "recording": "recording, run vfix again to stop",
+    "recording": "recording, run phona again to stop",
     "too_short": "too short, nothing transcribed",
     "empty": "no speech detected",
     "silent": "too quiet, nothing transcribed",
@@ -141,11 +141,11 @@ def ensure_daemon(quiet):
     if daemon_alive():
         return True
     if not quiet:
-        print("vfix: daemon not running, starting and loading models (first run is slow)...",
+        print("phona: daemon not running, starting and loading models (first run is slow)...",
               file=sys.stderr)
     if start_daemon():
         return True
-    print(f"vfix: daemon failed to start, see {LOG}", file=sys.stderr)
+    print(f"phona: daemon failed to start, see {LOG}", file=sys.stderr)
     return False
 
 
@@ -262,10 +262,10 @@ def begin_recording(conf):
         play(SOUND_ERR, conf["sounds"])
         hint = ""
         if "Input/output error" in err or "denied" in err.lower() or not err:
-            hint = ("\nvfix: the app running vfix needs Microphone access in "
+            hint = ("\nphona: the app running phona needs Microphone access in "
                     "System Settings > Privacy & Security > Microphone")
         clog(f"ffmpeg exited during open, rc={proc.returncode}, stderr={err!r}")
-        print(f"vfix: could not open the microphone. {err}{hint}", file=sys.stderr)
+        print(f"phona: could not open the microphone. {err}{hint}", file=sys.stderr)
         return False
 
     if not started:
@@ -352,7 +352,7 @@ def paste_at_cursor(text, restore=True):
     previous = get_clipboard() if restore else None
     if restore and not previous and clipboard_has_non_text():
         clog("clipboard holds non-text content, it cannot be restored after pasting")
-        print("vfix: your clipboard held an image or file. It has been replaced by the "
+        print("phona: your clipboard held an image or file. It has been replaced by the "
               "dictated text and cannot be restored.", file=sys.stderr)
     set_clipboard(text)
     time.sleep(0.08)
@@ -362,9 +362,9 @@ def paste_at_cursor(text, restore=True):
         capture_output=True, text=True)
     if result.returncode != 0:
         err = (result.stderr or "").strip()
-        print(f"vfix: paste failed, the text is on the clipboard instead. {err}",
+        print(f"phona: paste failed, the text is on the clipboard instead. {err}",
               file=sys.stderr)
-        print("vfix: grant Accessibility to the app running vfix in "
+        print("phona: grant Accessibility to the app running phona in "
               "System Settings > Privacy & Security > Accessibility", file=sys.stderr)
         return False
     if restore and previous:
@@ -393,14 +393,14 @@ def load_history():
 def set_mode(name):
     valid = ("grammar", "polish", "raw")
     if name not in valid:
-        print(f"vfix: mode must be one of {', '.join(valid)}", file=sys.stderr)
+        print(f"phona: mode must be one of {', '.join(valid)}", file=sys.stderr)
         return 2
     data = json.loads(CONFIG.read_text()) if CONFIG.exists() else {}
     data["mode"] = name
     CONFIG.write_text(json.dumps(data, indent=2) + "\n")
     # The prompt prefix is prefilled from the configured mode, so the daemon has to
     # rebuild it for the change to take effect.
-    subprocess.run(["/usr/bin/pkill", "-f", "vfixd.py"], capture_output=True)
+    subprocess.run(["/usr/bin/pkill", "-f", "phonad.py"], capture_output=True)
     time.sleep(1)
     ok = start_daemon()
     print(f"mode set to {name}" if ok else f"mode set to {name}, daemon restart failed")
@@ -431,7 +431,7 @@ def show_history(count, search=None, since=None, export=None, plain=False, as_js
         return
 
     if export:
-        lines = ["# vfix dictation log", "",
+        lines = ["# phona dictation log", "",
                  f"{len(entries)} entries, exported {time.strftime('%Y-%m-%d %H:%M')}", ""]
         for e in entries:
             lines.append(f"## {e.get('ts')}")
@@ -467,7 +467,7 @@ def deliver(reply, do_paste, quiet, restore, cmd):
          f"raw={(reply.get('raw') or '')[:80]!r}")
     if state == "error":
         play(SOUND_ERR)
-        print(f"vfix: {reply.get('error')}", file=sys.stderr)
+        print(f"phona: {reply.get('error')}", file=sys.stderr)
         return 1
 
     text = reply.get("text") or ""
@@ -535,7 +535,7 @@ def main():
         elif a == "--no-restore":
             restore = False
         elif a == "--no-sound":
-            # Hammerspoon owns the cues when it drives vfix, so that the sound and the
+            # Hammerspoon owns the cues when it drives phona, so that the sound and the
             # on-screen state change land on the same frame.
             no_sound = True
         elif a in ("--help", "-h"):
@@ -594,11 +594,11 @@ def main():
                           capture_output=True).returncode == 0:
             subprocess.run(["/bin/launchctl", "bootout", f"gui/{os.getuid()}/{PLIST_LABEL}"],
                            capture_output=True)
-        subprocess.run(["/usr/bin/pkill", "-f", "vfixd.py"], capture_output=True)
+        subprocess.run(["/usr/bin/pkill", "-f", "phonad.py"], capture_output=True)
         print("daemon stopped")
         return 0
     if cmd == "restart":
-        subprocess.run(["/usr/bin/pkill", "-f", "vfixd.py"], capture_output=True)
+        subprocess.run(["/usr/bin/pkill", "-f", "phonad.py"], capture_output=True)
         time.sleep(1)
         ok = start_daemon()
         print("daemon restarted" if ok else f"restart failed, see {LOG}")
@@ -623,7 +623,7 @@ def main():
             if not begin_recording(conf):
                 return 1
             if not quiet:
-                print("recording, run vfix again to stop", file=sys.stderr)
+                print("recording, run phona again to stop", file=sys.stderr)
             return 0
 
         if not active:
@@ -660,7 +660,7 @@ def main():
         except Exception as exc:
             clog(f"daemon request failed: {exc!r}")
             play(SOUND_ERR, conf["sounds"])
-            print(f"vfix: could not reach the daemon. {exc}", file=sys.stderr)
+            print(f"phona: could not reach the daemon. {exc}", file=sys.stderr)
             return 1
         finally:
             take.unlink(missing_ok=True)
@@ -687,7 +687,7 @@ def main():
         if reply.get("text"):
             set_clipboard(reply["text"])
     else:
-        print(f"vfix: unknown command '{cmd}', try vfix --help", file=sys.stderr)
+        print(f"phona: unknown command '{cmd}', try phona --help", file=sys.stderr)
         return 2
 
     if as_json:

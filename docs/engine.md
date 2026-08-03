@@ -1,4 +1,4 @@
-# vfix
+# phona
 
 Voice to grammar-corrected text, fully local, on Apple Silicon.
 
@@ -21,13 +21,13 @@ the correction stage exists to catch.
 
 | Path | Purpose |
 | --- | --- |
-| `~/.local/bin/vfix` | CLI entry point |
-| `~/.local/share/vfix/vfixd.py` | daemon holding the warm models |
-| `~/.local/share/vfix/client.py` | records audio, talks to the daemon, pastes |
-| `~/.local/share/vfix/config.json` | settings |
-| `~/.local/share/vfix/history.jsonl` | every dictation, raw and corrected |
-| `~/.local/share/vfix/vfixd.log` | daemon log |
-| `~/Library/LaunchAgents/com.basalona.vfixd.plist` | starts the daemon at login |
+| `~/.local/bin/phona` | CLI entry point |
+| `~/.local/share/phona/phonad.py` | daemon holding the warm models |
+| `~/.local/share/phona/client.py` | records audio, talks to the daemon, pastes |
+| `~/.local/share/phona/config.json` | settings |
+| `~/.local/share/phona/history.jsonl` | every dictation, raw and corrected |
+| `~/.local/share/phona/phonad.log` | daemon log |
+| `~/Library/LaunchAgents/com.basalona.phonad.plist` | starts the daemon at login |
 | `~/.hammerspoon/init.lua` | hold-Option push to talk |
 
 Recording lives in the client, not the daemon, on purpose. macOS grants microphone access
@@ -37,24 +37,24 @@ the grant of whatever launches it, so Alfred or Terminal owns the permission.
 ## Commands
 
 ```
-vfix                    toggle recording, print corrected text
-vfix --paste            toggle, paste the result at the cursor
-vfix --mode raw         transcribe without the grammar pass
-vfix --mode polish      also strip filler words and split run-on sentences
-vfix fix "some text"    correct text without recording
-vfix clip               correct the clipboard in place
-vfix history 10         last 10 entries, raw next to corrected
-vfix history --all      everything ever dictated or corrected
-vfix history --today    just today
-vfix history --search "jira"    entries mentioning a word
-vfix history --plain    corrected text only, one per line, pipe friendly
-vfix history --all --export ~/log.md    write the whole log as markdown
-vfix mode               show the current correction mode
-vfix mode polish        change it, restarting the daemon
-vfix status             models, mode, cached prefix size
-vfix restart            reload the daemon after a config change
-vfix logs               daemon log
-tail ~/.local/share/vfix/client.log    recording and paste side, the Hammerspoon path
+phona                    toggle recording, print corrected text
+phona --paste            toggle, paste the result at the cursor
+phona --mode raw         transcribe without the grammar pass
+phona --mode polish      also strip filler words and split run-on sentences
+phona fix "some text"    correct text without recording
+phona clip               correct the clipboard in place
+phona history 10         last 10 entries, raw next to corrected
+phona history --all      everything ever dictated or corrected
+phona history --today    just today
+phona history --search "jira"    entries mentioning a word
+phona history --plain    corrected text only, one per line, pipe friendly
+phona history --all --export ~/log.md    write the whole log as markdown
+phona mode               show the current correction mode
+phona mode polish        change it, restarting the daemon
+phona status             models, mode, cached prefix size
+phona restart            reload the daemon after a config change
+phona logs               daemon log
+tail ~/.local/share/phona/client.log    recording and paste side, the Hammerspoon path
 ```
 
 Audio cues: Tink means recording, Pop means stopped, Glass means text ready, Basso means
@@ -88,7 +88,7 @@ animation land on the same frame instead of drifting apart across two processes.
 
 Reduced Motion replaces the springs with a plain cross fade and drops the lift and scale.
 Reduced Transparency makes the capsule solid. Both are read from your accessibility
-settings at load, so toggle one and then reload vfix.
+settings at load, so toggle one and then reload phona.
 
 Driven by Hammerspoon, config at `~/.hammerspoon/init.lua`. Option is only observed,
 never remapped, so Option+click, Option+e and every other Option shortcut keep working.
@@ -103,7 +103,7 @@ Hammerspoon needs two permissions, both under System Settings, Privacy & Securit
 Tuning: `HOLD_DELAY` at the top of `init.lua` sets how long Option must be down before
 recording starts. Reload with Control+Option+Command+R, or from the Hammerspoon menu.
 
-To use a different trigger instead, `vfix --paste` is a plain command and can be bound
+To use a different trigger instead, `phona --paste` is a plain command and can be bound
 from Shortcuts.app, Alfred with Powerpack, Raycast or Karabiner-Elements.
 
 ## Menu bar
@@ -115,11 +115,11 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 - correction mode, with the active one ticked, switching restarts the daemon
 - export the whole log as markdown and reveal it in Finder
 - open the history file, the settings file or this README
-- warm the microphone, restart the daemon, reload vfix
+- warm the microphone, restart the daemon, reload phona
 
 ## Config
 
-`~/.local/share/vfix/config.json`, then `vfix restart`.
+`~/.local/share/phona/config.json`, then `phona restart`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -163,16 +163,16 @@ If that hangs instead of finishing in about two seconds, restart the audio daemo
 `sudo killall coreaudiod`, or unplug and replug the USB microphone.
 
 **"could not open the microphone".** Grant Microphone access to the app that launches
-vfix, in System Settings, Privacy & Security, Microphone.
+phona, in System Settings, Privacy & Security, Microphone.
 
 **Paste does nothing.** The text is still on the clipboard. Grant Accessibility to the
 launching app.
 
 **The first dictation after boot comes back silent.** A cold input device takes about
 four seconds to start producing audio, against about 0.9 s once warm. Hammerspoon runs
-`vfix warm` three seconds after load to absorb that. Run `vfix warm` by hand if a long
+`phona warm` three seconds after load to absorb that. Run `phona warm` by hand if a long
 idle period puts the microphone back to sleep, or raise `device_open_timeout`.
 
 **Transcript is discarded as noise.** The repetition guard caught a Whisper hallucination
 loop. Lower `silence_max_db` if your microphone is quiet, or check the raw text with
-`vfix history 1`.
+`phona history 1`.

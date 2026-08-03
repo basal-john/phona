@@ -47,7 +47,7 @@ struct OnboardingView: View {
                     .font(.system(size: 30, weight: .medium))
                     .foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Welcome to vfix").font(.title2).fontWeight(.semibold)
+                    Text("Welcome to Phona").font(.title2).fontWeight(.semibold)
                     Text("Hold Option, speak, let go. Your words arrive corrected, where the cursor is.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -59,7 +59,7 @@ struct OnboardingView: View {
             PermissionRow(
                 granted: state.accessibility,
                 title: "Accessibility",
-                detail: "Lets vfix notice the Option key and type into the app you are using.",
+                detail: "Lets Phona notice the Option key and type into the app you are using.",
                 action: "Open Settings",
                 perform: {
                     _ = HotkeyMonitor.hasAccessibility(prompt: true)
@@ -92,11 +92,11 @@ struct OnboardingView: View {
             HStack {
                 Text(state.allGranted
                      ? "You are set. Hold Option anywhere and start talking."
-                     : "vfix stays in the menu bar. This window closes when you are done.")
+                     : "Phona stays in the menu bar. This window closes when you are done.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(state.allGranted ? "Start using vfix" : "Later") { onDone() }
+                Button(state.allGranted ? "Start using Phona" : "Later") { onDone() }
                     .keyboardShortcut(.defaultAction)
             }
         }

@@ -56,7 +56,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Open vfix at login", isOn: $launchAtLogin)
+                Toggle("Open Phona at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, wanted in
                         do {
                             if wanted { try SMAppService.mainApp.register() }
@@ -141,7 +141,7 @@ struct SettingsView: View {
         DispatchQueue.global().async {
             let kill = Process()
             kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-            kill.arguments = ["-f", "vfixd.py"]
+            kill.arguments = ["-f", "phonad.py"]
             try? kill.run()
             kill.waitUntilExit()
             let ok = DaemonClient.startAndWait()

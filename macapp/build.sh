@@ -1,13 +1,13 @@
 #!/bin/bash
-# Build vfix.app, and optionally a distributable disk image.
+# Build phona.app, and optionally a distributable disk image.
 #
-#   ./build.sh          release build plus vfix.app
-#   ./build.sh --dmg    also package vfix-<version>.dmg
+#   ./build.sh          release build plus phona.app
+#   ./build.sh --dmg    also package phona-<version>.dmg
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-APP_NAME="vfix"
+APP_NAME="Phona"
 BUNDLE="build/${APP_NAME}.app"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
 
@@ -20,7 +20,7 @@ python3 make_icon.py >/dev/null
 echo "==> assembling ${BUNDLE}"
 rm -rf "${BUNDLE}"
 mkdir -p "${BUNDLE}/Contents/MacOS" "${BUNDLE}/Contents/Resources"
-cp .build/release/VfixApp "${BUNDLE}/Contents/MacOS/VfixApp"
+cp .build/release/PhonaApp "${BUNDLE}/Contents/MacOS/PhonaApp"
 cp Resources/Info.plist "${BUNDLE}/Contents/Info.plist"
 cp Resources/AppIcon.icns "${BUNDLE}/Contents/Resources/AppIcon.icns"
 if [[ -d Resources/Sounds ]]; then
@@ -43,8 +43,8 @@ echo "==> signing"
 # it. That is acceptable for a locally built personal tool and would not be for something
 # shipped with a Developer ID.
 codesign --force --deep --sign - \
-  --identifier com.basalona.vfix \
-  -r='designated => identifier "com.basalona.vfix"' \
+  --identifier com.basalona.phona \
+  -r='designated => identifier "com.basalona.phona"' \
   "${BUNDLE}"
 
 codesign --verify --verbose=1 "${BUNDLE}" && echo "signature ok"

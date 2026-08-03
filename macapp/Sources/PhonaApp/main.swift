@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try recorder.start()
         } catch {
             Paths.log("start failed: \(error.localizedDescription)")
-            notify("vfix", error.localizedDescription)
+            notify("Phona", error.localizedDescription)
             hud.finish(.failed)
             return
         }
@@ -123,10 +123,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 switch outcome {
                 case .success(let result) where result.state == "done" && !result.text.isEmpty:
                     // Not every dictation should land in the focused app. Copy-only turns
-                    // vfix into a scratchpad without changing how you trigger it.
+                    // phona into a scratchpad without changing how you trigger it.
                     if Settings.insertAtCursor {
                         if let warning = Paster.paste(result.text) {
-                            self.notify("vfix", warning)
+                            self.notify("Phona", warning)
                         }
                     } else {
                         NSPasteboard.general.clearContents()
@@ -142,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.hud.finish(.cancelled)
                 case .failure(let error):
                     Paths.log("daemon error: \(error.localizedDescription)")
-                    self.notify("vfix", error.localizedDescription)
+                    self.notify("Phona", error.localizedDescription)
                     Cue.nothing.play()
                     self.hud.finish(.failed)
                 }
@@ -175,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(
-            systemSymbolName: "waveform", accessibilityDescription: "vfix")
+            systemSymbolName: "waveform", accessibilityDescription: "Phona")
         statusItem.button?.image?.isTemplate = true
         statusItem.menu = NSMenu()
         statusItem.menu?.delegate = self
@@ -201,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 460, height: 430),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "vfix Settings"
+        window.title = "Phona Settings"
         window.contentView = NSHostingView(rootView: SettingsView())
         window.center()
         window.isReleasedWhenClosed = false
@@ -218,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func restartDaemon() {
         let kill = Process()
         kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        kill.arguments = ["-f", "vfixd.py"]
+        kill.arguments = ["-f", "phonad.py"]
         try? kill.run()
         kill.waitUntilExit()
         DispatchQueue.global().async { DaemonClient.startAndWait() }
@@ -233,7 +233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 400),
                               styleMask: [.titled, .closable],
                               backing: .buffered, defer: false)
-        window.title = "vfix Setup"
+        window.title = "Phona Setup"
         window.contentView = NSHostingView(
             rootView: OnboardingView(state: permissions) { [weak self] in
                 self?.onboardingWindow?.close()
@@ -301,7 +301,7 @@ extension AppDelegate: NSMenuDelegate {
         add(menu, "Warm microphone", #selector(warmMic))
         add(menu, "Restart daemon", #selector(restartDaemon))
         menu.addItem(.separator())
-        add(menu, "Quit vfix", #selector(quit), key: "q")
+        add(menu, "Quit Phona", #selector(quit), key: "q")
     }
 
     private func add(_ menu: NSMenu, _ title: String, _ action: Selector, key: String = "") {
@@ -315,7 +315,7 @@ extension AppDelegate: NSMenuDelegate {
 if let idx = CommandLine.arguments.firstIndex(of: "--render") {
     let dir = CommandLine.arguments.count > idx + 1
         ? URL(fileURLWithPath: CommandLine.arguments[idx + 1])
-        : URL(fileURLWithPath: "/tmp/vfix-previews")
+        : URL(fileURLWithPath: "/tmp/phona-previews")
     let renderApp = NSApplication.shared
     renderApp.setActivationPolicy(.prohibited)
     MainActor.assumeIsolated { Previews.renderAll(into: dir) }

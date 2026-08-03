@@ -1,15 +1,15 @@
 <div align="center">
 
-<img src="docs/images/icon.png" width="120" alt="vfix">
+<img src="docs/images/icon.png" width="120" alt="Phona">
 
-# vfix
+# Phona
 
 **Hold Option, speak, let go. Your words arrive corrected, where the cursor is.**
 
 Local dictation with a grammar pass, for Apple Silicon Macs. No account, no API key,
 no audio leaving your machine.
 
-<img src="docs/images/hud-listening.png" width="330" alt="The vfix HUD while listening">
+<img src="docs/images/hud-listening.png" width="330" alt="The phona HUD while listening">
 
 </div>
 
@@ -17,7 +17,7 @@ no audio leaving your machine.
 
 ## What it does
 
-You hold the Option key and talk. When you let go, vfix transcribes what you said,
+You hold the Option key and talk. When you let go, phona transcribes what you said,
 fixes the grammar, and pastes the result into whatever app you were in.
 
 ```
@@ -56,25 +56,25 @@ after warmup:
 ## Install
 
 ```bash
-git clone https://github.com/basal-john/vfix.git
-cd vfix
+git clone https://github.com/basal-john/phona.git
+cd phona
 ./install.sh
 ```
 
 That installs the speech engine and downloads the models. Then build and open the app:
 
 ```bash
-cd macapp && ./build.sh && open build/vfix.app
+cd macapp && ./build.sh && open build/Phona.app
 ```
 
-Or grab `vfix.dmg` from [Releases](../../releases), drag it to Applications, and run
+Or grab `Phona.dmg` from [Releases](../../releases), drag Phona to Applications, and run
 `install.sh` from this repo for the engine.
 
 ### First run
 
-<img src="docs/images/onboarding-fresh.png" width="520" alt="vfix setup window">
+<img src="docs/images/onboarding-fresh.png" width="520" alt="Phona setup window">
 
-vfix asks for two permissions and explains why:
+Phona asks for two permissions and explains why:
 
 - **Accessibility** so it can notice the Option key and type into your apps
 - **Microphone** so it can hear you
@@ -173,10 +173,10 @@ microphone from the menu.
 four seconds to start producing audio. The app warms it at launch, so this should not
 happen, but Warm microphone forces it.
 
-**It pasted into the wrong place.** vfix pastes into whatever had focus when you released
+**It pasted into the wrong place.** Phona pastes into whatever had focus when you released
 Option.
 
-**Logs.** `~/.local/share/vfix/app.log` for the app, `vfixd.log` for the engine, and
+**Logs.** `~/.local/share/phona/app.log` for the app, `phonad.log` for the engine, and
 `history.jsonl` for every dictation with what was heard next to what was corrected.
 
 **The Option key stopped working after a rebuild.** It should not any more, but this is
@@ -188,14 +188,14 @@ which keeps grants valid across rebuilds. If a grant ever does go stale, clear i
 grant again:
 
 ```bash
-tccutil reset Accessibility com.basalona.vfix
-tccutil reset Microphone com.basalona.vfix
+tccutil reset Accessibility com.basalona.phona
+tccutil reset Microphone com.basalona.phona
 ```
 
 ## Credits
 
 Built after looking hard at [Spokenly](https://spokenly.app), Willow and Lemon, which
-solve the same problem with different tradeoffs. vfix is the local-only, keyboard-first
+solve the same problem with different tradeoffs. Phona is the local-only, keyboard-first
 take: no account, no cloud models, and the grammar pass treated as the main feature rather
 than an add-on.
 

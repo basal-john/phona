@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>vfix</string>
+	<string>Phona</string>
 	<key>CFBundleDisplayName</key>
-	<string>vfix</string>
+	<string>Phona</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.basalona.vfix</string>
+	<string>com.basalona.phona</string>
 	<key>CFBundleExecutable</key>
-	<string>VfixApp</string>
+	<string>PhonaApp</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
@@ -25,8 +25,8 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>vfix records your voice so it can transcribe it into text on this Mac. Audio never leaves your machine.</string>
+	<string>Phona records your voice so it can transcribe it into text on this Mac. Audio never leaves your machine.</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>vfix inserts the corrected text into the app you are working in.</string>
+	<string>Phona inserts the corrected text into the app you are working in.</string>
 </dict>
 </plist>

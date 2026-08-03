@@ -14,7 +14,7 @@ final class Recorder {
         var errorDescription: String? {
             switch self {
             case .noPermission:
-                return "vfix needs Microphone access in System Settings, Privacy & Security."
+                return "Phona needs Microphone access in System Settings, Privacy & Security."
             case .engine(let detail):
                 return detail
             }

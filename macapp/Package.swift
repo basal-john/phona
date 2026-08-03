@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "VfixApp",
+    name: "PhonaApp",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
-            name: "VfixApp",
-            path: "Sources/VfixApp",
+            name: "PhonaApp",
+            path: "Sources/PhonaApp",
             swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]

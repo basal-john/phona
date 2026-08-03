@@ -2,7 +2,7 @@
 
 ## What happened
 
-Built `vfix`, a local hold-to-talk dictation app with a grammar pass, from the initial
+Built `phona`, a local hold-to-talk dictation app with a grammar pass, from the initial
 question about huggingface/speech-to-speech. Ended as a native Swift menu bar app plus a
 Python model daemon, in a private GitHub repo with a released DMG.
 
@@ -10,10 +10,10 @@ Python model daemon, in a private GitHub repo with a released DMG.
 
 | What | Where |
 | --- | --- |
-| Repo | github.com/basal-john/vfix, **private**, release v1.0.0 with the DMG |
-| Local repo | `~/Developer/vfix` |
-| Installed app | `/Applications/vfix.app`, running |
-| Runtime and engine | `~/.local/share/vfix` |
+| Repo | github.com/basal-john/phona, **private**, release v1.0.0 with the DMG |
+| Local repo | `~/Developer/phona` |
+| Installed app | `/Applications/phona.app`, running |
+| Runtime and engine | `~/.local/share/phona` |
 | Hammerspoon fallback | `~/.hammerspoon/init.lua`, stands down while the app runs |
 
 ## Waiting on the user
@@ -22,7 +22,7 @@ Python model daemon, in a private GitHub repo with a released DMG.
    an app to grant itself these, so this is the one blocker. Nothing else is pending.
 2. **Repo is private.** It was deliberately not made public overnight, since publishing is
    outward-facing and hard to reverse. One command flips it:
-   `gh repo edit basal-john/vfix --visibility public`
+   `gh repo edit basal-john/phona --visibility public`
 
 ## Verified
 
@@ -32,7 +32,7 @@ Python model daemon, in a private GitHub repo with a released DMG.
 - Recording lifecycle: 5 rapid Option taps leave zero orphaned processes and no stale state.
 - PID-reuse guard: a decoy process with a matching pid file was not killed.
 - DMG mounts, app inside is correctly signed, arm64, right bundle id.
-- HUD and onboarding rendered offscreen and inspected, via `vfix --render <dir>`.
+- HUD and onboarding rendered offscreen and inspected, via `phona --render <dir>`.
 
 ## Not verified
 
@@ -47,6 +47,6 @@ Python model daemon, in a private GitHub repo with a released DMG.
 ## If something is wrong tomorrow
 
 - Nothing on Option hold: Accessibility not granted, check the menu bar Setup item.
-- Logs: `~/.local/share/vfix/app.log`, `vfixd.log`, `history.jsonl`.
+- Logs: `~/.local/share/phona/app.log`, `phonad.log`, `history.jsonl`.
 - Worst case the app misbehaves: quit it and Hammerspoon takes over automatically within
   five seconds, using the same engine.

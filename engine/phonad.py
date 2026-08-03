@@ -1,4 +1,4 @@
-"""vfix daemon. Keeps Whisper and the correction LLM warm and serves transcribe requests.
+"""phona daemon. Keeps Whisper and the correction LLM warm and serves transcribe requests.
 
 Listens on a unix socket. Clients send one line of JSON and read one line of JSON back.
 
@@ -21,9 +21,9 @@ import time
 from pathlib import Path
 
 HOME = Path.home()
-BASE = HOME / ".local/share/vfix"
-SOCK = BASE / "vfixd.sock"
-LOG = BASE / "vfixd.log"
+BASE = HOME / ".local/share/phona"
+SOCK = BASE / "phonad.sock"
+LOG = BASE / "phonad.log"
 HISTORY = BASE / "history.jsonl"
 CONFIG = BASE / "config.json"
 
@@ -190,7 +190,7 @@ class Engine:
             stuck = time.time() - (self.busy_since or time.time())
             raise RuntimeError(
                 f"daemon busy, a request has been running for {stuck:.0f}s. "
-                f"Run 'vfix restart' if this persists.")
+                f"Run 'phona restart' if this persists.")
         self.busy_since = time.time()
         try:
             yield
@@ -475,7 +475,7 @@ def acquire_single_instance_lock():
 
     # Opened without truncation. A second daemon that loses the race would
     # otherwise blank the running daemon's pid before exiting.
-    handle_ = open(BASE / "vfixd.lock", "a+")
+    handle_ = open(BASE / "phonad.lock", "a+")
     try:
         fcntl.flock(handle_, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:

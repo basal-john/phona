@@ -1,4 +1,4 @@
--- vfix. Hold Option to dictate, release to insert grammar-corrected text.
+-- phona. Hold Option to dictate, release to insert grammar-corrected text.
 --
 -- Option is observed, never remapped, so Option+click, Option+e and every other Option
 -- shortcut keep working. A hold only counts once Option has been down alone for
@@ -13,7 +13,7 @@
 require("hs.ipc")
 
 local HOME = os.getenv("HOME")
-local BASE = HOME .. "/.local/share/vfix"
+local BASE = HOME .. "/.local/share/phona"
 local PYTHON = BASE .. "/venv/bin/python"
 local CLIENT = BASE .. "/client.py"
 local RECORDING = BASE .. "/recording.wav"
@@ -263,7 +263,7 @@ local function safeRender()
     local ok, err = pcall(render)
     if not ok and not renderErrorLogged then
         renderErrorLogged = true
-        print("vfix hud render error: " .. tostring(err))
+        print("phona hud render error: " .. tostring(err))
     end
 end
 
@@ -383,15 +383,15 @@ function hudAbort()
 end
 
 -- ---------------------------------------------------------------------------
--- vfix plumbing
+-- phona plumbing
 -- ---------------------------------------------------------------------------
 
-local function vfix(...)
+local function phona(...)
     local args = {CLIENT, ...}
     hs.task.new(PYTHON, nil, args):start()
 end
 
-local function vfixRead(...)
+local function phonaRead(...)
     local args = {CLIENT, ...}
     local out = hs.execute(PYTHON .. " " .. table.concat(
         hs.fnutils.imap(args, function(a) return "'" .. a .. "'" end), " "))
@@ -419,7 +419,7 @@ local function beginHold()
     recording = true
     session = session + 1
     hudListening()
-    vfix("start", "--quiet", "--no-sound")
+    phona("start", "--quiet", "--no-sound")
 end
 
 local function endHold()
@@ -442,7 +442,7 @@ local function abortHold()
     recording = false
     session = session + 1
     hudAbort()
-    vfix("cancel", "--no-sound")
+    phona("cancel", "--no-sound")
 end
 
 flagWatcher = hs.eventtap.new({hs.eventtap.event.types.flagsChanged}, function(event)
@@ -489,7 +489,7 @@ function buildMenu()
     local items = {}
 
     local ok, entries = pcall(function()
-        return hs.json.decode(vfixRead("history", "12", "--json"))
+        return hs.json.decode(phonaRead("history", "12", "--json"))
     end)
 
     if ok and entries and #entries > 0 then
@@ -508,13 +508,13 @@ function buildMenu()
 
     table.insert(items, {title = "-"})
 
-    local current = (vfixRead("mode"):gsub("%s+", ""))
+    local current = (phonaRead("mode"):gsub("%s+", ""))
     local modeItems = {}
     for _, name in ipairs({"grammar", "polish", "raw"}) do
         table.insert(modeItems, {
             title = name,
             checked = (name == current),
-            fn = function() vfix("mode", name) end,
+            fn = function() phona("mode", name) end,
         })
     end
     table.insert(items, {title = "Correction mode", menu = modeItems})
@@ -523,8 +523,8 @@ function buildMenu()
     table.insert(items, {
         title = "Export log as markdown",
         fn = function()
-            local target = HOME .. "/Downloads/vfix-dictation-log.md"
-            vfixRead("history", "--all", "--export", target)
+            local target = HOME .. "/Downloads/phona-dictation-log.md"
+            phonaRead("history", "--all", "--export", target)
             hs.execute("/usr/bin/open -R '" .. target .. "'")
         end,
     })
@@ -542,9 +542,9 @@ function buildMenu()
     })
 
     table.insert(items, {title = "-"})
-    table.insert(items, {title = "Warm microphone", fn = function() vfix("warm", "--quiet") end})
-    table.insert(items, {title = "Restart daemon", fn = function() vfix("restart") end})
-    table.insert(items, {title = "Reload vfix", fn = function() hs.reload() end})
+    table.insert(items, {title = "Warm microphone", fn = function() phona("warm", "--quiet") end})
+    table.insert(items, {title = "Restart daemon", fn = function() phona("restart") end})
+    table.insert(items, {title = "Reload phona", fn = function() hs.reload() end})
 
     return items
 end
@@ -558,9 +558,9 @@ if menubar then
     if icon then
         menubar:setIcon(icon:setSize({w = 18, h = 18}), true)
     else
-        menubar:setTitle("vfix")
+        menubar:setTitle("phona")
     end
-    menubar:setTooltip("vfix, hold Option to dictate")
+    menubar:setTooltip("phona, hold Option to dictate")
     menubar:setMenu(buildMenu)
 end
 
@@ -568,7 +568,7 @@ end
 -- Option hold and record twice. This keeps Hammerspoon as an automatic fallback for when
 -- the app is not running, without either one needing to know about the other.
 local function nativeAppRunning()
-    local out = hs.execute("/usr/bin/pgrep -x VfixApp 2>/dev/null")
+    local out = hs.execute("/usr/bin/pgrep -x PhonaApp 2>/dev/null")
     return out ~= nil and out:gsub("%s+", "") ~= ""
 end
 
@@ -580,12 +580,12 @@ appCheckTimer = hs.timer.doEvery(5, function()
         flagWatcher:stop()
         keyWatcher:stop()
         if menubar then menubar:delete() menubar = nil end
-        hs.printf("vfix.app is running, Hammerspoon fallback disabled")
+        hs.printf("phona.app is running, Hammerspoon fallback disabled")
     elseif not native and yielded then
         yielded = false
         flagWatcher:start()
         keyWatcher:start()
-        hs.printf("vfix.app stopped, Hammerspoon fallback re-enabled")
+        hs.printf("phona.app stopped, Hammerspoon fallback re-enabled")
     end
 end)
 
@@ -599,13 +599,13 @@ end
 -- Clear any session left behind by a reload. Reloading resets the Lua flags but cannot
 -- touch the detached ffmpeg, and the release event that would have stopped it is lost,
 -- so without this a recording could run on unnoticed until it hits max_seconds.
-vfix("cancel", "--no-sound")
+phona("cancel", "--no-sound")
 
 -- Open the microphone once at load. The first capture after boot takes several seconds
 -- to start producing audio, which silently swallowed the opening words of the first
 -- dictation. Paying that cost here means the first real hold is already warm.
 hs.timer.doAfter(3, function()
-    vfix("warm", "--quiet")
+    phona("warm", "--quiet")
 end)
 
 hs.autoLaunch(true)

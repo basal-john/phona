@@ -1,6 +1,6 @@
 import Foundation
 
-/// Talks to the Python vfix daemon over its unix socket.
+/// Talks to the Python phona daemon over its unix socket.
 ///
 /// The daemon owns the warm Whisper and grammar models. Keeping it means the pipeline
 /// that was measured and tuned stays exactly as it is, and this app only replaces the
@@ -21,14 +21,14 @@ enum DaemonClient {
         var errorDescription: String? {
             switch self {
             case .notRunning:
-                return "The vfix daemon is not running."
+                return "The phona daemon is not running."
             case .transport(let detail):
                 return detail
             }
         }
     }
 
-    static let socketPath = Paths.base.appendingPathComponent("vfixd.sock").path
+    static let socketPath = Paths.base.appendingPathComponent("phonad.sock").path
 
     /// Send one JSON line and read one JSON line back.
     static func request(_ payload: [String: Any], timeout: TimeInterval = 900) throws -> [String: Any] {

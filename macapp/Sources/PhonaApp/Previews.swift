@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Offscreen rendering of every screen the app can show.
 ///
-/// Run `vfix --render <dir>` to write a PNG per view and state. This makes the interface
+/// Run `phona --render <dir>` to write a PNG per view and state. This makes the interface
 /// reviewable without a live display, and gives a cheap visual regression check: rebuild,
 /// re-render, compare.
 enum Previews {

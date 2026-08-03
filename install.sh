@@ -1,17 +1,17 @@
 #!/bin/bash
-# Set up the vfix speech engine.
+# Set up the phona speech engine.
 #
-# Installs the Python side into ~/.local/share/vfix and downloads the models. The app
-# talks to it over a unix socket. Run this once, then open vfix.app.
+# Installs the Python side into ~/.local/share/phona and downloads the models. The app
+# talks to it over a unix socket. Run this once, then open phona.app.
 set -euo pipefail
 
-TARGET="$HOME/.local/share/vfix"
+TARGET="$HOME/.local/share/phona"
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$1"; }
 die() { printf '\033[31merror:\033[0m %s\n' "$1" >&2; exit 1; }
 
-[[ "$(uname -m)" == "arm64" ]] || die "vfix needs an Apple Silicon Mac. The models run on MLX."
+[[ "$(uname -m)" == "arm64" ]] || die "phona needs an Apple Silicon Mac. The models run on MLX."
 
 say "checking prerequisites"
 command -v ffmpeg >/dev/null 2>&1 || {
@@ -29,7 +29,7 @@ done
 mkdir -p "$TARGET"
 
 say "installing the engine into $TARGET"
-cp "$SRC/engine/vfixd.py" "$SRC/engine/client.py" "$TARGET/"
+cp "$SRC/engine/phonad.py" "$SRC/engine/client.py" "$TARGET/"
 
 if [[ ! -x "$TARGET/venv/bin/python" ]]; then
   say "creating the virtual environment"
@@ -52,18 +52,18 @@ if [[ ! -f "$TARGET/config.json" ]]; then
   say "writing default settings"
   "$TARGET/venv/bin/python" - <<'PY'
 import json, pathlib, sys
-sys.path.insert(0, str(pathlib.Path.home() / ".local/share/vfix"))
-from vfixd import DEFAULTS, CONFIG
+sys.path.insert(0, str(pathlib.Path.home() / ".local/share/phona"))
+from phonad import DEFAULTS, CONFIG
 CONFIG.write_text(json.dumps(DEFAULTS, indent=2) + "\n")
 print("wrote", CONFIG)
 PY
 fi
 
 say "warming the models, this downloads about 3.5 GB the first time"
-"$TARGET/venv/bin/python" "$TARGET/vfixd.py" &
+"$TARGET/venv/bin/python" "$TARGET/phonad.py" &
 DAEMON_PID=$!
 for _ in $(seq 1 600); do
-  if [[ -S "$TARGET/vfixd.sock" ]]; then
+  if [[ -S "$TARGET/phonad.sock" ]]; then
     say "engine ready"
     break
   fi
@@ -73,16 +73,16 @@ kill "$DAEMON_PID" 2>/dev/null || true
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "$TARGET/client.py" /dev/null 2>/dev/null || true
-cat > "$HOME/.local/bin/vfix" <<'EOF'
+cat > "$HOME/.local/bin/phona" <<'EOF'
 #!/bin/zsh
-exec "$HOME/.local/share/vfix/venv/bin/python" "$HOME/.local/share/vfix/client.py" "$@"
+exec "$HOME/.local/share/phona/venv/bin/python" "$HOME/.local/share/phona/client.py" "$@"
 EOF
-chmod +x "$HOME/.local/bin/vfix"
+chmod +x "$HOME/.local/bin/phona"
 
 say "done"
 cat <<'EOF'
 
-Next: open vfix.app. It will ask for two permissions.
+Next: open phona.app. It will ask for two permissions.
 
   Accessibility  so it can see the Option key and type into your apps
   Microphone     so it can hear you
