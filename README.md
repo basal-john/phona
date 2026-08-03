@@ -342,6 +342,18 @@ happen, but Warm microphone forces it.
 **It pasted into the wrong place.** Phona pastes into whatever had focus when you released
 Option.
 
+**Nothing appeared, and the menu bar says it is on the clipboard.** There was nowhere for
+the text to go, so it was kept rather than inserted. Press Cmd+V where you want it. The
+capsule shows a clipboard glyph instead of a checkmark in that case, and the cue is the
+quiet one rather than the completion chime.
+
+Pasting cannot be verified: posting Cmd+V reports that the event was sent, never that
+anything consumed it. So Phona asks Accessibility whether an editable element is focused,
+and only puts your previous clipboard back when the answer is yes. Where the answer is
+uncertain, which is common in Electron apps that expose little of their hierarchy, the
+dictation stays on the clipboard. Losing what you said is worse than leaving a clipboard
+changed.
+
 **Logs.** `~/.local/share/phona/app.log` for the app, `phonad.log` for the engine, and
 `history.jsonl` for every dictation with what was heard next to what was corrected.
 

@@ -14,6 +14,7 @@ enum Previews {
         for (name, state) in [("hud-listening", HUDState.listening),
                               ("hud-working", .working),
                               ("hud-done", .done),
+                              ("hud-clipboard", .clipboard),
                               ("hud-failed", .failed)] {
             let model = HUDModel()
             model.state = state

@@ -191,6 +191,30 @@ def test_there_is_a_deliberate_way_to_update_models():
     assert "update-models" in client, "pinning without an update path traps users"
 
 
+def test_the_clipboard_is_only_restored_when_a_target_is_confirmed():
+    """Regression: pasting is unverifiable, so a dictation delivered with nothing focused
+    vanished twice over. The keystroke went nowhere and the restore then overwrote the
+    text, while the user got a success chime."""
+    source = (ROOT / "macapp/Sources/PhonaApp/Paster.swift").read_text()
+    assert "FocusProbe.current()" in source, "the paste path does not check for a target"
+    assert "target == .editable" in source, (
+        "the clipboard is restored without confirming the paste could land")
+    assert "leftOnClipboard" in source, "there is no path that keeps unplaceable text"
+
+
+def test_no_editable_target_means_no_keystroke():
+    """Firing Cmd+V into Finder means paste a file, which is not what was asked for."""
+    source = (ROOT / "macapp/Sources/PhonaApp/Paster.swift").read_text()
+    assert "if target == .notEditable" in source
+
+
+def test_the_hud_distinguishes_placed_from_copied():
+    """A checkmark would claim the text was inserted when it is only on the clipboard."""
+    hud = (ROOT / "macapp/Sources/PhonaApp/HUD.swift").read_text()
+    assert "case clipboard" in hud
+    assert "doc.on.clipboard" in hud, "the clipboard state reuses the success glyph"
+
+
 def test_initial_prompt_is_off_by_default():
     """It improves rare names but makes Whisper invent words during silence."""
     source = (ROOT / "engine/phonad.py").read_text()

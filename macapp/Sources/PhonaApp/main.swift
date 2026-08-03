@@ -60,6 +60,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains("--settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.openSettings() }
         }
+        if CommandLine.arguments.contains("--probe-focus") {
+            Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+                Paths.log("focus probe: \(FocusProbe.describe())")
+            }
+        }
         if CommandLine.arguments.contains("--setup") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.showOnboarding() }
         }
@@ -134,8 +139,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // Not every dictation should land in the focused app. Copy-only turns
                     // phona into a scratchpad without changing how you trigger it.
                     if Settings.insertAtCursor {
-                        if let warning = Paster.paste(result.text) {
-                            self.notify("Phona", warning)
+                        switch Paster.paste(result.text) {
+                        case .pasted(let warning):
+                            if let warning { self.notify("Phona", warning) }
+                        case .leftOnClipboard(let reason):
+                            // The text is safe on the clipboard. Say so rather than
+                            // playing a success chime for text that went nowhere.
+                            Paths.log("nowhere to paste, left on clipboard: \(reason)")
+                            self.statusItem?.button?.toolTip =
+                                "Your last dictation is on the clipboard. Press Cmd+V to place it."
+                            Cue.nothing.play()
+                            self.hud.finish(.clipboard)
+                            return
                         }
                     } else {
                         NSPasteboard.general.clearContents()

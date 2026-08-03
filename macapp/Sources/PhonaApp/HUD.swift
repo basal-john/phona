@@ -9,6 +9,8 @@ enum HUDState: Equatable {
     /// Nothing usable was heard. Distinct from `failed` because it is not an error, so it
     /// gets no warning glyph and leaves without complaint.
     case cancelled
+    /// Transcribed, but there was nowhere to put it, so it waits on the clipboard.
+    case clipboard
     case failed
 }
 
@@ -39,6 +41,28 @@ struct HUDView: View {
 
     private var shown: Bool { model.state != .hidden }
 
+    private var showsGlyph: Bool {
+        model.state == .done || model.state == .failed || model.state == .clipboard
+    }
+
+    /// The clipboard case gets its own glyph, because a checkmark would claim the text
+    /// was placed when it was not.
+    private var glyphName: String {
+        switch model.state {
+        case .failed: return "exclamationmark.triangle.fill"
+        case .clipboard: return "doc.on.clipboard"
+        default: return "checkmark"
+        }
+    }
+
+    private var glyphColour: Color {
+        switch model.state {
+        case .failed: return .orange
+        case .clipboard: return .yellow
+        default: return .green
+        }
+    }
+
     /// Height profile across the bars. The centre leads so it reads as a voice.
     private func barHeight(_ index: Int) -> CGFloat {
         switch model.state {
@@ -48,7 +72,7 @@ struct HUDView: View {
             return barMin + (barMax - barMin) * CGFloat(scaled)
         case .working:
             return barMin + 3
-        case .done, .failed, .cancelled, .hidden:
+        case .done, .failed, .cancelled, .clipboard, .hidden:
             return 0
         }
     }
@@ -64,13 +88,13 @@ struct HUDView: View {
                         .animation(surfaceSpring, value: model.state)
                 }
             }
-            .opacity(model.state == .done || model.state == .failed ? 0 : 1)
+            .opacity(showsGlyph ? 0 : 1)
 
-            Image(systemName: model.state == .failed ? "exclamationmark.triangle.fill" : "checkmark")
+            Image(systemName: glyphName)
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(model.state == .failed ? Color.orange : Color.green)
-                .opacity(model.state == .done || model.state == .failed ? 1 : 0)
-                .scaleEffect(model.state == .done || model.state == .failed ? 1 : 0.6)
+                .foregroundStyle(glyphColour)
+                .opacity(showsGlyph ? 1 : 0)
+                .scaleEffect(showsGlyph ? 1 : 0.6)
                 .animation(surfaceSpring, value: model.state)
         }
         .frame(width: 124, height: 40)
@@ -161,7 +185,15 @@ final class HUDPanel: NSPanel {
         model.state = outcome
         // A cancel leaves quickly, since there is nothing to read. A failure lingers a
         // little so the warning is actually seen.
-        let linger: TimeInterval = outcome == .done ? 0.45 : (outcome == .cancelled ? 0.3 : 0.8)
+        // The clipboard case lingers longest, since it is the only one asking the user to
+        // do something.
+        let linger: TimeInterval
+        switch outcome {
+        case .done: linger = 0.45
+        case .cancelled: linger = 0.3
+        case .clipboard: linger = 1.4
+        default: linger = 0.8
+        }
         let work = DispatchWorkItem { [weak self] in self?.dismiss() }
         dismissWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + linger, execute: work)

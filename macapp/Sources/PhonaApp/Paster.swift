@@ -28,14 +28,29 @@ enum Paths {
 
 /// Puts text where the cursor is.
 enum Paster {
-    /// Insert text into the frontmost app, then put the clipboard back the way it was.
+    enum Outcome {
+        /// Inserted at the cursor, and the previous clipboard was put back.
+        case pasted(warning: String?)
+        /// Nothing editable was focused, so the text was left on the clipboard for the
+        /// user to place themselves. Never silently discarded.
+        case leftOnClipboard(reason: String)
+    }
+
+    /// Deliver the text, and never lose it.
     ///
-    /// The clipboard is only restored when it still holds what we put there, so anything
-    /// copied during the paste is left alone. Non-text contents such as an image cannot
-    /// be captured and restored at all, so those are reported rather than silently lost.
+    /// Pasting cannot be verified. Posting Cmd+V reports that the event was sent, not that
+    /// anything consumed it, so a dictation delivered with nothing focused used to vanish
+    /// twice over: the keystroke went nowhere and the clipboard restore then overwrote the
+    /// text. The user heard a success chime for text that survived only in the history.
+    ///
+    /// So the clipboard is only restored when Accessibility confirms an editable target.
+    /// Anywhere else the dictation stays on the clipboard, which is recoverable with one
+    /// Cmd+V, and the caller is told so it can say as much.
     @discardableResult
-    static func paste(_ text: String, restore: Bool = true) -> String? {
+    static func paste(_ text: String, restore: Bool = true) -> Outcome {
         let board = NSPasteboard.general
+        let target = FocusProbe.current()
+
         let hadItems = !(board.pasteboardItems ?? []).isEmpty
         let previous = board.string(forType: .string)
         var warning: String?
@@ -46,11 +61,21 @@ enum Paster {
         board.clearContents()
         board.setString(text, forType: .string)
 
-        guard sendCommandV() else {
-            return "Could not paste. The text is on the clipboard instead."
+        if target == .notEditable {
+            // Do not fire a keystroke into something that cannot take it. In Finder for
+            // instance Cmd+V means paste a file, which would either do nothing or do
+            // something unwanted.
+            return .leftOnClipboard(reason: FocusProbe.describe())
         }
 
-        if restore, let previous {
+        guard sendCommandV() else {
+            return .leftOnClipboard(reason: "the paste keystroke could not be sent")
+        }
+
+        // Restoring is only safe where the paste almost certainly landed. When the target
+        // is unknown the text stays on the clipboard, because losing a dictation is worse
+        // than leaving a clipboard changed.
+        if restore, target == .editable, let previous {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 if board.string(forType: .string) == text {
                     board.clearContents()
@@ -58,7 +83,7 @@ enum Paster {
                 }
             }
         }
-        return warning
+        return .pasted(warning: warning)
     }
 
     private static func sendCommandV() -> Bool {
