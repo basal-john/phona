@@ -49,23 +49,13 @@ else
   "$TARGET/venv/bin/python" -m pip install -q mlx-whisper mlx-lm
 fi
 
-if [[ ! -f "$TARGET/config.json" ]]; then
-  say "writing default settings"
-  "$TARGET/venv/bin/python" - <<'PY'
-import json, pathlib, sys
-sys.path.insert(0, str(pathlib.Path.home() / ".local/share/phona"))
-from phonad import DEFAULTS, CONFIG
-CONFIG.write_text(json.dumps(DEFAULTS, indent=2) + "\n")
-print("wrote", CONFIG)
-PY
-fi
+# Settings are not written here. The daemon writes its defaults on first run,
+# and duplicating that meant a second copy of the path logic to get wrong.
 
 if [[ -n "${PHONA_SKIP_MODELS:-}" ]]; then
   say "skipping the model warmup"
-  exit 0
-fi
-
-say "warming the models, this downloads about 3.5 GB the first time"
+else
+  say "warming the models, this downloads about 3.5 GB the first time"
 "$TARGET/venv/bin/python" "$TARGET/phonad.py" &
 DAEMON_PID=$!
 for _ in $(seq 1 600); do
@@ -75,13 +65,14 @@ for _ in $(seq 1 600); do
   fi
   sleep 1
 done
-kill "$DAEMON_PID" 2>/dev/null || true
+  kill "$DAEMON_PID" 2>/dev/null || true
+fi
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "$TARGET/client.py" /dev/null 2>/dev/null || true
-cat > "$HOME/.local/bin/phona" <<'EOF'
+cat > "$HOME/.local/bin/phona" <<EOF
 #!/bin/zsh
-exec "$HOME/.local/share/phona/venv/bin/python" "$HOME/.local/share/phona/client.py" "$@"
+exec "$TARGET/venv/bin/python" "$TARGET/client.py" "\$@"
 EOF
 chmod +x "$HOME/.local/bin/phona"
 

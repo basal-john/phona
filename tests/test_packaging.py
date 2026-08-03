@@ -44,6 +44,20 @@ def test_installer_honours_the_data_directory_override():
     assert "PHONA_HOME" in script, "the install target must be overridable for testing"
 
 
+def test_installer_never_hardcodes_the_data_directory():
+    """Regression: a step hardcoded ~/.local/share/phona in sys.path and ignored the
+    install target, so installing anywhere else failed with ModuleNotFoundError."""
+    script = (ROOT / "install.sh").read_text()
+    hardcoded = [
+        line for line in script.splitlines()
+        # Comments may name the default location, that is documentation not behaviour.
+        if ".local/share/phona" in line
+        and "PHONA_HOME" not in line
+        and not line.lstrip().startswith("#")
+    ]
+    assert not hardcoded, f"hardcoded install path in {hardcoded}"
+
+
 def test_engine_modules_honour_the_data_directory_override():
     for name in ("phonad.py", "client.py", "audit.py"):
         source = (ROOT / "engine" / name).read_text()
