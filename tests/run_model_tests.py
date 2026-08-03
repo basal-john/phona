@@ -38,15 +38,21 @@ def fix(text, timeout=240):
 
 
 def check(case, got):
-    """Return None when the case passes, or a reason string when it does not."""
+    """Return None when the case passes, or a reason string when it does not.
+
+    `expect_contains` is matched against the answer with its whitespace flattened. The
+    engine may lay an answer out as a list, and a line break landing inside a multi-word
+    needle failed a strict case for a correct answer.
+    """
     if "expect" in case:
         if got == case["expect"]:
             return None
         similarity = difflib.SequenceMatcher(None, got.lower(), case["expect"].lower()).ratio()
         return f"wording differs (similarity {similarity:.2f})"
 
+    flat = " ".join(got.split()).lower()
     for needle in case.get("expect_contains", []):
-        if needle.lower() not in got.lower():
+        if needle.lower() not in flat:
             return f"missing {needle!r}, the model may have acted on the text"
 
     for needle in case.get("expect_not_contains", []):

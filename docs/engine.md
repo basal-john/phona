@@ -47,7 +47,7 @@ phona history 10         last 10 entries, raw next to corrected
 phona history --all      everything ever dictated or corrected
 phona history --today    just today
 phona history --search "jira"    entries mentioning a word
-phona history --plain    corrected text only, one per line, pipe friendly
+phona history --plain    corrected text only, one per line, pipe friendly, newlines escaped as \n
 phona history --all --export ~/log.md    write the whole log as markdown
 phona mode               show the current correction mode
 phona mode polish        change it, restarting the daemon
@@ -132,7 +132,10 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | `max_words_per_second` | `6.0` | above this the transcript is treated as noise |
 | `use_initial_prompt` | `false` | bias Whisper with the dictionary, raises hallucination risk |
 | `dictionary` | `["Phona"]` | vocabulary hint, only used when the flag above is on |
-| `replacements` | `{}` | literal fixes applied last, for example `{"jeera": "Jira"}` |
+| `replacements` | `{}` | literal fixes, applied before the layout pass, for example `{"jeera": "Jira"}` |
+| `spoken_layout` | `true` | act on `new paragraph`, `new line`, `bullet point` spoken as a sentence of their own |
+| `pin_models` | `true` | load the cached snapshot instead of re-resolving the hub |
+| `min_seconds` | `0.4` | shorter recordings are discarded as a slip of the key |
 | `device_open_timeout` | `6.0` | seconds to wait for the input to start producing audio |
 | `sounds` | `true` | audio cues |
 
