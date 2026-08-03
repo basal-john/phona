@@ -131,7 +131,7 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | `silence_max_db` | `-42.0` | quieter than this counts as silence |
 | `max_words_per_second` | `6.0` | above this the transcript is treated as noise |
 | `use_initial_prompt` | `false` | bias Whisper with the dictionary, raises hallucination risk |
-| `dictionary` | Thomann, Jira, ... | vocabulary hint, only used when the flag above is on |
+| `dictionary` | `["Phona"]` | vocabulary hint, only used when the flag above is on |
 | `replacements` | `{}` | literal fixes applied last, for example `{"jeera": "Jira"}` |
 | `device_open_timeout` | `6.0` | seconds to wait for the input to start producing audio |
 | `sounds` | `true` | audio cues |

@@ -41,10 +41,7 @@ DEFAULTS = {
     "use_initial_prompt": False,
     "silence_max_db": -42.0,
     "max_words_per_second": 6.0,
-    "dictionary": [
-        "Thomann", "Jira", "nc-core", "Playwright", "CodeceptJS", "Detox",
-        "Claude", "Copilot", "Obsidian", "Superset", "QE",
-    ],
+    "dictionary": ["Phona"],
     "replacements": {},
 }
 
