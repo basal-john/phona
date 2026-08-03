@@ -20,11 +20,12 @@ final class HUDModel: ObservableObject {
     @Published var level: Double = 0
     /// False until the input device has delivered its first buffer.
     ///
-    /// The capsule is on screen about 180 ms after the key goes down and the device does not
-    /// deliver audio until roughly 400 ms, so for a moment the HUD is up and listening to
-    /// nothing. Showing a moving waveform through that gap invited speech the microphone could
-    /// not hear yet, and the first word went missing. The bars now sit dim and still until
-    /// there is genuinely something to draw.
+    /// The capsule is on screen about 180 ms after the key goes down. The first buffer was
+    /// measured 568 ms after the hold armed, so around 700 ms after the keypress, on a device
+    /// idle for under a minute. For that whole stretch the HUD is up and listening to nothing.
+    /// Showing a moving waveform through it invited speech the microphone could not hear yet,
+    /// and the first word went missing. The bars now sit dim and still until there is genuinely
+    /// something to draw.
     @Published var capturing = false
 }
 
