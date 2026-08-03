@@ -330,6 +330,46 @@ class Engine:
                         verbose=False).strip()
 
     @staticmethod
+    def _tidy(text):
+        """Capitalise and close sentences without a model.
+
+        The last-resort path when the model cannot be trusted with a given utterance.
+        It will not fix grammar, but it does mean the fallback still looks like written
+        text rather than a raw transcript.
+        """
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            return text
+
+        # Capitalise the opening and anything following a sentence end.
+        out = []
+        capitalise = True
+        for ch in text:
+            if capitalise and ch.isalpha():
+                out.append(ch.upper())
+                capitalise = False
+            else:
+                out.append(ch)
+            if ch in ".!?":
+                capitalise = True
+        text = "".join(out)
+
+        # The standalone pronoun, which speech models often leave lowercase.
+        text = re.sub(r"\bi\b", "I", text)
+        text = re.sub(r"\bi'(m|ve|ll|d)\b", lambda m: "I'" + m.group(1), text)
+
+        if text[-1] not in ".!?":
+            # Judge the final clause, not the whole utterance. "I am fine. how are you"
+            # ends in a question even though it opens with a statement.
+            last = re.split(r"[.!?]\s*", text)[-1].strip()
+            opener = (last or text).split(" ", 1)[0].lower().strip(",")
+            questions = {"what", "why", "how", "when", "where", "who", "which", "can",
+                         "could", "should", "would", "do", "does", "did", "is", "are",
+                         "was", "were", "will", "shall", "am", "any"}
+            text += "?" if opener in questions else "."
+        return text
+
+    @staticmethod
     def _looks_like_a_reply(source, candidate):
         """True when the model acted on the dictation instead of correcting it.
 
@@ -390,9 +430,10 @@ class Engine:
         if not self._looks_like_a_reply(text, out):
             return out
 
-        # Still misbehaving. The transcript is always safer than invented text.
-        log("retry also answered, returning the transcript unchanged")
-        return text
+        # Still misbehaving. The transcript is safer than invented text, but handing it
+        # back verbatim means lowercase run-ons, so tidy it deterministically first.
+        log("retry also answered, falling back to a mechanical tidy")
+        return self._tidy(text)
 
     def _attempt(self, text, effective):
         msgs = self._prefix_messages(effective) + [{"role": "user", "content": text}]
