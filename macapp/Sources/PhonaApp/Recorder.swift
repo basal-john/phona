@@ -84,7 +84,11 @@ final class Recorder {
                                commonFormat: .pcmFormatInt16, interleaved: true)
         converter = AVAudioConverter(from: hardware, to: Self.targetFormat)
 
-        input.installTap(onBus: 0, bufferSize: 2048, format: hardware) { [weak self] buffer, _ in
+        /// Smaller than the 2048 it used to be, because the first buffer is what the speaker is
+        /// waiting for. At 48 kHz, 2048 frames is 43 ms of audio before anything is handed over,
+        /// and the engine only treats this as a hint, so asking for less costs nothing when it
+        /// declines.
+        input.installTap(onBus: 0, bufferSize: 1024, format: hardware) { [weak self] buffer, _ in
             self?.handle(buffer)
         }
 
