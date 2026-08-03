@@ -10,6 +10,7 @@ Usage:
   phona start|stop|cancel|status|ping
   phona fix "text"      correct text without recording, reads stdin when given no text
   phona clip            correct whatever is on the clipboard, in place
+  phona wrong ["..."]   flag the last dictation as wrong, optionally with the truth
   phona history [n]     show the last n dictations
   phona restart|stop-daemon|logs|config
 Options:
@@ -559,6 +560,19 @@ def main():
             count = 0
         show_history(count, search=hist_search, since=hist_since,
                      export=hist_export, plain=hist_plain, as_json=as_json)
+        return 0
+    if cmd == "wrong":
+        # Everything after the verb is what the user actually said, if they bothered.
+        actual = " ".join(rest[1:]) if len(rest) > 1 else None
+        if not ensure_daemon(quiet):
+            return 1
+        reply = send({"cmd": "FLAG", "actual": actual})
+        if reply.get("state") != "done":
+            print(f"phona: {reply.get('error')}", file=sys.stderr)
+            return 1
+        print("flagged. run /phona-audit to see what it suggests")
+        if reply.get("heard"):
+            print(f"  heard: {reply['heard'][:100]}")
         return 0
     if cmd == "mode":
         if len(rest) < 2:

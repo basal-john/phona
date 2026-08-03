@@ -2,31 +2,31 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleName</key>
-	<string>Phona</string>
 	<key>CFBundleDisplayName</key>
 	<string>Phona</string>
-	<key>CFBundleIdentifier</key>
-	<string>com.basalona.phona</string>
 	<key>CFBundleExecutable</key>
 	<string>PhonaApp</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.basalona.phona</string>
+	<key>CFBundleName</key>
+	<string>Phona</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>1.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>3</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Phona inserts the corrected text into the app you are working in.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Phona records your voice so it can transcribe it into text on this Mac. Audio never leaves your machine.</string>
-	<key>NSAppleEventsUsageDescription</key>
-	<string>Phona inserts the corrected text into the app you are working in.</string>
 </dict>
 </plist>

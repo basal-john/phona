@@ -63,6 +63,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.showOnboarding() }
         }
 
+        // Check for a release once at launch and daily after that.
+        UpdateCheck.check { version in
+            if let version { Paths.log("update available: \(version)") }
+        }
+        Timer.scheduledTimer(withTimeInterval: 86_400, repeats: true) { _ in
+            UpdateCheck.check()
+        }
+
         // The system disables an event tap that ever times out. Put it back.
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.hotkeys.reenableIfNeeded()
@@ -210,6 +218,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Flag the last dictation, and offer to capture what was actually said.
+    ///
+    /// The typed correction is optional on purpose. A click with no text still carries
+    /// the signal that something was wrong, and demanding the exact wording would mean
+    /// most bad dictations never get reported at all.
+    @objc private func flagLastDictation() {
+        let alert = NSAlert()
+        alert.messageText = "Mark the last dictation as wrong"
+        alert.informativeText = "Optionally type what you actually said. Leave it empty to "
+            + "just flag it. Either way the audit will look at this one."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.placeholderString = "what you actually said, optional"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Flag")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let actual = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        DispatchQueue.global().async {
+            var payload: [String: Any] = ["cmd": "FLAG"]
+            if !actual.isEmpty { payload["actual"] = actual }
+            _ = try? DaemonClient.request(payload, timeout: 20)
+            Paths.log("flagged the last dictation, actual supplied: \(!actual.isEmpty)")
+        }
+    }
+
+    @objc private func openReleases() { UpdateCheck.openReleasesPage() }
     @objc private func openHistory() { NSWorkspace.shared.open(Paths.history) }
     @objc private func openReadme() { NSWorkspace.shared.open(Paths.readme) }
     @objc private func warmMic() { recorder.warm() }
@@ -293,8 +329,16 @@ extension AppDelegate: NSMenuDelegate {
         menu.addItem(modeItem)
 
         menu.addItem(.separator())
+        if let version = UpdateCheck.availableVersion {
+            let item = NSMenuItem(title: "Update to \(version) is available",
+                                  action: #selector(openReleases), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+            menu.addItem(.separator())
+        }
         add(menu, "Settings...", #selector(openSettings), key: ",")
         add(menu, "Setup and permissions...", #selector(showOnboarding))
+        add(menu, "Mark last dictation as wrong...", #selector(flagLastDictation))
         add(menu, "Open history file", #selector(openHistory))
         add(menu, "Open README", #selector(openReadme))
         menu.addItem(.separator())

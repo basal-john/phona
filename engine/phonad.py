@@ -25,6 +25,7 @@ BASE = HOME / ".local/share/phona"
 SOCK = BASE / "phonad.sock"
 LOG = BASE / "phonad.log"
 HISTORY = BASE / "history.jsonl"
+CORRECTIONS = BASE / "corrections.jsonl"
 CONFIG = BASE / "config.json"
 
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
@@ -146,6 +147,42 @@ def write_history(entry):
         log(f"history write failed: {exc}")
 
 
+def flag_last(actual=None):
+    """Mark the most recent dictation as wrong, optionally with what was really said.
+
+    This is the only source of ground truth the tool has. The history records what was
+    heard and what was returned, never what the speaker meant, so without a deliberate
+    signal from the user an audit can only guess. One click here is worth more than any
+    amount of inference over the log.
+    """
+    if not HISTORY.exists():
+        return {"state": "error", "error": "no history yet"}
+    lines = [l for l in HISTORY.read_text().splitlines() if l.strip()]
+    if not lines:
+        return {"state": "error", "error": "no history yet"}
+    try:
+        entry = json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return {"state": "error", "error": "could not read the last entry"}
+
+    record = {
+        "flagged_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "ts": entry.get("ts"),
+        "heard": entry.get("raw", ""),
+        "returned": entry.get("text", ""),
+        "actual": (actual or "").strip() or None,
+        "mode": entry.get("mode"),
+        "source": entry.get("source"),
+    }
+    try:
+        with open(CORRECTIONS, "a") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception as exc:
+        return {"state": "error", "error": str(exc)}
+    log(f"flagged as wrong :: {record['returned'][:60]}")
+    return {"state": "done", **record}
+
+
 def peak_db(path):
     """Return the peak volume of a wav file in dB, or None when it cannot be measured.
 
@@ -213,6 +250,7 @@ class Engine:
         self.cfg = cfg
         self.lock = threading.Lock()
         self.busy_since = None
+        self.last_guarded = False
         self.prefix_tokens = []
         self.cache = None
 
@@ -410,15 +448,18 @@ class Engine:
         return False
 
     def correct(self, text, mode=None):
+        """Returns the corrected text. Sets self.last_guarded for the caller to record."""
         """Correct one utterance.
 
         The KV cache was prefilled from the configured mode's system prompt, so a
         per-request mode override has to bypass it and build the prompt from scratch.
         """
         effective = mode or self.cfg["mode"]
+        self.last_guarded = False
         out = self._attempt(text, effective)
         if not self._looks_like_a_reply(text, out):
             return out
+        self.last_guarded = True
 
         # One retry with the rule restated inline, which is far more reliable on a small
         # model than the same rule buried in a long system prompt.
@@ -508,6 +549,7 @@ class Engine:
                 "text": final,
                 "stt_secs": round(t_stt, 2),
                 "llm_secs": round(t_llm, 2),
+                "guarded": bool(getattr(self, "last_guarded", False)),
             }
             write_history(entry)
             log(f"done stt={t_stt:.2f}s llm={t_llm:.2f}s :: {final[:80]}")
@@ -529,6 +571,7 @@ class Engine:
                 "text": out,
                 "stt_secs": 0,
                 "llm_secs": round(time.time() - t0, 2),
+                "guarded": bool(getattr(self, "last_guarded", False)),
             }
             write_history(entry)
             return {"state": "done", **entry}
@@ -553,6 +596,8 @@ def handle(conn, engine):
             reply = {"state": "ready"}
         elif cmd == "PROCESS":
             reply = engine.process(req.get("path", ""), float(req.get("seconds") or 0), mode)
+        elif cmd == "FLAG":
+            reply = flag_last(req.get("actual"))
         elif cmd == "FIX":
             reply = engine.fix_text(req.get("text", ""), mode)
         elif cmd == "CONFIG":

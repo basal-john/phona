@@ -172,6 +172,49 @@ Known weak spots, all in the correction stage rather than the transcription:
   ever sees text. Say "log" and get "logo" and the grammar pass has no reason to object.
   The replacements list exists for the ones you hit repeatedly.
 
+## Updating
+
+```bash
+cd phona && ./update.sh
+```
+
+Pulls, rebuilds the app, refreshes the engine and restarts it. Your settings, history and
+flagged corrections live in `~/.local/share/phona` and are never touched. Permissions carry
+over, because the signature is pinned to the bundle identifier rather than to the build.
+
+Phona also checks the releases feed once a day and adds an "Update available" item to the
+menu when there is something newer. It never installs anything on its own. An app holding
+Accessibility access should not replace its own binary without being asked, and without a
+Developer ID signature there is no chain of trust that would make doing so reasonable.
+
+## Keeping it honest
+
+Dictation goes wrong in ways the log cannot see on its own. It records what was heard and
+what was returned, never what you meant, so a mishearing between two real words is
+invisible to it.
+
+When a dictation comes out wrong, flag it:
+
+```bash
+phona wrong "what I actually said"     # the text is optional
+```
+
+Or use *Mark last dictation as wrong* in the menu bar. That is the only ground truth the
+tool gets, and it is what makes the audit useful rather than guesswork.
+
+```bash
+~/.local/share/phona/venv/bin/python ~/.local/share/phona/audit.py --days 7
+```
+
+The audit separates what it knows from what it guessed: entries you flagged, takes the
+silence gate discarded and corrections the guard refused are facts the daemon recorded,
+while suspected mishearings come from the local model and are labelled as inferences. It
+proposes replacements and applies none of them until you say so. A weekly run lands in
+`~/.local/share/phona/audit-latest.md` on Monday mornings.
+
+Analysis uses the same local model as everything else, so a scheduled audit does not
+quietly start uploading your dictations.
+
 ## Troubleshooting
 
 **Nothing happens when I hold Option.** Check Accessibility is granted, in the menu bar
