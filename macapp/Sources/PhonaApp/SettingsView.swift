@@ -100,6 +100,8 @@ struct SettingsView: View {
         replacements = pairs.map { "\($0.key) = \($0.value)" }.sorted().joined(separator: "\n")
     }
 
+    /// Persist the settings and restart the engine, which prefills its prompt from these
+    /// and so has to come back up before a change takes effect.
     private func save() {
         var obj: [String: Any] = [:]
         if let data = try? Data(contentsOf: Paths.config),
@@ -136,7 +138,6 @@ struct SettingsView: View {
             return
         }
 
-        // The daemon prefills its prompt from these, so it has to come back up to see them.
         status = "Saved. Restarting the engine…"
         DispatchQueue.global().async {
             let kill = Process()

@@ -1,5 +1,24 @@
 """phona client. Records audio, then asks the warm phona daemon to transcribe and correct it.
 
+Behaviour worth knowing before changing anything here:
+
+- `--no-sound` exists so Hammerspoon can own the cues when it drives phona, which keeps the
+  sound and the on-screen state change on the same frame.
+- `warm` opens and immediately closes the input, so the first real dictation does not pay the
+  cold device open, which is several seconds after boot.
+- `mode` restarts the daemon, because the prompt prefix is prefilled per mode and has to be
+  rebuilt before a change takes effect.
+- `update-models` is deliberate and never automatic. New weights can change behaviour, so it
+  is a decision rather than a side effect of an ordinary restart.
+- `wrong` takes everything after the verb as what the user actually said, if they bothered.
+- `start` never attaches to a recording already in flight. Doing so used to make the next
+  hold adopt an orphaned ffmpeg, so one transcript silently covered both the abandoned audio
+  and the new dictation. It also warms the daemon in the background, so the engine is ready
+  by the time the user stops talking.
+- `stop` hands the daemon a private copy of the wav. Transcription can take a second, and a
+  new hold starting in that window would otherwise overwrite the very file being
+  transcribed, since every recording uses the same path.
+
 Recording lives here rather than in the daemon on purpose. macOS grants microphone
 access to the responsible process, so a launchd daemon can never obtain it, while this
 client inherits the grant of whatever launches it (Alfred, Terminal, a Shortcut).
@@ -160,6 +179,10 @@ def recording_pid():
     Checking that some process holds the pid is not enough. A stale pid file can outlive
     its process and the number gets recycled, which would send SIGKILL to an unrelated
     process and let a dead session look alive. Confirm the command really is our capture.
+
+    The exception is a session still starting up. Popen returns the child pid before it
+    has finished exec'ing ffmpeg, so ps still shows the forked interpreter. That pid is
+    ours, just not renamed yet.
     """
     if not RECPID.exists():
         return None
@@ -172,8 +195,6 @@ def recording_pid():
     except OSError:
         return None
     if RECSTARTING.exists():
-        # Popen returns the child pid before it has finished exec'ing ffmpeg, so ps still
-        # shows the forked interpreter. The pid is ours, just not renamed yet.
         return pid
     proc = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "command="],
                           capture_output=True, text=True)
@@ -207,12 +228,28 @@ def wait_for_pid(timeout=6.0):
 
 
 def begin_recording(conf):
-    # Claim the session before spawning anything, so a release that lands during the
-    # device open can find something to wait on.
+    """Start capturing, and return once the device is producing audio.
+
+    Four details here are all load-bearing, and each one was a bug first.
+
+    The session is claimed before anything is spawned, and the pid is written before the
+    device wait, because `start` and `stop` are separate processes. A push-to-talk release
+    landing during the open would otherwise find nothing to stop, leaving ffmpeg recording
+    for the full `max_seconds`.
+
+    ffmpeg's stderr goes to a file rather than a pipe. This client exits while ffmpeg keeps
+    running, and a pipe whose reader has gone away would kill the recording.
+
+    The cue is withheld until the file is actually growing. avfoundation takes about half a
+    second on a warm device and several seconds the first time after boot, and cueing early
+    loses the opening words. The warm case still breaks out in about half a second, so the
+    generous ceiling costs nothing.
+
+    A session reclaimed mid-open takes our own child down with it, since ffmpeg would
+    otherwise keep recording with nothing left to stop it.
+    """
     RECSTARTING.write_text(str(time.time()))
     REC.unlink(missing_ok=True)
-    # stderr goes to a file, not a pipe. This client exits while ffmpeg keeps running,
-    # and a pipe whose reader has gone away would kill the recording.
     errlog = open(RECERR, "w")
     proc = subprocess.Popen(
         [FFMPEG, "-y", "-loglevel", "error",
@@ -223,23 +260,14 @@ def begin_recording(conf):
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errlog,
         start_new_session=True)
 
-    # Claim the recording before waiting on the device. A push-to-talk release can land
-    # during the open, and without the pid file that stop would not find the process and
-    # would leave ffmpeg running until max_seconds.
     RECPID.write_text(str(proc.pid))
     RECMETA.write_text(json.dumps({"started": time.time(), "warm": False}))
     RECSTARTING.unlink(missing_ok=True)
 
-    # avfoundation takes roughly half a second on a warm device, but several seconds the
-    # first time after boot or after the input has been idle. Cue the user only once the
-    # file is actually growing, otherwise the opening words are lost. The warm case still
-    # breaks out in about half a second, so the generous ceiling costs nothing.
     deadline = time.time() + float(conf.get("device_open_timeout", 6.0))
     started = False
     while time.time() < deadline:
         if recording_pid() is None:
-            # stop or cancel already reclaimed this session. Take our own child down with
-            # it, otherwise ffmpeg keeps recording with nothing left to stop it.
             RECSTARTING.unlink(missing_ok=True)
             if proc.poll() is None:
                 proc.kill()
@@ -274,8 +302,6 @@ def begin_recording(conf):
     if not started:
         clog("device did not start producing audio in time, capture may be wedged")
 
-    # Reset the clock to the moment capture actually began, so a hold is not credited
-    # with the device open time.
     RECMETA.write_text(json.dumps({"started": time.time(), "warm": started}))
     play(SOUND_START, conf["sounds"])
     clog(f"recording started, pid={proc.pid}, device={conf['input_device']}, warm={started}")
@@ -351,7 +377,11 @@ def clipboard_has_non_text():
 
 
 def paste_at_cursor(text, restore=True):
-    """Put text on the clipboard, send Cmd+V to the front app, then restore the clipboard."""
+    """Put text on the clipboard, send Cmd+V to the front app, then restore the clipboard.
+
+    The old clipboard only goes back if ours is still the one sitting there. Restoring
+    unconditionally would silently discard anything the user copied during the paste.
+    """
     previous = get_clipboard() if restore else None
     if restore and not previous and clipboard_has_non_text():
         clog("clipboard holds non-text content, it cannot be restored after pasting")
@@ -372,8 +402,6 @@ def paste_at_cursor(text, restore=True):
         return False
     if restore and previous:
         time.sleep(0.3)
-        # Only put the old clipboard back if ours is still the one sitting there. If the
-        # user copied something during the paste, restoring would silently discard it.
         if get_clipboard() == text:
             set_clipboard(previous)
         else:
@@ -401,8 +429,6 @@ def set_mode(name):
     data = json.loads(CONFIG.read_text()) if CONFIG.exists() else {}
     data["mode"] = name
     CONFIG.write_text(json.dumps(data, indent=2) + "\n")
-    # The prompt prefix is prefilled from the configured mode, so the daemon has to
-    # rebuild it for the change to take effect.
     subprocess.run(["/usr/bin/pkill", "-f", "phonad.py"], capture_output=True)
     time.sleep(1)
     ok = start_daemon()
@@ -538,8 +564,6 @@ def main():
         elif a == "--no-restore":
             restore = False
         elif a == "--no-sound":
-            # Hammerspoon owns the cues when it drives phona, so that the sound and the
-            # on-screen state change land on the same frame.
             no_sound = True
         elif a in ("--help", "-h"):
             print(__doc__)
@@ -553,7 +577,6 @@ def main():
     if no_sound:
         conf["sounds"] = False
 
-    # local commands that need no daemon
     if cmd == "history":
         count = 5
         if len(rest) > 1 and rest[1].isdigit():
@@ -584,8 +607,6 @@ def main():
         return 0
 
     if cmd == "update-models":
-        # Deliberate, never automatic. New weights can change behaviour, so this is a
-        # decision rather than something that happens during an ordinary restart.
         conf = cfg()
         print("fetching the latest weights for:")
         print(f"  {conf.get('stt_model')}")
@@ -608,7 +629,6 @@ def main():
         return 0
 
     if cmd == "wrong":
-        # Everything after the verb is what the user actually said, if they bothered.
         actual = " ".join(rest[1:]) if len(rest) > 1 else None
         if not ensure_daemon(quiet):
             return 1
@@ -636,8 +656,6 @@ def main():
         print("cancelled", file=sys.stderr)
         return 0
     if cmd == "warm":
-        # Open and immediately close the input so the first real dictation does not pay
-        # the cold device open. Called by Hammerspoon at load.
         tmp = BASE / "_devwarm.wav"
         t0 = time.time()
         subprocess.run(
@@ -664,18 +682,13 @@ def main():
         print("daemon restarted" if ok else f"restart failed, see {LOG}")
         return 0 if ok else 1
 
-    # recording commands
     if cmd in ("toggle", "start", "stop"):
         active = (wait_for_pid() if cmd in ("stop", "toggle") else recording_pid()) is not None
 
         if cmd == "start" or (cmd == "toggle" and not active):
             if active:
-                # Never attach to a recording already in flight. Doing so used to make
-                # the next hold adopt an orphaned ffmpeg, so one transcript silently
-                # covered both the abandoned audio and the new dictation.
                 clog("a recording was already in flight, discarding it and starting fresh")
                 abort_recording(conf)
-            # warm the daemon in the background so it is ready when the user stops talking
             if not daemon_alive():
                 subprocess.Popen([str(PYTHON), __file__, "ping", "--quiet"],
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -701,9 +714,6 @@ def main():
             REC.unlink(missing_ok=True)
             return 1
 
-        # Hand the daemon a private copy. Transcription can take a second, and a new
-        # hold starting in that window would otherwise delete or overwrite the very file
-        # being transcribed, since every recording used the same path.
         take = BASE / f"take-{os.getpid()}-{int(time.time() * 1000)}.wav"
         try:
             REC.replace(take)
@@ -730,7 +740,6 @@ def main():
             return 0
         return deliver(reply, do_paste, quiet, restore, cmd)
 
-    # text commands
     if not ensure_daemon(quiet):
         return 1
 

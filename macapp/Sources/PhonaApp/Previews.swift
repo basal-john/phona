@@ -7,6 +7,10 @@ import SwiftUI
 /// reviewable without a live display, and gives a cheap visual regression check: rebuild,
 /// re-render, compare.
 enum Previews {
+    /// Write every state to a PNG.
+    ///
+    /// The HUD normally sits on a vibrancy layer, which has nothing to sample offscreen, so
+    /// it is rendered on a representative backdrop to keep the contrast honest.
     @MainActor
     static func renderAll(into directory: URL) {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -19,8 +23,6 @@ enum Previews {
             let model = HUDModel()
             model.state = state
             model.level = state == .listening ? 0.72 : 0
-            // The real HUD sits on a vibrancy layer, which has nothing to sample offscreen.
-            // Put it on a representative backdrop so the contrast is honest.
             render(ZStack {
                 LinearGradient(colors: [Color(white: 0.16), Color(white: 0.26)],
                                startPoint: .top, endPoint: .bottom)

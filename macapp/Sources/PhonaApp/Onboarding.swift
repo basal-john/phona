@@ -122,7 +122,6 @@ private struct PermissionRow: View {
                 .font(.system(size: 18))
                 .foregroundStyle(granted ? Color.green : Color.secondary)
                 .frame(width: 22)
-                // The tick is the confirmation, so it should feel like it landed.
                 .animation(.spring(duration: 0.34, bounce: 0.2), value: granted)
 
             VStack(alignment: .leading, spacing: 2) {

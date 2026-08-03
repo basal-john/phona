@@ -7,8 +7,8 @@ the prompt, the few-shot examples or the guard.
     python tests/run_model_tests.py
     python tests/run_model_tests.py --group obedience
 
-Exit code is non-zero when a case in the obedience or filler group fails, because those
-are correctness. Wording differences in the grammar groups are reported but tolerated,
+Exit code is non-zero when a case in the STRICT groups fails, obedience and filler, because
+those are correctness rather than wording. Wording differences in the grammar groups are reported but tolerated,
 since a paraphrase is not a defect and pinning exact strings would make the suite
 unmaintainable.
 """
@@ -24,7 +24,6 @@ BASE = pathlib.Path.home() / ".local/share/phona"
 SOCK = BASE / "phonad.sock"
 CASES = pathlib.Path(__file__).resolve().parent / "fixtures" / "grammar_cases.jsonl"
 
-# Groups where a failure is a real defect rather than a difference of wording.
 STRICT = {"obedience", "filler"}
 
 

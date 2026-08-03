@@ -30,10 +30,9 @@ def png_first_pixel_alpha(path):
 
 
 # --- the installer -----------------------------------------------------------------
-# Regression: install.sh never copied audit.py, so a fresh install had no audit. It also
-# wrote settings to the real data directory regardless of where it was installing.
 
 def test_installer_copies_every_engine_module():
+    """install.sh once shipped without audit.py, so a fresh install had no audit."""
     script = (ROOT / "install.sh").read_text()
     for module in ("phonad.py", "client.py", "audit.py"):
         assert module in script, f"install.sh does not install {module}"
@@ -45,12 +44,15 @@ def test_installer_honours_the_data_directory_override():
 
 
 def test_installer_never_hardcodes_the_data_directory():
-    """Regression: a step hardcoded ~/.local/share/phona in sys.path and ignored the
-    install target, so installing anywhere else failed with ModuleNotFoundError."""
+    """A step once hardcoded ~/.local/share/phona in sys.path and ignored the install
+    target, so installing anywhere else failed with ModuleNotFoundError.
+
+    Comment lines are skipped, since naming the default location is documentation rather
+    than behaviour.
+    """
     script = (ROOT / "install.sh").read_text()
     hardcoded = [
         line for line in script.splitlines()
-        # Comments may name the default location, that is documentation not behaviour.
         if ".local/share/phona" in line
         and "PHONA_HOME" not in line
         and not line.lstrip().startswith("#")
@@ -71,9 +73,9 @@ def test_update_script_exists_and_is_executable():
 
 
 # --- the app bundle ----------------------------------------------------------------
-# Regression: only one cue was bundled, so pressing Option fell back to the macOS Tink.
 
 def test_every_cue_is_bundled():
+    """Only one cue was bundled once, so pressing Option fell back to the macOS Tink."""
     assert SOUNDS.is_dir(), "no bundled sounds, cues would fall back to system alerts"
     shipped = {p.stem for p in SOUNDS.glob("*.aiff")}
     for cue in ("start", "done", "nothing"):
@@ -118,8 +120,6 @@ def test_bundle_version_matches_the_latest_git_tag():
 
 
 # --- documentation assets ----------------------------------------------------------
-# Regression: the onboarding screenshot had a transparent background, so GitHub's dark
-# theme showed through and the dark text became unreadable.
 
 @pytest.mark.parametrize("name", [
     "onboarding-fresh.png", "onboarding-ready.png",
@@ -157,12 +157,14 @@ def test_defaults_carry_no_personal_vocabulary():
 
 def test_models_are_pinned_by_default():
     """The loaders resolve the hub on every load with no revision pinned, so without this
-    a restart could silently swap the weights and change behaviour."""
+    a restart could silently swap the weights and change behaviour.
+
+    It must work by handing the loader a resolved local path. Relying on HF_HUB_OFFLINE does
+    not, because huggingface_hub freezes that flag into a module constant when it is first
+    imported, so setting it later is ignored.
+    """
     source = (ROOT / "engine/phonad.py").read_text()
     assert '"pin_models": True' in source
-    # Pinning must work by handing the loader a resolved local path. Relying on
-    # HF_HUB_OFFLINE does not work, because huggingface_hub freezes that flag into a
-    # module constant when it is first imported, so setting it later is ignored.
     assert "def resolve_local_model" in source
     assert "def pinned_target" in source
 

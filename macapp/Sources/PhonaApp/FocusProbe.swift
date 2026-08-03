@@ -29,6 +29,12 @@ enum FocusProbe {
         "AXSearchField",
     ]
 
+    /// Classify where text would land right now.
+    ///
+    /// No focused element at all is a real answer rather than an unknown one, since that is
+    /// what the Desktop and an unselected window look like. A custom role that still exposes
+    /// a settable value counts as editable, because that is the more reliable of the two
+    /// signals.
     static func current() -> Target {
         let system = AXUIElementCreateSystemWide()
 
@@ -42,8 +48,6 @@ enum FocusProbe {
         let status = AXUIElementCopyAttributeValue(
             app, kAXFocusedUIElementAttribute as CFString, &focused)
 
-        // No focused element at all is a real answer, not an unknown one. It is what
-        // happens on the Desktop or in a window with nothing selected.
         if status == .noValue || status == .attributeUnsupported {
             return .notEditable
         }
@@ -59,8 +63,6 @@ enum FocusProbe {
             return .editable
         }
 
-        // Some apps use a custom role but still expose a settable value, which is the
-        // more reliable signal of the two.
         var settable: DarwinBoolean = false
         if AXUIElementIsAttributeSettable(
             element, kAXValueAttribute as CFString, &settable) == .success, settable.boolValue {

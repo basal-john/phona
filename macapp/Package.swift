@@ -5,8 +5,8 @@ let package = Package(
     name: "PhonaApp",
     platforms: [.macOS(.v14)],
     targets: [
-        // Pure logic lives here so it can be tested without a running app, a microphone
-        // or any granted permission.
+        /// Pure logic, testable without a running app, a microphone or any granted
+        /// permission.
         .target(
             name: "PhonaCore",
             path: "Sources/PhonaCore",

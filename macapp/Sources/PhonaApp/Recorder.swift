@@ -49,6 +49,8 @@ final class Recorder {
         }
     }
 
+    /// Open the input and begin writing 16-bit PCM wav, which is what the Whisper path
+    /// on the daemon side expects.
     func start() throws {
         guard !engine.isRunning else { return }
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
@@ -64,7 +66,6 @@ final class Recorder {
         let url = Paths.base.appendingPathComponent("take-\(UUID().uuidString).wav")
         outputURL = url
 
-        // Write real 16-bit PCM wav, which is what the daemon's Whisper path expects.
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: 16_000.0,

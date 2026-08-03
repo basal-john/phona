@@ -22,6 +22,9 @@ final class HUDModel: ObservableObject {
 
 /// The capsule. Real vibrancy underneath, so it picks up whatever is behind it rather
 /// than faking depth with a flat dark fill.
+///
+/// Lift, scale and opacity all derive from one condition, so it arrives as a single object
+/// instead of three properties landing at slightly different times.
 struct HUDView: View {
     @ObservedObject var model: HUDModel
     /// ImageRenderer cannot draw an NSViewRepresentable, so previews swap the
@@ -34,9 +37,11 @@ struct HUDView: View {
     private let barMin: CGFloat = 4
     private let barMax: CGFloat = 22
 
-    // Apple parameterises springs as response plus bounce. Critically damped for the
-    // surface itself, a little looser for the bars since they track something physical.
+    /// Apple parameterises springs as response plus bounce rather than mass, stiffness and
+    /// damping. Critically damped, because overshoot on something that merely appeared reads
+    /// as noise.
     private var surfaceSpring: Animation { .spring(duration: 0.34, bounce: 0) }
+    /// Looser than the surface, since the bars track something physical.
     private var barSpring: Animation { .spring(duration: 0.16, bounce: 0.28) }
 
     private var shown: Bool { model.state != .hidden }
@@ -111,8 +116,6 @@ struct HUDView: View {
         )
         .compositingGroup()
         .shadow(color: .black.opacity(0.28), radius: 14, y: 6)
-        // Lift, scale and opacity all derive from one condition, so the capsule arrives
-        // as a single object instead of three properties landing at different times.
         .scaleEffect(shown ? 1 : 0.94)
         .offset(y: shown ? 0 : 14)
         .opacity(shown ? 1 : 0)
@@ -139,7 +142,9 @@ struct VisualEffect: NSViewRepresentable {
     }
 }
 
-/// A non-activating panel, so showing the HUD never steals focus from what you are typing into.
+/// A non-activating panel, so showing the HUD never steals focus from what you are typing
+/// into. Pinned to a dark appearance like the system dictation and volume overlays, so the
+/// white waveform stays legible whatever appearance the user runs.
 final class HUDPanel: NSPanel {
     let model = HUDModel()
     private var dismissWork: DispatchWorkItem?
@@ -154,8 +159,6 @@ final class HUDPanel: NSPanel {
         isOpaque = false
         hasShadow = false
         ignoresMouseEvents = true
-        // Always dark, like the system dictation and volume overlays, so the white
-        // waveform stays legible whatever appearance the user runs.
         appearance = NSAppearance(named: .darkAqua)
         collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         contentView = NSHostingView(rootView: HUDView(model: model))
@@ -179,14 +182,16 @@ final class HUDPanel: NSPanel {
         model.state = state
     }
 
+    /// Show the outcome, then leave.
+    ///
+    /// How long it lingers depends on what it is asking of the reader. A cancel goes almost
+    /// at once because there is nothing to read, a failure stays long enough for the warning
+    /// to register, and the clipboard case stays longest since it is the only one asking the
+    /// user to do something.
     func finish(_ outcome: HUDState) {
         guard model.state != .hidden else { return }
         dismissWork?.cancel()
         model.state = outcome
-        // A cancel leaves quickly, since there is nothing to read. A failure lingers a
-        // little so the warning is actually seen.
-        // The clipboard case lingers longest, since it is the only one asking the user to
-        // do something.
         let linger: TimeInterval
         switch outcome {
         case .done: linger = 0.45
@@ -199,10 +204,10 @@ final class HUDPanel: NSPanel {
         DispatchQueue.main.asyncAfter(deadline: .now() + linger, execute: work)
     }
 
+    /// Hide the capsule once the exit spring has played out, rather than cutting it off.
     func dismiss() {
         dismissWork?.cancel()
         model.state = .hidden
-        // Leave the window up until the exit spring has played out.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self, self.model.state == .hidden else { return }
             self.orderOut(nil)

@@ -65,6 +65,11 @@ final class HotkeyMonitor {
         }
     }
 
+    /// Classify one event into hold, double tap, or an ordinary shortcut.
+    ///
+    /// A release too short to be a hold is remembered, so a second one inside
+    /// `doubleTapWindow` counts as a double tap and starts hands-free instead. Any other
+    /// modifier joining means the user is reaching for a real shortcut, not dictating.
     private func handle(type: CGEventType, event: CGEvent) {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
@@ -97,7 +102,6 @@ final class HotkeyMonitor {
             dirty = false
             cancelTimer()
 
-            // A second quick tap inside the window means hands-free, not a hold.
             if let last = lastTapEnded, Date().timeIntervalSince(last) < doubleTapWindow {
                 lastTapEnded = nil
                 DispatchQueue.main.async { self.onToggleHandsFree() }
@@ -119,11 +123,9 @@ final class HotkeyMonitor {
                 lastTapEnded = nil
                 DispatchQueue.main.async { self.onEnd() }
             } else if !dirty {
-                // Too short to be a hold. Remember it, so a second one counts as a double tap.
                 lastTapEnded = Date()
             }
         } else if optionDown && !altAlone {
-            // Another modifier joined, so this is a real shortcut rather than a dictation.
             dirty = true
             cancelTimer()
             if armed {

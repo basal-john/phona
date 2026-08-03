@@ -29,6 +29,8 @@ enum Cue: String {
 
     private static var cache: [String: NSSound] = [:]
 
+    /// Play the cue, preferring the bundled file and falling back to the system set so the
+    /// app still makes sense if a resource is missing from the bundle.
     func play() {
         if self == .stop { return }
         if let cached = Self.cache[rawValue] {
@@ -36,8 +38,6 @@ enum Cue: String {
             cached.play()
             return
         }
-        // Bundled first, then the system fallback, so the app still makes sense if a
-        // resource is missing from the bundle.
         if let url = Bundle.main.url(forResource: rawValue, withExtension: "aiff",
                                     subdirectory: "Sounds"),
            let sound = NSSound(contentsOf: url, byReference: false) {

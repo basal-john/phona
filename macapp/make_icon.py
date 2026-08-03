@@ -16,7 +16,6 @@ import zlib
 OUT = pathlib.Path(__file__).parent / "Resources"
 ICONSET = OUT / "AppIcon.iconset"
 
-# Waveform bars, peaking early and settling as they reach the caret.
 BARS = [0.44, 0.72, 1.0, 0.66, 0.38]
 
 
@@ -34,14 +33,18 @@ def blend(dst, x, y, colour, alpha):
 
 
 def draw(size):
-    """Return an RGBA pixel buffer for one icon size."""
+    """Return an RGBA pixel buffer for one icon size.
+
+    Three layers, in order: a rounded slab with a vertical gradient so light appears to fall
+    from above, the waveform bars from BARS which peak early and settle as they reach the
+    caret, then the I-beam caret the voice turns into, tinted so the handoff is legible.
+    """
     px = [[(0, 0, 0, 0)] * size for _ in range(size)]
 
     margin = size * 0.10
     box = size - 2 * margin
     radius = box * 0.235
 
-    # Rounded slab, with a vertical gradient so light appears to fall from above.
     for y in range(size):
         for x in range(size):
             lx, ly = x + 0.5 - margin, y + 0.5 - margin
@@ -83,7 +86,6 @@ def draw(size):
                 d = abs(lx - br) if br <= ly <= bh - br else math.hypot(lx - br, ly - cyy)
                 blend(px, x, y, (255, 255, 255), coverage(d, br))
 
-    # The I-beam caret the voice turns into, tinted so the handoff is legible.
     caret_cx = start + len(BARS) * (bar_w + gap) - gap + caret_gap + serif_w / 2
     stem_left = caret_cx - caret_w / 2
     top = mid - caret_h / 2

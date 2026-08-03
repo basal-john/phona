@@ -19,6 +19,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// from the previous hold could tear down the HUD of the next one.
     private var session = 0
 
+    /// Bring the app up without ever blocking on a permission dialog.
+    ///
+    /// Accepts two debug flags, `--probe-focus` and `--setup`, which open a window or log
+    /// the focus target without needing the menu bar.
+    ///
+    /// Setup happens in its own window while the rest of the app starts, the event tap is
+    /// installed the moment the grant lands rather than on the next launch, and the
+    /// microphone is opened once to absorb the cold device open, which otherwise truncates
+    /// the first dictation after boot. The tap is re-enabled on a timer because the system
+    /// disables any event tap that times out.
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         buildStatusItem()
@@ -28,15 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys.onAbort = { [weak self] in self?.abortDictation() }
         hotkeys.onToggleHandsFree = { [weak self] in self?.toggleHandsFree() }
 
-        // Never block launch on a modal. Setup happens in its own window while the rest
-        // of the app comes up, and the event tap is installed the moment the grant lands.
         DispatchQueue.global().async { DaemonClient.startAndWait() }
 
         if HotkeyMonitor.hasAccessibility(prompt: false) {
             tapInstalled = hotkeys.start()
             recorder.requestPermission { granted in
                 if granted {
-                    // Absorb the cold device open so the first hold is not truncated.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.recorder.warm() }
                 } else {
                     self.showOnboarding()
@@ -47,7 +54,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showOnboarding()
         }
 
-        // Install the tap as soon as the user grants access, without needing a relaunch.
         Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             guard let self else { return }
             if !self.tapInstalled, HotkeyMonitor.hasAccessibility(prompt: false) {
@@ -56,7 +62,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Debug entry points, used to verify each window without clicking the menu bar.
         if CommandLine.arguments.contains("--settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.openSettings() }
         }
@@ -69,7 +74,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.showOnboarding() }
         }
 
-        // Check for a release once at launch and daily after that.
         UpdateCheck.check { version in
             if let version { Paths.log("update available: \(version)") }
         }
@@ -77,7 +81,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             UpdateCheck.check()
         }
 
-        // The system disables an event tap that ever times out. Put it back.
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.hotkeys.reenableIfNeeded()
         }
@@ -105,6 +108,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Stop recording, transcribe, and deliver the result.
+    ///
+    /// Each hold carries an id, because a slow result from the previous hold would
+    /// otherwise tear down the HUD of the next one. Where the text goes depends on the
+    /// output setting: inserting is the default, and copy-only turns dictation into a
+    /// scratchpad without changing how it is triggered. Text that had nowhere to land is
+    /// reported rather than chimed for, and a recording that simply contained no speech is
+    /// treated as a cancel rather than a failure, so an idle Option hold stays quiet.
     private func endDictation() {
         hotkeys.handsFree = false
         levelTimer?.invalidate()
@@ -132,19 +143,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                             seconds: take.seconds,
                                                             mode: nil) }
             DispatchQueue.main.async {
-                // Drop the result if another hold has started in the meantime.
                 guard mine == self.session else { return }
                 switch outcome {
                 case .success(let result) where result.state == "done" && !result.text.isEmpty:
-                    // Not every dictation should land in the focused app. Copy-only turns
-                    // phona into a scratchpad without changing how you trigger it.
                     if Settings.insertAtCursor {
                         switch Paster.paste(result.text) {
                         case .pasted(let warning):
                             if let warning { self.notify("Phona", warning) }
                         case .leftOnClipboard(let reason):
-                            // The text is safe on the clipboard. Say so rather than
-                            // playing a success chime for text that went nowhere.
                             Paths.log("nowhere to paste, left on clipboard: \(reason)")
                             self.statusItem?.button?.toolTip =
                                 "Your last dictation is on the clipboard. Press Cmd+V to place it."
@@ -159,8 +165,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     Cue.done.play()
                     self.hud.finish(.done)
                 case .success(let result):
-                    // The engine ran fine and simply had nothing to transcribe. Treat it
-                    // as a cancel, not a failure, so an idle Option hold stays quiet.
                     Paths.log("nothing heard, state=\(result.state) raw=\(result.raw)")
                     Cue.nothing.play()
                     self.hud.finish(.cancelled)
@@ -371,7 +375,6 @@ extension AppDelegate: NSMenuDelegate {
     }
 }
 
-// Headless render mode, used to review and regression-check the interface.
 if let idx = CommandLine.arguments.firstIndex(of: "--render") {
     let dir = CommandLine.arguments.count > idx + 1
         ? URL(fileURLWithPath: CommandLine.arguments[idx + 1])

@@ -80,7 +80,12 @@ def ask_model(text, timeout=180):
 
 
 def deterministic_findings(history, corrections):
-    """Facts, not guesses. Everything here was recorded by the daemon or the user."""
+    """Facts, not guesses. Everything here was recorded by the daemon or the user.
+
+    Refused corrections are read from the flag the daemon writes rather than inferred from
+    the text, which produced false positives on entries where the model had only punctuation
+    to fix.
+    """
     findings = []
 
     flagged = [c for c in corrections]
@@ -106,8 +111,6 @@ def deterministic_findings(history, corrections):
                     "but a run of these can mean the wrong input device.",
         })
 
-    # The daemon records this directly. Inferring it from the text produced false
-    # positives on entries where the model had only punctuation to fix.
     guarded = [h for h in history if h.get("guarded")]
     if guarded:
         findings.append({
@@ -122,9 +125,6 @@ def deterministic_findings(history, corrections):
     return findings
 
 
-# Replacements are applied on word boundaries across everything the user dictates, so a
-# proposal like "con = cron" from one flagged sentence would wreck "con man". Words common
-# enough to appear in ordinary English need a neighbour to disambiguate them.
 COMMON = {
     "con", "cron", "log", "logo", "form", "from", "there", "their", "then", "than",
     "one", "won", "to", "too", "two", "for", "four", "its", "it's", "our", "are",
@@ -134,7 +134,13 @@ COMMON = {
 
 
 def diff_words(heard, actual):
-    """Turn a flagged pair into a concrete replacement proposal."""
+    """Turn a flagged pair into a concrete replacement proposal.
+
+    Replacements fire on word boundaries across everything the user dictates, so a proposal
+    like "con = cron" taken from one flagged sentence would wreck "con man". A wrong side
+    that is ordinary English on its own therefore pulls in the following word to
+    disambiguate it, and is dropped entirely when it cannot.
+    """
     a = heard.lower().split()
     b = actual.lower().split()
     pairs = []
@@ -143,7 +149,6 @@ def diff_words(heard, actual):
             continue
         wrong_words = a[i1:i2]
         right_words = b[j1:j2]
-        # Pull in the following word when the wrong side is ordinary English on its own.
         if any(w.strip(".,!?") in COMMON for w in wrong_words):
             if i2 < len(a) and j2 < len(b) and a[i2] == b[j2]:
                 wrong_words = wrong_words + [a[i2]]
@@ -202,6 +207,11 @@ def inference_findings(history, limit=40):
 
 
 def collect(days):
+    """Gather findings and turn them into replacement proposals.
+
+    Proposals are limited to single words and short phrases. A longer replacement is too
+    blunt an instrument and would fire on text the user never meant it to touch.
+    """
     history = [h for h in read_jsonl(HISTORY) if within(h, days)]
     corrections = [c for c in read_jsonl(CORRECTIONS) if within(c, days, "flagged_at")]
     findings = deterministic_findings(history, corrections)
@@ -210,8 +220,6 @@ def collect(days):
     proposals = {}
     for f in findings:
         for pair in f.get("suggestion") or []:
-            # Single words and short phrases only. A long replacement is too blunt an
-            # instrument and would fire on text the user did not mean it to touch.
             if len(pair["wrong"].split()) <= 3 and pair["wrong"].lower() != pair["right"].lower():
                 proposals[pair["wrong"].lower()] = pair["right"]
 

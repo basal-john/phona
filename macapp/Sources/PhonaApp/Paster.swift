@@ -46,6 +46,9 @@ enum Paster {
     /// So the clipboard is only restored when Accessibility confirms an editable target.
     /// Anywhere else the dictation stays on the clipboard, which is recoverable with one
     /// Cmd+V, and the caller is told so it can say as much.
+    ///
+    /// A confirmed non-target gets no keystroke at all, because in Finder Cmd+V means paste
+    /// a file, which would either do nothing or do something unwanted.
     @discardableResult
     static func paste(_ text: String, restore: Bool = true) -> Outcome {
         let board = NSPasteboard.general
@@ -62,9 +65,6 @@ enum Paster {
         board.setString(text, forType: .string)
 
         if target == .notEditable {
-            // Do not fire a keystroke into something that cannot take it. In Finder for
-            // instance Cmd+V means paste a file, which would either do nothing or do
-            // something unwanted.
             return .leftOnClipboard(reason: FocusProbe.describe())
         }
 
@@ -72,9 +72,6 @@ enum Paster {
             return .leftOnClipboard(reason: "the paste keystroke could not be sent")
         }
 
-        // Restoring is only safe where the paste almost certainly landed. When the target
-        // is unknown the text stays on the clipboard, because losing a dictation is worse
-        // than leaving a clipboard changed.
         if restore, target == .editable, let previous {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 if board.string(forType: .string) == text {

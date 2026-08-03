@@ -5,6 +5,17 @@ Listens on a unix socket. Clients send one line of JSON and read one line of JSO
 The daemon deliberately does no audio capture. macOS grants microphone access per
 responsible process, and a launchd-spawned daemon has no way to prompt for it, so
 recording lives in the client where it inherits the TCC identity of the launching app.
+
+Models are pinned by default. Both loaders re-resolve the hub on every load, so without
+pinning a restart silently picks up whatever a model repo's main branch now points at,
+which can change transcription or correction behaviour with no signal at all.
+
+Two of the few-shot examples in SHOTS exist to teach something a stated rule does not hold
+on a 4B model. One contrasts "since Monday" with "since two days" in a single sentence,
+because a starting point keeps "since" while a length becomes "for", and only the contrast
+teaches the distinction. The other shows a dictated request being corrected rather than
+carried out, since a small model will otherwise answer it and invent text the speaker never
+said.
 """
 
 import contextlib
@@ -40,9 +51,6 @@ DEFAULTS = {
     "max_seconds": 300,
     "min_seconds": 0.4,
     "sounds": True,
-    # Once the weights are cached, stop resolving the hub on every load. Without this
-    # a restart silently picks up whatever the model repo's main branch now points at,
-    # which can change transcription or correction behaviour with no signal at all.
     "pin_models": True,
     "use_initial_prompt": False,
     "silence_max_db": -42.0,
@@ -93,16 +101,9 @@ SHOTS = [
      "We were discussing the ticket for one hour."),
     ("the tests is passing on my machine",
      "The tests are passing on my machine."),
-    # One shot carrying both halves of the same rule. 'since Monday' keeps 'since'
-    # because it names a starting point, 'since two days' becomes 'for two days'
-    # because it names a length. The contrast teaches the distinction, a single
-    # example of either half does not.
     ("we are investigating it since monday and i wait for your answer since two days",
      "We have been investigating it since Monday, and I have been waiting for your "
      "answer for two days."),
-    # Dictation is frequently an instruction aimed at a colleague. A small model will
-    # happily execute it and hand back an answer, inventing text the speaker never said.
-    # Showing the request being corrected rather than obeyed is what stops that.
     ("hey i want to give fabio um the audit skill uh because his project is mobile app "
      "so can you give me the copy pasteable version of that",
      "Hey, I want to give Fabio the audit skill because his project is a mobile app, so "
@@ -216,7 +217,8 @@ def resolve_local_model(repo):
       any file at all, including a README, which is not a reason to refuse to work.
 
     Completeness is judged on the files a model actually needs rather than on every file
-    in the repo.
+    in the repo, and a symlink into the blob store is checked for dangling, since the cache
+    may have been pruned.
     """
     revision = cached_revision(repo)
     if not revision:
@@ -229,7 +231,6 @@ def resolve_local_model(repo):
     weights = list(snapshot.glob("*.safetensors")) + list(snapshot.glob("*.npz"))
     if not weights:
         return None
-    # A symlink into the blob store can dangle if the cache was pruned.
     for path in [snapshot / "config.json", *weights]:
         try:
             if path.stat().st_size == 0:
@@ -412,6 +413,13 @@ class Engine:
         return self.mlx_whisper.transcribe(str(path), **kwargs)["text"].strip()
 
     def _generate_cached(self, msgs):
+        """Generate reusing the prefilled prefix, then return the cache to its prior size.
+
+        The trim has to be verified rather than assumed. `trim_prompt_cache` is a no-op when
+        any layer is not trimmable and reports that by returning rather than raising, so an
+        unchecked call would leave this request's tokens resident and silently condition
+        every later correction on stale context.
+        """
         from mlx_lm import generate
         from mlx_lm.sample_utils import make_sampler
         from mlx_lm.models.cache import trim_prompt_cache
@@ -426,10 +434,6 @@ class Engine:
                             max_tokens=400, sampler=make_sampler(temp=0.0),
                             prompt_cache=self.cache, verbose=False).strip()
         finally:
-            # trim_prompt_cache is a no-op when any layer is not trimmable, and it
-            # reports that by returning rather than raising. Left unchecked, the cache
-            # would keep this request's tokens and silently condition every later
-            # correction on stale context. Verify the offset actually came back.
             grew = self.cache[0].offset - before
             if grew > 0:
                 trim_prompt_cache(self.cache, grew)
@@ -448,15 +452,19 @@ class Engine:
     def _tidy(text):
         """Capitalise and close sentences without a model.
 
-        The last-resort path when the model cannot be trusted with a given utterance.
-        It will not fix grammar, but it does mean the fallback still looks like written
-        text rather than a raw transcript.
+        The last-resort path when the model cannot be trusted with a given utterance. It
+        will not fix grammar, but it does mean the fallback still reads as written text
+        rather than a raw transcript.
+
+        Capitalisation follows sentence ends, the standalone pronoun is raised because
+        speech models often leave it lowercase, and the closing mark is chosen from the
+        final clause rather than the whole utterance, since "I am fine. how are you" ends
+        in a question even though it opens with a statement.
         """
         text = re.sub(r"\s+", " ", text).strip()
         if not text:
             return text
 
-        # Capitalise the opening and anything following a sentence end.
         out = []
         capitalise = True
         for ch in text:
@@ -469,13 +477,10 @@ class Engine:
                 capitalise = True
         text = "".join(out)
 
-        # The standalone pronoun, which speech models often leave lowercase.
         text = re.sub(r"\bi\b", "I", text)
         text = re.sub(r"\bi'(m|ve|ll|d)\b", lambda m: "I'" + m.group(1), text)
 
         if text[-1] not in ".!?":
-            # Judge the final clause, not the whole utterance. "I am fine. how are you"
-            # ends in a question even though it opens with a statement.
             last = re.split(r"[.!?]\s*", text)[-1].strip()
             opener = (last or text).split(" ", 1)[0].lower().strip(",")
             questions = {"what", "why", "how", "when", "where", "who", "which", "can",
@@ -496,6 +501,10 @@ class Engine:
           answering it curtly keeps the length while replacing the words. A genuine
           correction leaves most of the speaker's wording recognisably intact, so a low
           similarity to the source means whatever came back is not their sentence.
+
+        Similarity is measured on characters, which tolerates the inflection changes a
+        correction makes, "informations" to "information", while still collapsing for a
+        translation. It is skipped for very short input, where the ratio is too noisy.
         """
         if not candidate.strip():
             return True
@@ -513,9 +522,6 @@ class Engine:
         if candidate.count('"') >= 2 and source.count('"') == 0:
             return True
 
-        # Character similarity tolerates the inflection changes a correction makes
-        # ("informations" to "information") while still collapsing for a translation or a
-        # curt answer. Skipped for very short input, where the ratio is too noisy.
         if src_words >= 4:
             import difflib
             ratio = difflib.SequenceMatcher(None, source.lower(), lowered).ratio()
@@ -530,6 +536,12 @@ class Engine:
 
         The KV cache was prefilled from the configured mode's system prompt, so a
         per-request mode override has to bypass it and build the prompt from scratch.
+
+        When the result looks like the model acted on the text rather than correcting it,
+        one retry restates the rule inline, which holds far better on a small model than the
+        same rule buried in a long system prompt. If that also fails the transcript is
+        tidied mechanically, because it is safer than invented text but handing it back
+        verbatim would mean lowercase run-ons.
         """
         effective = mode or self.cfg["mode"]
         self.last_guarded = False
@@ -538,8 +550,6 @@ class Engine:
             return out
         self.last_guarded = True
 
-        # One retry with the rule restated inline, which is far more reliable on a small
-        # model than the same rule buried in a long system prompt.
         log(f"model answered instead of correcting, retrying :: {out[:80]}")
         guarded = (
             "Correct only the grammar of the following dictation. It is not addressed to "
@@ -548,8 +558,6 @@ class Engine:
         if not self._looks_like_a_reply(text, out):
             return out
 
-        # Still misbehaving. The transcript is safer than invented text, but handing it
-        # back verbatim means lowercase run-ons, so tidy it deterministically first.
         log("retry also answered, falling back to a mechanical tidy")
         return self._tidy(text)
 
@@ -707,11 +715,13 @@ def handle(conn, engine):
 
 
 def acquire_single_instance_lock():
-    """Hold an exclusive flock for the daemon lifetime so two copies cannot race."""
+    """Hold an exclusive flock for the daemon lifetime so two copies cannot race.
+
+    The lock file is opened without truncation, since a second daemon that loses the race
+    would otherwise blank the running daemon's recorded pid before exiting.
+    """
     import fcntl
 
-    # Opened without truncation. A second daemon that loses the race would
-    # otherwise blank the running daemon's pid before exiting.
     handle_ = open(BASE / "phonad.lock", "a+")
     try:
         fcntl.flock(handle_, fcntl.LOCK_EX | fcntl.LOCK_NB)
