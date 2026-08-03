@@ -5,7 +5,8 @@
 # talks to it over a unix socket. Run this once, then open phona.app.
 set -euo pipefail
 
-TARGET="$HOME/.local/share/phona"
+# Overridable so the installer can be tested without touching a real install.
+TARGET="${PHONA_HOME:-$HOME/.local/share/phona}"
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$1"; }
@@ -29,7 +30,7 @@ done
 mkdir -p "$TARGET"
 
 say "installing the engine into $TARGET"
-cp "$SRC/engine/phonad.py" "$SRC/engine/client.py" "$TARGET/"
+cp "$SRC/engine/phonad.py" "$SRC/engine/client.py" "$SRC/engine/audit.py" "$TARGET/"
 
 if [[ ! -x "$TARGET/venv/bin/python" ]]; then
   say "creating the virtual environment"
@@ -57,6 +58,11 @@ from phonad import DEFAULTS, CONFIG
 CONFIG.write_text(json.dumps(DEFAULTS, indent=2) + "\n")
 print("wrote", CONFIG)
 PY
+fi
+
+if [[ -n "${PHONA_SKIP_MODELS:-}" ]]; then
+  say "skipping the model warmup"
+  exit 0
 fi
 
 say "warming the models, this downloads about 3.5 GB the first time"

@@ -172,6 +172,25 @@ Known weak spots, all in the correction stage rather than the transcription:
   ever sees text. Say "log" and get "logo" and the grammar pass has no reason to object.
   The replacements list exists for the ones you hit repeatedly.
 
+## Your data
+
+Everything stays on your Mac, in `~/.local/share/phona`:
+
+| File | What is in it |
+| --- | --- |
+| `history.jsonl` | every dictation, in plain text, with what was heard and what was returned |
+| `corrections.jsonl` | the ones you flagged as wrong |
+| `config.json` | your settings, vocabulary and replacements |
+| `phonad.log`, `app.log` | diagnostics |
+
+Worth being explicit about, because it is the obvious consequence of a local tool and
+still a surprise if nobody says it: the history is a plain text record of everything you
+have dictated, readable by anything running as you. Nothing is encrypted and nothing is
+uploaded. Delete `history.jsonl` whenever you like, the app recreates it.
+
+Audio is not kept. Each recording is written to a temporary file and deleted as soon as it
+has been transcribed.
+
 ## Updating
 
 ```bash

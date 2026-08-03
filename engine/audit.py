@@ -25,12 +25,13 @@ import collections
 import datetime as dt
 import difflib
 import json
+import os
 import pathlib
 import re
 import socket
 import sys
 
-BASE = pathlib.Path.home() / ".local/share/phona"
+BASE = pathlib.Path(os.environ.get("PHONA_HOME") or pathlib.Path.home() / ".local/share/phona")
 HISTORY = BASE / "history.jsonl"
 CORRECTIONS = BASE / "corrections.jsonl"
 CONFIG = BASE / "config.json"

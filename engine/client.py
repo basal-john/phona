@@ -29,7 +29,7 @@ import sys
 import time
 from pathlib import Path
 
-BASE = Path.home() / ".local/share/phona"
+BASE = Path(os.environ.get("PHONA_HOME") or Path.home() / ".local/share/phona")
 SOCK = BASE / "phonad.sock"
 LOG = BASE / "phonad.log"
 HISTORY = BASE / "history.jsonl"
