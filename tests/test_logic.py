@@ -428,6 +428,20 @@ def test_segment_gaps_reads_the_silence_between_segments(segments, expected):
     assert phonad.segment_gaps(segments) == expected
 
 
+@pytest.mark.parametrize("dash,name", [
+    pytest.param("—", "em dash", id="em-dash"),
+    pytest.param("–", "en dash", id="en-dash"),
+])
+def test_the_prompt_forbids_dashes_and_uses_none_itself(dash, name):
+    """A hard rule, not a preference: the output goes straight into the user's messages and
+    they never want one. The prompt has to say so and must not contain one either, since a
+    dash in the instructions or the examples teaches the opposite."""
+    assert name in phonad.SYSTEM_PROMPT
+    assert dash not in phonad.SYSTEM_PROMPT
+    assert dash not in phonad.POLISH_EXTRA
+    assert not [s for pair in phonad.SHOTS for s in pair if dash in s]
+
+
 def test_tidy_handles_empty_input():
     assert phonad.Engine._tidy("   ") == ""
 
