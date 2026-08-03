@@ -109,11 +109,12 @@ talk, the microphone is not picking you up.
 | **Polish** | Also strips filler words and splits run-on sentences. |
 | **Transcribe only** | No correction. Inserts exactly what was heard. |
 
-Neither correcting mode uses an em dash, and neither swaps a clumsy phrase for a tidier
-one. "Announce this is in the team" gets punctuated, not rewritten. The cost of that is a
-word that is wrong but real, "conform" where you meant "confirm", now survives, since the
-corrector cannot tell it from a word you chose. Use `replacements` for the ones you hit
-repeatedly.
+Neither correcting mode uses an em dash, and neither swaps a clumsy phrase for a tidier one.
+A clumsy phrase gets the smallest edit that makes it grammatical, so "announce this is in
+the team" loses the stray "is" and keeps everything else, rather than becoming "make the
+team aware of it". The cost is that a word which is wrong but real, "conform" where you
+meant "confirm", now survives, since the corrector cannot tell it from a word you chose. Use
+`replacements` for the ones you hit repeatedly.
 
 ### Layout
 
