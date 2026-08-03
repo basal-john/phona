@@ -179,7 +179,9 @@ silently pick up whatever a model repo's main branch now points at. New weights 
 transcription and correction behaviour, and finding that out by accident is not acceptable
 for something you dictate work into.
 
-So once both models are cached, Phona sets the hub offline and logs exactly what it loaded:
+So once a model is fully cached, Phona resolves it to a local snapshot directory and hands
+the loader that path instead of the repo name. No hub lookup happens at all, and the log
+states exactly what was loaded:
 
 ```
 pinned mlx-community/whisper-large-v3-turbo @ a4aaeec0636e
@@ -193,6 +195,12 @@ phona update-models           # fetch newer weights, then restart
 ```
 
 Set `pin_models` to `false` in `config.json` if you would rather always track the latest.
+
+The obvious approach, setting `HF_HUB_OFFLINE`, does not work. `huggingface_hub` freezes
+that flag into a module constant the first time it is imported, so setting it at runtime
+only takes effect by luck of import order. It also makes `mlx_whisper` refuse a snapshot
+that is missing any file at all, including a README, which is not a reason to stop working.
+Resolving the path sidesteps both problems.
 
 ## Accuracy
 

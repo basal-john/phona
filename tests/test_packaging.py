@@ -160,7 +160,30 @@ def test_models_are_pinned_by_default():
     a restart could silently swap the weights and change behaviour."""
     source = (ROOT / "engine/phonad.py").read_text()
     assert '"pin_models": True' in source
-    assert "HF_HUB_OFFLINE" in source, "nothing stops the hub being re-resolved"
+    # Pinning must work by handing the loader a resolved local path. Relying on
+    # HF_HUB_OFFLINE does not work, because huggingface_hub freezes that flag into a
+    # module constant when it is first imported, so setting it later is ignored.
+    assert "def resolve_local_model" in source
+    assert "def pinned_target" in source
+
+
+def test_pinning_does_not_rely_on_the_offline_environment_flag():
+    """Regression: the first attempt set HF_HUB_OFFLINE at runtime, which only worked by
+    luck of import order, and made mlx_whisper refuse a snapshot missing a README."""
+    source = (ROOT / "engine/phonad.py").read_text()
+    code = [
+        line for line in source.splitlines()
+        if "HF_HUB_OFFLINE" in line and not line.lstrip().startswith("#")
+        and '"""' not in line and "    - " not in line
+    ]
+    assert not code, f"pinning still depends on the offline flag: {code}"
+
+
+def test_the_loader_is_given_the_resolved_target():
+    """Both loaders must receive the pinned target rather than the raw repo id."""
+    source = (ROOT / "engine/phonad.py").read_text()
+    assert "load(self.llm_target)" in source
+    assert '"path_or_hf_repo": self.stt_target' in source
 
 
 def test_there_is_a_deliberate_way_to_update_models():

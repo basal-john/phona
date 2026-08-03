@@ -22,6 +22,7 @@ from pathlib import Path
 
 HOME = Path.home()
 BASE = Path(os.environ.get("PHONA_HOME") or HOME / ".local/share/phona")
+HF_CACHE = Path(os.environ.get("HF_HOME") or HOME / ".cache/huggingface") / "hub"
 SOCK = BASE / "phonad.sock"
 LOG = BASE / "phonad.log"
 HISTORY = BASE / "history.jsonl"
@@ -187,35 +188,74 @@ def flag_last(actual=None):
     return {"state": "done", **record}
 
 
+def cache_slug(repo):
+    return "models--" + repo.replace("/", "--")
+
+
 def cached_revision(repo):
     """The commit currently cached for a hub repo, so the log can state what is loaded."""
-    slug = "models--" + repo.replace("/", "--")
-    ref = Path.home() / ".cache/huggingface/hub" / slug / "refs/main"
+    ref = HF_CACHE / cache_slug(repo) / "refs/main"
     try:
-        return ref.read_text().strip()[:12]
+        return ref.read_text().strip()
     except Exception:
         return None
 
 
-def pin_models_if_cached(cfg):
-    """Freeze the models to what is on disk, once both are present.
+def resolve_local_model(repo):
+    """Return a local snapshot directory for a hub repo, or None when not usable.
 
-    Leaves the hub reachable when something is missing, so a first run can still
-    download. After that the weights never change underneath the user.
+    Both loaders accept a filesystem path and only fall back to the hub when the path
+    does not exist, so handing them a directory removes hub resolution entirely. That
+    matters for three reasons:
+
+    - Without it every load re-resolves the repo's main branch, so a restart could
+      silently swap the weights and change behaviour with no signal.
+    - HF_HUB_OFFLINE is frozen into a module constant when huggingface_hub is first
+      imported, so setting it from here only works by luck of import order.
+    - Offline resolution through snapshot_download rejects a snapshot that is missing
+      any file at all, including a README, which is not a reason to refuse to work.
+
+    Completeness is judged on the files a model actually needs rather than on every file
+    in the repo.
     """
+    revision = cached_revision(repo)
+    if not revision:
+        return None
+    snapshot = HF_CACHE / cache_slug(repo) / "snapshots" / revision
+    if not snapshot.is_dir():
+        return None
+    if not (snapshot / "config.json").exists():
+        return None
+    weights = list(snapshot.glob("*.safetensors")) + list(snapshot.glob("*.npz"))
+    if not weights:
+        return None
+    # A symlink into the blob store can dangle if the cache was pruned.
+    for path in [snapshot / "config.json", *weights]:
+        try:
+            if path.stat().st_size == 0:
+                return None
+        except OSError:
+            return None
+    return snapshot
+
+
+def pinned_target(cfg, key):
+    """What to hand the loader for a configured model.
+
+    A local snapshot path when one is usable, so the weights are frozen to what is on
+    disk. Otherwise the repo id, so a first run or a newly configured model can still
+    download.
+    """
+    repo = cfg[key]
     if not cfg.get("pin_models", True):
-        log("model pinning disabled, the hub will be re-resolved on every load")
-        return False
-    wanted = [cfg["stt_model"], cfg["llm_model"]]
-    revisions = {repo: cached_revision(repo) for repo in wanted}
-    if all(revisions.values()):
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        for repo, rev in revisions.items():
-            log(f"pinned {repo} @ {rev}")
-        return True
-    missing = [r for r, v in revisions.items() if not v]
-    log(f"not pinning yet, still to download: {', '.join(missing)}")
-    return False
+        log(f"{key} not pinned by configuration, the hub will be re-resolved")
+        return repo
+    local = resolve_local_model(repo)
+    if local is None:
+        log(f"{key} {repo} is not fully cached, it will be fetched from the hub")
+        return repo
+    log(f"pinned {key} {repo} @ {(cached_revision(repo) or '')[:12]}")
+    return str(local)
 
 
 def peak_db(path):
@@ -293,8 +333,10 @@ class Engine:
         from mlx_lm import load
 
         self.mlx_whisper = mlx_whisper
+        self.stt_target = pinned_target(cfg, "stt_model")
+        self.llm_target = pinned_target(cfg, "llm_model")
         log(f"loading llm {cfg['llm_model']}")
-        self.model, self.tokenizer = load(cfg["llm_model"])
+        self.model, self.tokenizer = load(self.llm_target)
         self._build_prefix()
 
         log(f"warming stt {cfg['stt_model']}")
@@ -358,7 +400,7 @@ class Engine:
 
     def transcribe(self, path):
         kwargs = {
-            "path_or_hf_repo": self.cfg["stt_model"],
+            "path_or_hf_repo": self.stt_target,
             "verbose": False,
             "condition_on_previous_text": False,
         }
@@ -644,9 +686,10 @@ def handle(conn, engine):
                 "llm_model": engine.cfg["llm_model"],
                 "mode": engine.cfg["mode"],
                 "prefix_tokens": len(engine.prefix_tokens),
-                "stt_revision": cached_revision(engine.cfg["stt_model"]),
-                "llm_revision": cached_revision(engine.cfg["llm_model"]),
-                "pinned": os.environ.get("HF_HUB_OFFLINE") == "1",
+                "stt_revision": (cached_revision(engine.cfg["stt_model"]) or "")[:12] or None,
+                "llm_revision": (cached_revision(engine.cfg["llm_model"]) or "")[:12] or None,
+                "stt_pinned": not engine.stt_target.startswith("mlx-community/"),
+                "llm_pinned": not engine.llm_target.startswith("mlx-community/"),
                 "pid": os.getpid(),
             }
         else:
@@ -690,7 +733,6 @@ def main():
     lock = acquire_single_instance_lock()
     cfg = load_config()
     log(f"daemon starting, pid {os.getpid()}")
-    pin_models_if_cached(cfg)
     engine = Engine(cfg)
 
     SOCK.unlink(missing_ok=True)

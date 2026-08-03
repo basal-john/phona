@@ -572,7 +572,12 @@ def main():
         print(f"          revision {(reply or {}).get('stt_revision') or 'not cached'}")
         print(f"grammar   {conf.get('llm_model')}")
         print(f"          revision {(reply or {}).get('llm_revision') or 'not cached'}")
-        print(f"pinned    {(reply or {}).get('pinned')}")
+        stt_pin = (reply or {}).get("stt_pinned")
+        llm_pin = (reply or {}).get("llm_pinned")
+        if reply is None:
+            print("pinned    unknown, the engine is not running")
+        else:
+            print(f"pinned    speech {bool(stt_pin)}, grammar {bool(llm_pin)}")
         print()
         print("Change a model by editing stt_model or llm_model in config.json, then")
         print("run 'phona restart'. Refresh the pinned weights with 'phona update-models'.")
