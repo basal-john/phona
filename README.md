@@ -179,6 +179,19 @@ Option.
 **Logs.** `~/.local/share/vfix/app.log` for the app, `vfixd.log` for the engine, and
 `history.jsonl` for every dictation with what was heard next to what was corrected.
 
+**The Option key stopped working after a rebuild.** It should not any more, but this is
+worth knowing. An ad-hoc signature's designated requirement is the code hash itself, so
+macOS binds a permission grant to one exact build and every rebuild silently orphans it.
+The permission keeps showing as enabled in System Settings while the app is denied, and
+nothing logs a reason. `build.sh` pins the requirement to the bundle identifier instead,
+which keeps grants valid across rebuilds. If a grant ever does go stale, clear it and
+grant again:
+
+```bash
+tccutil reset Accessibility com.basalona.vfix
+tccutil reset Microphone com.basalona.vfix
+```
+
 ## Credits
 
 Built after looking hard at [Spokenly](https://spokenly.app), Willow and Lemon, which

@@ -26,15 +26,22 @@ cp Resources/AppIcon.icns "${BUNDLE}/Contents/Resources/AppIcon.icns"
 printf 'APPL????' > "${BUNDLE}/Contents/PkgInfo"
 
 echo "==> signing"
-# Ad-hoc signature. Enough for the app to hold Accessibility and Microphone grants on
-# this machine. Distributing to other people without a Developer ID means they get a
-# Gatekeeper warning on first launch, which the README explains how to clear.
+# Ad-hoc signature, but with the designated requirement pinned to the bundle identifier
+# rather than the code hash.
+#
+# This matters more than it looks. An ad-hoc signature's default designated requirement IS
+# the cdhash, so TCC binds an Accessibility or Microphone grant to one exact build. Every
+# rebuild changes the hash, silently orphaning the grant: the permission still shows as
+# enabled in System Settings while the app is denied. Pinning to the identifier keeps the
+# grant valid across rebuilds.
+#
+# The tradeoff is a weaker requirement, since anything claiming this identifier satisfies
+# it. That is acceptable for a locally built personal tool and would not be for something
+# shipped with a Developer ID.
 codesign --force --deep --sign - \
   --identifier com.basalona.vfix \
-  --options runtime \
-  --entitlements Resources/vfix.entitlements \
-  "${BUNDLE}" 2>/dev/null || codesign --force --deep --sign - \
-  --identifier com.basalona.vfix "${BUNDLE}"
+  -r='designated => identifier "com.basalona.vfix"' \
+  "${BUNDLE}"
 
 codesign --verify --verbose=1 "${BUNDLE}" && echo "signature ok"
 
