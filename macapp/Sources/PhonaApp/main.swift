@@ -88,8 +88,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Dictation
 
+    /// Acknowledge the hold before opening the input device.
+    ///
+    /// Opening a cold device costs about a second, measured between 0.83 and 1.20 s, and the
+    /// microphone is warmed only once at launch, so any hold after a few idle minutes pays it
+    /// again. With the HUD and the cue sitting behind that call there was nothing to say the
+    /// hold had registered until it finished, and on a short hold the cue arrived after the
+    /// release, which reads as no cue at all.
+    ///
+    /// So the acknowledgement comes first and the device opens behind it. A hold that then
+    /// fails to open still resolves the HUD through the catch, at the cost of a start cue for
+    /// a dictation that never began, which is the better way round: a rare stray cue against
+    /// a second of silence on every cold hold.
     private func beginDictation() {
         session += 1
+        hud.show(.listening)
+        Cue.start.play()
         do {
             try recorder.start()
         } catch {
@@ -98,8 +112,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hud.finish(.failed)
             return
         }
-        hud.show(.listening)
-        Cue.start.play()
 
         levelTimer?.invalidate()
         levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
