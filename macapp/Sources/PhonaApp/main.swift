@@ -333,9 +333,14 @@ extension AppDelegate: NSMenuDelegate {
             header.isEnabled = false
             menu.addItem(header)
             for entry in entries {
-                let trimmed = entry.text.count > 52
-                    ? String(entry.text.prefix(51)) + "…"
-                    : entry.text
+                /// A corrected entry can be a multi-line list, and a newline in a menu item
+                /// title breaks the row's single-line shape. The full text is still what
+                /// gets copied, so only the preview is flattened.
+                let flat = entry.text.split(whereSeparator: \.isNewline)
+                    .joined(separator: " ")
+                let trimmed = flat.count > 52
+                    ? String(flat.prefix(51)) + "…"
+                    : flat
                 let item = NSMenuItem(title: "\(entry.clockTime)   \(trimmed)",
                                       action: #selector(copyEntry(_:)), keyEquivalent: "")
                 item.target = self

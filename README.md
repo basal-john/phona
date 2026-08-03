@@ -109,6 +109,40 @@ talk, the microphone is not picking you up.
 | **Polish** | Also strips filler words and splits run-on sentences. |
 | **Transcribe only** | No correction. Inserts exactly what was heard. |
 
+Neither correcting mode uses an em dash, and neither swaps a clumsy phrase for a tidier one.
+A clumsy phrase gets the smallest edit that makes it grammatical, so "announce this is in
+the team" loses the stray "is" and keeps everything else, rather than becoming "make the
+team aware of it". The cost is that a word which is wrong but real, "conform" where you
+meant "confirm", now survives, since the corrector cannot tell it from a word you chose. Use
+`replacements` for the ones you hit repeatedly.
+
+### Layout
+
+Count items off and they come back as a list. Saying "there are three things, first the
+config needs an update, second the tests are failing, third someone has to review the PR"
+gives you:
+
+```
+There are three things:
+1. The config needs an update.
+2. The tests are failing.
+3. Someone has to review the PR.
+```
+
+For the rest, say the break you want as a sentence of its own:
+
+| Say | Get |
+| --- | --- |
+| `new paragraph` | a blank line |
+| `new line`, `next line`, `line break` | a line break |
+| `bullet point`, `new bullet` | a new `- ` item |
+
+A command only counts when it is a sentence on its own, so "we should start a new paragraph
+here" is left as words. Anything not recognised is typed out rather than guessed at, on the
+grounds that you can see and fix a stray "new line" but not a clause that silently vanished.
+Turn the whole thing off with `spoken_layout` in Settings. Transcribe only mode never
+applies it.
+
 ### Menu bar
 
 Recent dictations, click one to copy it back. Hover to see what the transcriber actually
@@ -116,8 +150,8 @@ heard before correction, which is how you tell a mishearing from a bad correctio
 
 ### Settings
 
-Vocabulary for words the transcriber mangles, literal replacements applied last
-(`jeera = Jira`), correction mode, and open at login.
+Vocabulary for words the transcriber mangles, literal replacements applied before the
+layout pass (`jeera = Jira`), correction mode, spoken layout commands, and open at login.
 
 ## How it works
 
@@ -217,11 +251,19 @@ carry it out and hand back an answer instead of correcting the sentence. Saying 
 send me the summary" once produced a preamble and a quoted rewrite that was never spoken.
 Three guards now sit in front of that: a few-shot showing a request being corrected rather
 than obeyed, a size check, and a similarity check against the original, which is what
-catches a translation or a curt answer that keeps the length while replacing the words. If
-all of it fails, the raw transcript is returned, because your words are always safer than
-invented ones.
+catches a translation or a curt answer that keeps the length while replacing the words. A
+list gets a tighter size budget than ordinary text, because layout is allowed to add
+structure but never content, and that is what stops the model padding an enumeration with
+items nobody said. If all of it fails, the transcript is tidied and returned, because your
+words are always safer than invented ones.
 
 Known weak spots, all in the correction stage rather than the transcription:
+
+- A single short invented list item can fit inside the size budget. Two do not
+- An unpunctuated dictation whose layout command the model neither converts nor closes off
+  as a sentence leaves the words in, for example a bare "new line" mid-clause
+- Two clearly separate topics in one dictation get no blank line unless you say
+  `new paragraph`. Pause length would be the better signal and is not used yet
 
 - Occasional slips on `since` versus `for` with unusual duration phrasing
 - `rollback` used as a verb where `roll back` is correct
