@@ -15,7 +15,11 @@ final class HotkeyMonitor {
     /// this reuses the same key rather than asking the user to learn a second one.
     var onToggleHandsFree: () -> Void = {}
 
-    var holdDelay: TimeInterval = 0.25
+    /// The floor on how soon a hold can be acknowledged. Lowered from 250 ms because it is
+    /// the whole cost once the main thread stops being blocked, and 250 ms is perceptible.
+    /// The cost is arming slightly more readily on a hold that was reaching for a shortcut,
+    /// which the dirty flag still cancels the moment a second key lands.
+    var holdDelay: TimeInterval = 0.15
     var doubleTapWindow: TimeInterval = 0.4
     /// Set by the app while a hands-free dictation is running.
     var handsFree = false
@@ -61,6 +65,7 @@ final class HotkeyMonitor {
     /// The tap is disabled by the system if it ever times out. Put it back.
     func reenableIfNeeded() {
         if let tap, !CGEvent.tapIsEnabled(tap: tap) {
+            Paths.log("event tap was found disabled by the poll, re-enabling")
             CGEvent.tapEnable(tap: tap, enable: true)
         }
     }
@@ -72,6 +77,12 @@ final class HotkeyMonitor {
     /// modifier joining means the user is reaching for a real shortcut, not dictating.
     private func handle(type: CGEventType, event: CGEvent) {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            Paths.log("event tap disabled by \(type == .tapDisabledByTimeout ? "timeout" : "user input"), re-enabling")
+            optionDown = false
+            dirty = false
+            armed = false
+            cancelTimer()
+            lastTapEnded = nil
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return
         }

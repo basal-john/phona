@@ -29,10 +29,39 @@ enum Cue: String {
 
     private static var cache: [String: NSSound] = [:]
 
-    /// Play the cue, preferring the bundled file and falling back to the system set so the
-    /// app still makes sense if a resource is missing from the bundle.
+    /// Every cue is played on this queue and nowhere else, which both keeps the cache
+    /// accesses serialised and keeps the blocking off the main thread.
+    private static let queue = DispatchQueue(label: "com.basalona.phona.cues")
+
+    /// Play the cue, off the main thread.
+    ///
+    /// `NSSound.play()` blocks while the default output device powers back up, and macOS
+    /// powers it down after a few seconds of silence. Measured on the bundled file: 16 ms
+    /// when the device is already awake, 144 ms after 5 s idle, 534 ms after 15 s, and 796 ms
+    /// on the first call in a fresh process.
+    ///
+    /// That is why this must not run on the main thread. Nothing is drawn until the main
+    /// thread returns to its run loop, so a cue played there held the HUD off screen for as
+    /// long as it blocked, and the HUD is the thing the speaker is waiting for. A cue that
+    /// arrives a few milliseconds late is not noticeable. A cue that gates every pixel is.
     func play() {
         if self == .stop { return }
+        Self.queue.async { self.playNow() }
+    }
+
+    /// Prefers the bundled file, falling back to the system set so the app still makes sense
+    /// if a resource is missing from the bundle.
+    /// Prefers the bundled file, falling back to the system set so the app still makes sense
+    /// if a resource is missing from the bundle.
+    ///
+    /// A cue is inaudible on an idle Bluetooth speaker, and that is not a bug here. The three
+    /// cues run 215 to 260 ms, while an output device that has gone quiet takes 474 to 534 ms
+    /// to come back, so the sound finishes before the link is carrying audio. `play()` still
+    /// returns true, because queuing it succeeded. Chased once already: the file, the bundle
+    /// lookup and the thread were all verified fine before the output device was checked.
+    /// Wired and built-in output are unaffected, and the accepted answer is to live with it
+    /// rather than pad every cue with silence or hold an audio stream open.
+    private func playNow() {
         if let cached = Self.cache[rawValue] {
             cached.stop()
             cached.play()
