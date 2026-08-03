@@ -32,18 +32,35 @@ enum Previews {
         fresh.accessibility = false
         fresh.microphone = false
         fresh.engine = false
-        render(OnboardingView(state: fresh, onDone: {}),
+        render(documentShot(OnboardingView(state: fresh, onDone: {})),
                to: directory.appendingPathComponent("onboarding-fresh.png"))
 
         let ready = PermissionState()
         ready.accessibility = true
         ready.microphone = true
         ready.engine = true
-        render(OnboardingView(state: ready, onDone: {}),
+        render(documentShot(OnboardingView(state: ready, onDone: {})),
                to: directory.appendingPathComponent("onboarding-ready.png"))
 
-        render(SettingsView().frame(width: 460, height: 470),
+        render(documentShot(SettingsView().frame(width: 460, height: 470)),
                to: directory.appendingPathComponent("settings.png"))
+    }
+
+    /// Wrap a view so the exported PNG is opaque.
+    ///
+    /// ImageRenderer leaves the background transparent, which looks fine locally because
+    /// most viewers composite onto white. Embedded in a README it is not fine: GitHub's
+    /// dark theme shows through the alpha and the dark text becomes unreadable. Painting
+    /// an explicit light surface, with a hairline edge so it still has definition against
+    /// a white page, makes one image legible in both themes.
+    @MainActor
+    private static func documentShot(_ view: some View) -> some View {
+        view
+            .background(Color(white: 0.97))
+            .overlay(
+                Rectangle().strokeBorder(Color(white: 0.80), lineWidth: 1)
+            )
+            .environment(\.colorScheme, .light)
     }
 
     @MainActor

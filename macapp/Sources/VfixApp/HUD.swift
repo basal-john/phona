@@ -6,6 +6,9 @@ enum HUDState: Equatable {
     case listening
     case working
     case done
+    /// Nothing usable was heard. Distinct from `failed` because it is not an error, so it
+    /// gets no warning glyph and leaves without complaint.
+    case cancelled
     case failed
 }
 
@@ -45,7 +48,7 @@ struct HUDView: View {
             return barMin + (barMax - barMin) * CGFloat(scaled)
         case .working:
             return barMin + 3
-        case .done, .failed, .hidden:
+        case .done, .failed, .cancelled, .hidden:
             return 0
         }
     }
@@ -152,13 +155,16 @@ final class HUDPanel: NSPanel {
         model.state = state
     }
 
-    func finish(success: Bool) {
+    func finish(_ outcome: HUDState) {
         guard model.state != .hidden else { return }
         dismissWork?.cancel()
-        model.state = success ? .done : .failed
+        model.state = outcome
+        // A cancel leaves quickly, since there is nothing to read. A failure lingers a
+        // little so the warning is actually seen.
+        let linger: TimeInterval = outcome == .done ? 0.45 : (outcome == .cancelled ? 0.3 : 0.8)
         let work = DispatchWorkItem { [weak self] in self?.dismiss() }
         dismissWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + (success ? 0.45 : 0.8), execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + linger, execute: work)
     }
 
     func dismiss() {

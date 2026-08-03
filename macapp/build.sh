@@ -23,6 +23,10 @@ mkdir -p "${BUNDLE}/Contents/MacOS" "${BUNDLE}/Contents/Resources"
 cp .build/release/VfixApp "${BUNDLE}/Contents/MacOS/VfixApp"
 cp Resources/Info.plist "${BUNDLE}/Contents/Info.plist"
 cp Resources/AppIcon.icns "${BUNDLE}/Contents/Resources/AppIcon.icns"
+if [[ -d Resources/Sounds ]]; then
+  mkdir -p "${BUNDLE}/Contents/Resources/Sounds"
+  cp Resources/Sounds/*.aiff "${BUNDLE}/Contents/Resources/Sounds/" 2>/dev/null || true
+fi
 printf 'APPL????' > "${BUNDLE}/Contents/PkgInfo"
 
 echo "==> signing"

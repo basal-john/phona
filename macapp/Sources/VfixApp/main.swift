@@ -78,11 +78,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             Paths.log("start failed: \(error.localizedDescription)")
             notify("vfix", error.localizedDescription)
-            hud.finish(success: false)
+            hud.finish(.failed)
             return
         }
         hud.show(.listening)
-        NSSound(named: "Tink")?.play()
+        Cue.start.play()
 
         levelTimer?.invalidate()
         levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
@@ -99,12 +99,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let mine = session
         hud.show(.working)
-        NSSound(named: "Pop")?.play()
+        Cue.stop.play()
 
         let minSeconds = 0.4
         guard take.seconds >= minSeconds else {
             try? FileManager.default.removeItem(at: take.url)
-            hud.finish(success: false)
+            Cue.nothing.play()
+            hud.finish(.cancelled)
             return
         }
 
@@ -131,17 +132,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(result.text, forType: .string)
                     }
-                    NSSound(named: "Glass")?.play()
-                    self.hud.finish(success: true)
+                    Cue.done.play()
+                    self.hud.finish(.done)
                 case .success(let result):
-                    Paths.log("no usable text, state=\(result.state) raw=\(result.raw)")
-                    NSSound(named: "Basso")?.play()
-                    self.hud.finish(success: false)
+                    // The engine ran fine and simply had nothing to transcribe. Treat it
+                    // as a cancel, not a failure, so an idle Option hold stays quiet.
+                    Paths.log("nothing heard, state=\(result.state) raw=\(result.raw)")
+                    Cue.nothing.play()
+                    self.hud.finish(.cancelled)
                 case .failure(let error):
                     Paths.log("daemon error: \(error.localizedDescription)")
                     self.notify("vfix", error.localizedDescription)
-                    NSSound(named: "Basso")?.play()
-                    self.hud.finish(success: false)
+                    Cue.nothing.play()
+                    self.hud.finish(.failed)
                 }
             }
         }
