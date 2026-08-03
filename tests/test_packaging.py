@@ -155,6 +155,19 @@ def test_defaults_carry_no_personal_vocabulary():
     assert entries == ["Phona"], f"unexpected default vocabulary {entries}"
 
 
+def test_models_are_pinned_by_default():
+    """The loaders resolve the hub on every load with no revision pinned, so without this
+    a restart could silently swap the weights and change behaviour."""
+    source = (ROOT / "engine/phonad.py").read_text()
+    assert '"pin_models": True' in source
+    assert "HF_HUB_OFFLINE" in source, "nothing stops the hub being re-resolved"
+
+
+def test_there_is_a_deliberate_way_to_update_models():
+    client = (ROOT / "engine/client.py").read_text()
+    assert "update-models" in client, "pinning without an update path traps users"
+
+
 def test_initial_prompt_is_off_by_default():
     """It improves rare names but makes Whisper invent words during silence."""
     source = (ROOT / "engine/phonad.py").read_text()

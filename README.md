@@ -143,6 +143,57 @@ the signal the correction stage exists to catch. Speed lost that argument to fid
 The daemon prefills a KV cache with the fixed prompt prefix, which cut the grammar pass
 from 1.35 s to 0.40 s.
 
+## The models, and why these ones
+
+| Job | Model | Size | Why |
+| --- | --- | --- | --- |
+| speech | `mlx-community/whisper-large-v3-turbo` | 1.5 GB | chosen over Parakeet on a measured comparison, see below |
+| grammar | `mlx-community/Qwen3-4B-Instruct-2507-4bit` | 2.1 GB | picked as a sensible default and never benchmarked against alternatives |
+
+The speech choice was earned. Parakeet TDT is roughly five times faster, and it lost
+anyway: on twelve sentences with planted grammar errors it silently repaired two during
+transcription, which destroys the signal the correction stage exists to catch. Whisper
+preserved all twelve. Fidelity beat speed because the correction stage cannot fix an error
+it never sees.
+
+The grammar choice was not earned in the same way. Qwen3-4B was picked because it follows
+instructions well at 4-bit, fits comfortably in memory, and answers in well under a second.
+Those are reasonable criteria, and no alternative was ever measured against it. Treat it as
+a default that works rather than a winner, and see `tests/run_model_tests.py` for the suite
+that would settle it.
+
+Both are swappable. Any mlx-community Whisper or mlx-lm chat model will load:
+
+```bash
+phona models                  # what is loaded, and at which revision
+```
+
+Edit `stt_model` or `llm_model` in `config.json`, then `phona restart`. A larger grammar
+model raises quality and roughly doubles latency. A smaller Whisper is faster and mishears
+more, which matters more here than it would elsewhere.
+
+### Model updates are pinned deliberately
+
+The loaders resolve the hub on every load, with no revision pinned, so a restart could
+silently pick up whatever a model repo's main branch now points at. New weights can change
+transcription and correction behaviour, and finding that out by accident is not acceptable
+for something you dictate work into.
+
+So once both models are cached, Phona sets the hub offline and logs exactly what it loaded:
+
+```
+pinned mlx-community/whisper-large-v3-turbo @ a4aaeec0636e
+pinned mlx-community/Qwen3-4B-Instruct-2507-4bit @ 50d427756c6b
+```
+
+Updating is a decision, not a side effect:
+
+```bash
+phona update-models           # fetch newer weights, then restart
+```
+
+Set `pin_models` to `false` in `config.json` if you would rather always track the latest.
+
 ## Accuracy
 
 Measured, not asserted. The suite covers three groups: sentences with planted errors,

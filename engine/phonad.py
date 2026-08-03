@@ -39,6 +39,10 @@ DEFAULTS = {
     "max_seconds": 300,
     "min_seconds": 0.4,
     "sounds": True,
+    # Once the weights are cached, stop resolving the hub on every load. Without this
+    # a restart silently picks up whatever the model repo's main branch now points at,
+    # which can change transcription or correction behaviour with no signal at all.
+    "pin_models": True,
     "use_initial_prompt": False,
     "silence_max_db": -42.0,
     "max_words_per_second": 6.0,
@@ -181,6 +185,37 @@ def flag_last(actual=None):
         return {"state": "error", "error": str(exc)}
     log(f"flagged as wrong :: {record['returned'][:60]}")
     return {"state": "done", **record}
+
+
+def cached_revision(repo):
+    """The commit currently cached for a hub repo, so the log can state what is loaded."""
+    slug = "models--" + repo.replace("/", "--")
+    ref = Path.home() / ".cache/huggingface/hub" / slug / "refs/main"
+    try:
+        return ref.read_text().strip()[:12]
+    except Exception:
+        return None
+
+
+def pin_models_if_cached(cfg):
+    """Freeze the models to what is on disk, once both are present.
+
+    Leaves the hub reachable when something is missing, so a first run can still
+    download. After that the weights never change underneath the user.
+    """
+    if not cfg.get("pin_models", True):
+        log("model pinning disabled, the hub will be re-resolved on every load")
+        return False
+    wanted = [cfg["stt_model"], cfg["llm_model"]]
+    revisions = {repo: cached_revision(repo) for repo in wanted}
+    if all(revisions.values()):
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        for repo, rev in revisions.items():
+            log(f"pinned {repo} @ {rev}")
+        return True
+    missing = [r for r, v in revisions.items() if not v]
+    log(f"not pinning yet, still to download: {', '.join(missing)}")
+    return False
 
 
 def peak_db(path):
@@ -609,6 +644,9 @@ def handle(conn, engine):
                 "llm_model": engine.cfg["llm_model"],
                 "mode": engine.cfg["mode"],
                 "prefix_tokens": len(engine.prefix_tokens),
+                "stt_revision": cached_revision(engine.cfg["stt_model"]),
+                "llm_revision": cached_revision(engine.cfg["llm_model"]),
+                "pinned": os.environ.get("HF_HUB_OFFLINE") == "1",
                 "pid": os.getpid(),
             }
         else:
@@ -652,6 +690,7 @@ def main():
     lock = acquire_single_instance_lock()
     cfg = load_config()
     log(f"daemon starting, pid {os.getpid()}")
+    pin_models_if_cached(cfg)
     engine = Engine(cfg)
 
     SOCK.unlink(missing_ok=True)

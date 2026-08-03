@@ -10,6 +10,8 @@ Usage:
   phona start|stop|cancel|status|ping
   phona fix "text"      correct text without recording, reads stdin when given no text
   phona clip            correct whatever is on the clipboard, in place
+  phona models          show which models are loaded and at which revision
+  phona update-models   deliberately fetch newer weights, then restart
   phona wrong ["..."]   flag the last dictation as wrong, optionally with the truth
   phona history [n]     show the last n dictations
   phona restart|stop-daemon|logs|config
@@ -561,6 +563,45 @@ def main():
         show_history(count, search=hist_search, since=hist_since,
                      export=hist_export, plain=hist_plain, as_json=as_json)
         return 0
+    if cmd == "models":
+        reply = None
+        if daemon_alive():
+            reply = send({"cmd": "STATUS"})
+        conf = cfg()
+        print(f"speech    {conf.get('stt_model')}")
+        print(f"          revision {(reply or {}).get('stt_revision') or 'not cached'}")
+        print(f"grammar   {conf.get('llm_model')}")
+        print(f"          revision {(reply or {}).get('llm_revision') or 'not cached'}")
+        print(f"pinned    {(reply or {}).get('pinned')}")
+        print()
+        print("Change a model by editing stt_model or llm_model in config.json, then")
+        print("run 'phona restart'. Refresh the pinned weights with 'phona update-models'.")
+        return 0
+
+    if cmd == "update-models":
+        # Deliberate, never automatic. New weights can change behaviour, so this is a
+        # decision rather than something that happens during an ordinary restart.
+        conf = cfg()
+        print("fetching the latest weights for:")
+        print(f"  {conf.get('stt_model')}")
+        print(f"  {conf.get('llm_model')}")
+        env = dict(os.environ)
+        env.pop("HF_HUB_OFFLINE", None)
+        code = subprocess.run(
+            [str(PYTHON), "-c",
+             "import sys;from huggingface_hub import snapshot_download;"
+             "[snapshot_download(r) for r in sys.argv[1:]]",
+             conf.get("stt_model"), conf.get("llm_model")],
+            env=env).returncode
+        if code != 0:
+            print("phona: download failed", file=sys.stderr)
+            return 1
+        subprocess.run(["/usr/bin/pkill", "-f", "phonad.py"], capture_output=True)
+        time.sleep(1)
+        start_daemon()
+        print("done. run 'phona models' to see the new revisions")
+        return 0
+
     if cmd == "wrong":
         # Everything after the verb is what the user actually said, if they bothered.
         actual = " ".join(rest[1:]) if len(rest) > 1 else None
