@@ -234,6 +234,40 @@ proposes replacements and applies none of them until you say so. A weekly run la
 Analysis uses the same local model as everything else, so a scheduled audit does not
 quietly start uploading your dictations.
 
+## Tests
+
+```bash
+python -m pytest tests/ -q          # logic and packaging, no model needed
+cd macapp && swift test             # version comparison
+python tests/run_model_tests.py     # the grammar suite, needs the engine running
+```
+
+The split is deliberate. The first two run in CI on every push, on an Apple Silicon
+runner, in a couple of minutes. The third needs the warm daemon and several gigabytes of
+models, so it stays local and is run before touching the prompt, the few-shot examples or
+the guard.
+
+Every case corresponds to a defect that actually happened. The suite is not there for
+coverage, it is there so the same mistake cannot ship twice:
+
+| Test | The bug it prevents |
+| --- | --- |
+| guard rejects the model acting on the text | a dictated request came back as an answer with invented text |
+| guard accepts real corrections | the guard over-firing and discarding good rewrites |
+| tidy capitalises and closes sentences | a rejected correction returned a raw lowercase transcript |
+| common word proposals require context | the audit proposing `con = cron`, which corrupts "con man" |
+| guarded entries read the recorded flag | the audit counting punctuation-only fixes as refusals |
+| signature is pinned to the identifier | every rebuild silently orphaning the Accessibility grant |
+| every cue is bundled | the start sound falling back to a macOS alert |
+| screenshots are opaque | the README unreadable in GitHub's dark theme |
+| bundle version matches the git tag | the app reporting 1.0.0 while the release said 1.1.0 |
+| installer copies every module | a fresh install arriving with no audit |
+
+What CI cannot cover, and why: anything needing a granted permission, a microphone, or the
+language model. The TCC bug that cost an hour this morning is invisible to any test that
+does not run on a real machine with real grants. That gap is real and worth knowing rather
+than papering over.
+
 ## Troubleshooting
 
 **Nothing happens when I hold Option.** Check Accessibility is granted, in the menu bar

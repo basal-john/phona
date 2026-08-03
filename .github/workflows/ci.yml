@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    # Apple Silicon, which the Swift build needs. Free for public repositories.
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needed so the bundle version can be compared against the latest tag.
+          fetch-depth: 0
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          uname -m
+          python3 --version
+
+      - name: Install ffmpeg
+        run: brew install ffmpeg
+
+      - name: Build the app
+        working-directory: macapp
+        run: swift build -c release
+
+      - name: Swift tests
+        working-directory: macapp
+        run: swift test
+
+      - name: Python tests
+        run: |
+          python3 -m venv /tmp/ci-venv
+          /tmp/ci-venv/bin/python -m pip install -q --upgrade pip pytest
+          /tmp/ci-venv/bin/python -m pytest tests/ -q
+
+      - name: Package the app and assert the bundle is complete
+        working-directory: macapp
+        run: |
+          ./build.sh
+          test -f build/Phona.app/Contents/Resources/AppIcon.icns
+          for cue in start done nothing; do
+            test -f "build/Phona.app/Contents/Resources/Sounds/$cue.aiff" \
+              || { echo "missing cue $cue, it would fall back to a macOS alert"; exit 1; }
+          done
+          codesign --verify --verbose=1 build/Phona.app
+          # The designated requirement must be the identifier. If it is the code hash,
+          # every rebuild silently orphans the user's Accessibility grant.
+          codesign -d -r- build/Phona.app 2>&1 | tee /tmp/dr.txt
+          grep -q 'designated => identifier "com.basalona.phona"' /tmp/dr.txt \
+            || { echo "designated requirement is not pinned to the identifier"; exit 1; }
+
+      - name: Render the interface and check the screenshots are opaque
+        working-directory: macapp
+        run: |
+          swift build
+          ./.build/debug/PhonaApp --render /tmp/previews
+          ls /tmp/previews
+          for shot in hud-listening hud-working hud-done onboarding-fresh; do
+            test -f "/tmp/previews/$shot.png" || { echo "missing render $shot"; exit 1; }
+          done
+          # A transparent background is unreadable on a dark page, which is how the
+          # onboarding screenshot shipped broken once.
+          for shot in onboarding-fresh onboarding-ready; do
+            alpha=$(ffmpeg -v error -i "/tmp/previews/$shot.png" \
+              -vf "crop=1:1:0:0,format=rgba" -f rawvideo - | xxd -p -l 4 | cut -c7-8)
+            [ "$alpha" = "ff" ] || { echo "$shot is transparent"; exit 1; }
+          done
+
+      - name: Shell scripts are valid
+        run: |
+          brew install shellcheck
+          bash -n install.sh update.sh macapp/build.sh
+          shellcheck -S error install.sh update.sh macapp/build.sh
+
+      - name: Installer works on a clean target
+        run: |
+          # PHONA_HOME keeps this away from any real install. Models are skipped, since
+          # downloading several gigabytes per run buys nothing here.
+          PHONA_HOME=/tmp/phona-ci PHONA_SKIP_MODELS=1 ./install.sh
+          for module in phonad.py client.py audit.py; do
+            test -f "/tmp/phona-ci/$module" || { echo "installer did not place $module"; exit 1; }
+          done
+          /tmp/phona-ci/venv/bin/python -c "import mlx_whisper, mlx_lm; print('engine imports ok')"
+
+      - name: Upload the rendered interface
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interface-previews
+          path: /tmp/previews
+          if-no-files-found: ignore

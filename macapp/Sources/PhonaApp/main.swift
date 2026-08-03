@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import PhonaCore
 import ServiceManagement
 import SwiftUI
 
@@ -245,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func openReleases() { UpdateCheck.openReleasesPage() }
+    @objc private func openReleases() { NSWorkspace.shared.open(UpdateCheck.releasesPage) }
     @objc private func openHistory() { NSWorkspace.shared.open(Paths.history) }
     @objc private func openReadme() { NSWorkspace.shared.open(Paths.readme) }
     @objc private func warmMic() { recorder.warm() }
