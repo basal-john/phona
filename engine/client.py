@@ -437,6 +437,13 @@ def set_mode(name):
 
 
 def show_history(count, search=None, since=None, export=None, plain=False, as_json=False):
+    """Print the history.
+
+    `--plain` promises one entry per line so it can be piped, and a corrected entry can now
+    contain real newlines. They are escaped rather than printed, because a `wc -l` or a
+    `while read` over the output would otherwise silently attribute a list's items to
+    separate dictations. Use `--json` to get the text back verbatim.
+    """
     entries = load_history()
     if not entries:
         print(json.dumps([]) if as_json else "no history yet")
@@ -479,7 +486,7 @@ def show_history(count, search=None, since=None, export=None, plain=False, as_js
 
     for e in entries:
         if plain:
-            print(e.get("text", ""))
+            print(e.get("text", "").replace("\n", "\\n"))
             continue
         src = e.get("source", "voice")
         print(f"{e.get('ts')}  {e.get('seconds')}s  "

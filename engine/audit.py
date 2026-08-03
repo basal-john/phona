@@ -119,7 +119,7 @@ def deterministic_findings(history, corrections):
             "count": len(guarded),
             "note": "The guard rejected the model's rewrite and fell back to tidying. "
                     "Grammar in these was left alone.",
-            "examples": [g.get("text", "")[:90] for g in guarded[:3]],
+            "examples": [" ".join(g.get("text", "").split())[:90] for g in guarded[:3]],
         })
 
     return findings

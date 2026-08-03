@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var launchAtLogin: Bool = false
     @State private var biasVocabulary: Bool = false
     @State private var insertAtCursor: Bool = true
+    @State private var spokenLayout: Bool = true
     @State private var status: String = ""
 
     var body: some View {
@@ -46,8 +47,17 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Layout") {
+                Toggle("Act on spoken layout commands", isOn: $spokenLayout)
+                Text("Say \"new paragraph\", \"new line\" or \"bullet point\" as a sentence "
+                     + "of its own and it becomes a real break. Off means those words are "
+                     + "typed out.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Replacements") {
-                Text("Applied last, literally. One per line, as wrong = right.")
+                Text("Applied literally, before the layout pass. One per line, as wrong = right.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 TextEditor(text: $replacements)
@@ -96,6 +106,7 @@ struct SettingsView: View {
         dictionary = (obj["dictionary"] as? [String] ?? []).joined(separator: "\n")
         biasVocabulary = obj["use_initial_prompt"] as? Bool ?? false
         insertAtCursor = (obj["output_action"] as? String ?? "insert") == "insert"
+        spokenLayout = obj["spoken_layout"] as? Bool ?? true
         let pairs = obj["replacements"] as? [String: String] ?? [:]
         replacements = pairs.map { "\($0.key) = \($0.value)" }.sorted().joined(separator: "\n")
     }
@@ -111,6 +122,7 @@ struct SettingsView: View {
         obj["mode"] = mode.rawValue
         obj["use_initial_prompt"] = biasVocabulary
         obj["output_action"] = insertAtCursor ? "insert" : "clipboard"
+        obj["spoken_layout"] = spokenLayout
         obj["dictionary"] = dictionary
             .split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
