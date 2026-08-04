@@ -54,7 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the first dictation after boot. The tap is re-enabled on a timer because the system
     /// disables any event tap that times out.
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(Settings.showInDock ? .regular : .accessory)
+        OutputMute.recoverFromInterruptedDictation()
         buildStatusItem()
 
         hotkeys.onBegin = { [weak self] in self?.beginDictation() }
@@ -147,6 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.notify("Phona", error.localizedDescription)
                     self.levelTimer?.invalidate()
                     self.levelTimer = nil
+                    OutputMute.release()
                     self.hud.finish(.failed)
                 }
             }
@@ -170,6 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if live, !announced {
                 announced = true
                 self.trace("first audio buffer", since: armed)
+                OutputMute.engage()
             }
             self.hud.model.capturing = live
             self.hud.model.level = live ? self.recorder.level : 0
@@ -188,6 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys.handsFree = false
         levelTimer?.invalidate()
         levelTimer = nil
+        OutputMute.release()
 
         let mine = session
         hud.show(.working)
@@ -295,8 +299,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         session += 1
         levelTimer?.invalidate()
         levelTimer = nil
+        OutputMute.release()
         audioQueue.async { [weak self] in self?.recorder.cancel() }
         hud.dismiss()
+    }
+
+    /// Quitting with a dictation in flight must not leave the Mac silent.
+    func applicationWillTerminate(_ notification: Notification) {
+        OutputMute.release()
     }
 
     // MARK: - Menu bar
@@ -363,7 +373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 430),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 580),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Phona Settings"
         window.contentView = NSHostingView(rootView: SettingsView())
@@ -525,6 +535,11 @@ if let idx = CommandLine.arguments.firstIndex(of: "--render") {
     let renderApp = NSApplication.shared
     renderApp.setActivationPolicy(.prohibited)
     MainActor.assumeIsolated { Previews.renderAll(into: dir) }
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--check-mute") {
+    OutputMute.report()
     exit(0)
 }
 

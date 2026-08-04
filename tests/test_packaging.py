@@ -226,6 +226,54 @@ def test_no_editable_target_means_no_keystroke():
     assert "if target == .notEditable" in source
 
 
+def swift_function(source, signature):
+    """The body of a Swift function declared at one level of indentation."""
+    start = source.index(signature)
+    return source[start:source.index("\n    }", start)]
+
+
+@pytest.mark.parametrize("signature", [
+    "private func endDictation",
+    "private func abortDictation",
+    "func applicationWillTerminate",
+])
+def test_every_path_out_of_a_dictation_unmutes(signature):
+    """A mute that outlives the dictation leaves the Mac silent with nothing on screen to
+    explain it, and the user has nothing to undo because they never muted anything."""
+    source = (ROOT / "macapp/Sources/PhonaApp/main.swift").read_text()
+    assert "OutputMute.release()" in swift_function(source, signature), (
+        f"{signature} can leave the output muted")
+
+
+def test_muting_waits_for_the_first_audio_buffer():
+    """Muting when Option goes down swallows the start cue, which is the only confirmation
+    that something is listening before the waveform starts moving. The device takes a few
+    hundred milliseconds to deliver a buffer, and nothing recorded before that exists."""
+    source = (ROOT / "macapp/Sources/PhonaApp/main.swift").read_text()
+    assert "OutputMute.engage()" in swift_function(source, "private func startLevelTimer")
+    assert "OutputMute.engage()" not in swift_function(source, "private func beginDictation")
+
+
+def test_an_interrupted_dictation_cannot_leave_the_mac_muted():
+    """Being killed between the mute and the restore is the one failure the user cannot
+    connect to Phona, so what was taken away is recorded and put back at the next launch."""
+    app = (ROOT / "macapp/Sources/PhonaApp/main.swift").read_text()
+    mute = (ROOT / "macapp/Sources/PhonaApp/OutputMute.swift").read_text()
+    assert "OutputMute.recoverFromInterruptedDictation()" in app
+    assert "UserDefaults.standard.set" in mute, "nothing survives the process to restore from"
+
+
+def test_muting_falls_back_when_a_device_has_no_mute_control():
+    """Bluetooth and aggregate devices commonly expose only a volume, and setting a property
+    a device does not have fails silently, which would look like the feature doing nothing."""
+    source = (ROOT / "macapp/Sources/PhonaApp/OutputMute.swift").read_text()
+    assert "kAudioDevicePropertyMute" in source
+    assert "kAudioDevicePropertyVolumeScalar" in source
+    assert "kAudioDevicePropertyPreferredChannelsForStereo" in source
+    assert "AudioObjectIsPropertySettable" in source, (
+        "a control is used without asking the device whether it can be set")
+
+
 def test_the_hud_distinguishes_placed_from_copied():
     """A checkmark would claim the text was inserted when it is only on the clipboard."""
     hud = (ROOT / "macapp/Sources/PhonaApp/HUD.swift").read_text()

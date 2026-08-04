@@ -45,7 +45,7 @@ enum Previews {
         render(documentShot(OnboardingView(state: ready, onDone: {})),
                to: directory.appendingPathComponent("onboarding-ready.png"))
 
-        render(documentShot(SettingsView().frame(width: 460, height: 470)),
+        render(documentShot(SettingsView().frame(width: 460, height: 620)),
                to: directory.appendingPathComponent("settings.png"))
     }
 

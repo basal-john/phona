@@ -139,6 +139,30 @@ enum Settings {
     }
 
     static var insertAtCursor: Bool { value("output_action", default: "insert") == "insert" }
+
+    /// Whether Phona keeps a Dock icon as well as its menu bar item.
+    static var showInDock: Bool { value("show_in_dock", default: true) }
+
+    /// Whether the output device is muted while the microphone is capturing.
+    static var muteOthersWhileDictating: Bool { value("mute_others", default: true) }
+
+    /// Write one key without disturbing the rest of the file.
+    ///
+    /// Separate from the settings window's save, which restarts the engine because the keys
+    /// it writes are prefilled into the daemon's prompt at startup. These two are the app's
+    /// own behaviour, the daemon never reads them, and restarting a model load to move a
+    /// Dock icon would be absurd.
+    static func set(_ key: String, _ newValue: Any) {
+        var obj: [String: Any] = [:]
+        if let data = try? Data(contentsOf: Paths.config),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            obj = existing
+        }
+        obj[key] = newValue
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) else { return }
+        try? data.write(to: Paths.config)
+    }
 }
 
 /// Correction mode, read from and written to the same config.json the daemon uses.

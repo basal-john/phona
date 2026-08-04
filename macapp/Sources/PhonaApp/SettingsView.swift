@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var biasVocabulary: Bool = false
     @State private var insertAtCursor: Bool = true
     @State private var spokenLayout: Bool = true
+    @State private var muteOthers: Bool = true
+    @State private var showInDock: Bool = true
     @State private var status: String = ""
 
     var body: some View {
@@ -65,7 +67,25 @@ struct SettingsView: View {
                     .frame(height: 62)
             }
 
+            Section("While dictating") {
+                Toggle("Mute other audio", isOn: $muteOthers)
+                    .onChange(of: muteOthers) { _, wanted in
+                        Settings.set("mute_others", wanted)
+                    }
+                Text("Music, a video or a voice on a call reaches the microphone through the "
+                     + "room, and the transcriber cannot tell it apart from you. The output "
+                     + "device is muted once capture starts and restored when you let go.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
             Section {
+                Toggle("Show Phona in the Dock", isOn: $showInDock)
+                    .onChange(of: showInDock) { _, wanted in
+                        Settings.set("show_in_dock", wanted)
+                        NSApp.setActivationPolicy(wanted ? .regular : .accessory)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
                 Toggle("Open Phona at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, wanted in
                         do {
@@ -100,6 +120,8 @@ struct SettingsView: View {
 
     private func load() {
         launchAtLogin = SMAppService.mainApp.status == .enabled
+        muteOthers = Settings.muteOthersWhileDictating
+        showInDock = Settings.showInDock
         guard let data = try? Data(contentsOf: Paths.config),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }

@@ -143,15 +143,38 @@ grounds that you can see and fix a stray "new line" but not a clause that silent
 Turn the whole thing off with `spoken_layout` in Settings. Transcribe only mode never
 applies it.
 
+### Everything else goes quiet
+
+Music, a video in a browser tab or a voice on a call reaches the microphone through the
+room, and the transcriber cannot tell that speech apart from yours. It hears both and writes
+down whichever it found more convincing.
+
+So the output device is muted while you are being recorded, and set back the moment you let
+go. It is muted when the first audio buffer arrives rather than when Option goes down, which
+is a few hundred milliseconds later, so the start cue is still audible and everything that
+reaches the recording is already quiet.
+
+Muting the device rather than pausing players is what makes it work for every source. macOS
+has no way to duck other applications, and pausing means knowing every app that could be
+playing. Note that this includes call audio: dictate during a meeting and you stop hearing
+the room for as long as you hold Option.
+
+Turn it off with **Mute other audio** in Settings. If Phona is killed mid-dictation the
+volume is put back at the next launch, so a crash cannot leave the Mac silent.
+
 ### Menu bar
 
 Recent dictations, click one to copy it back. Hover to see what the transcriber actually
 heard before correction, which is how you tell a mishearing from a bad correction.
 
+Phona also keeps a Dock icon. Turn it off with **Show Phona in the Dock** and it lives in
+the menu bar alone.
+
 ### Settings
 
 Vocabulary for words the transcriber mangles, literal replacements applied before the
-layout pass (`jeera = Jira`), correction mode, spoken layout commands, and open at login.
+layout pass (`jeera = Jira`), correction mode, spoken layout commands, muting other audio,
+the Dock icon, and open at login.
 
 ## How it works
 
@@ -408,6 +431,14 @@ and only puts your previous clipboard back when the answer is yes. Where the ans
 uncertain, which is common in Electron apps that expose little of their hierarchy, the
 dictation stays on the clipboard. Losing what you said is worse than leaving a clipboard
 changed.
+
+**My output stayed muted.** Phona mutes the output device while it records and restores it
+when you let go, and puts it back at the next launch if it was killed in between. To see
+which control your device offers and watch a mute and a restore go through:
+
+```bash
+/Applications/Phona.app/Contents/MacOS/PhonaApp --check-mute
+```
 
 **Logs.** `~/.local/share/phona/app.log` for the app, `phonad.log` for the engine, and
 `history.jsonl` for every dictation with what was heard next to what was corrected.
