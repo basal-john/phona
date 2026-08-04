@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import PhonaCore
 
 enum Paths {
     static let base = FileManager.default.homeDirectoryForCurrentUser
@@ -57,7 +58,7 @@ enum Paster {
         let hadItems = !(board.pasteboardItems ?? []).isEmpty
         let previous = board.string(forType: .string)
         var warning: String?
-        if restore, previous == nil, hadItems {
+        if previous == nil, hadItems {
             warning = "Your clipboard held an image or file. It has been replaced and cannot be restored."
         }
 
@@ -138,7 +139,9 @@ enum Settings {
         return v
     }
 
-    static var insertAtCursor: Bool { value("output_action", default: "insert") == "insert" }
+    static var outputAction: OutputAction {
+        OutputAction.from(configValue: value("output_action", default: "insert"))
+    }
 
     /// Whether Phona keeps a Dock icon as well as its menu bar item.
     static var showInDock: Bool { value("show_in_dock", default: true) }
