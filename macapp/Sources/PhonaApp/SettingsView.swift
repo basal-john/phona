@@ -103,7 +103,9 @@ struct SettingsView: View {
                 HStack {
                     Text(status).font(.callout).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Save") { save() }.keyboardShortcut(.defaultAction)
+                    Button("Save and restart engine") { save() }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!needsRestart)
                 }
             }
         }
@@ -127,6 +129,13 @@ struct SettingsView: View {
                        biasVocabulary: biasVocabulary,
                        replacements: EngineSettings.replacements(fromText: replacements),
                        spokenLayout: spokenLayout)
+    }
+
+    /// True when a field the daemon only reads at startup differs from what was loaded.
+    /// The app-side toggles are deliberately excluded, because they already applied.
+    private var needsRestart: Bool {
+        guard let loaded else { return false }
+        return current != loaded
     }
 
     private func load() {
@@ -174,6 +183,7 @@ struct SettingsView: View {
         }
 
         status = "Saved. Restarting the engine…"
+        loaded = current
         DispatchQueue.global().async {
             let kill = Process()
             kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
