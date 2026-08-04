@@ -9,7 +9,7 @@ struct SettingsView: View {
     @State private var replacements: String = ""
     @State private var launchAtLogin: Bool = false
     @State private var biasVocabulary: Bool = false
-    @State private var insertAtCursor: Bool = true
+    @State private var outputAction: OutputAction = .insert
     @State private var spokenLayout: Bool = true
     @State private var muteOthers: Bool = true
     @State private var showInDock: Bool = true
@@ -53,14 +53,18 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker("When done", selection: $insertAtCursor) {
-                    Text("Insert at cursor").tag(true)
-                    Text("Copy to clipboard").tag(false)
+                Picker("When done", selection: $outputAction) {
+                    Text("Insert at cursor").tag(OutputAction.insert)
+                    Text("Copy to clipboard").tag(OutputAction.clipboard)
+                    Text("Insert and copy").tag(OutputAction.both)
                 }
                 .pickerStyle(.radioGroup)
-                .onChange(of: insertAtCursor) { _, wanted in
-                    Settings.set("output_action", wanted ? "insert" : "clipboard")
+                .onChange(of: outputAction) { _, wanted in
+                    Settings.set("output_action", wanted.rawValue)
                 }
+                Text(outputExplanation)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -137,6 +141,15 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
+    private var outputExplanation: String {
+        switch outputAction {
+        case .insert: return "Typed where your cursor is. Whatever you had copied stays on the clipboard."
+        case .clipboard: return "Left on the clipboard for you to paste. Nothing is typed."
+        case .both: return "Typed at the cursor and left on the clipboard, so Universal Clipboard "
+            + "can carry it to your iPhone or iPad."
+        }
+    }
+
     private var modeExplanation: String {
         switch mode {
         case .grammar: return "Fixes grammar and punctuation, keeps your wording."
@@ -174,7 +187,7 @@ struct SettingsView: View {
         dictionary = EngineSettings.text(fromWords: words)
         replacements = EngineSettings.text(fromReplacements: pairs)
         biasVocabulary = obj["use_initial_prompt"] as? Bool ?? false
-        insertAtCursor = (obj["output_action"] as? String ?? "insert") == "insert"
+        outputAction = OutputAction.from(configValue: obj["output_action"] as? String)
         spokenLayout = obj["spoken_layout"] as? Bool ?? true
         loaded = current
     }
@@ -189,7 +202,7 @@ struct SettingsView: View {
         }
         obj["mode"] = mode.rawValue
         obj["use_initial_prompt"] = biasVocabulary
-        obj["output_action"] = insertAtCursor ? "insert" : "clipboard"
+        obj["output_action"] = outputAction.rawValue
         obj["spoken_layout"] = spokenLayout
         obj["dictionary"] = EngineSettings.words(fromText: dictionary)
         obj["replacements"] = EngineSettings.replacements(fromText: replacements)

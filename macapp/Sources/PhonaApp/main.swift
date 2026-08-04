@@ -250,8 +250,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard mine == self.session else { return }
                 switch outcome {
                 case .success(let result) where result.state == "done" && !result.text.isEmpty:
-                    if Settings.insertAtCursor {
-                        switch Paster.paste(result.text) {
+                    let action = Settings.outputAction
+                    if action.insertsAtCursor {
+                        switch Paster.paste(result.text, restore: !action.keepsOnClipboard) {
                         case .pasted(let warning):
                             if let warning { self.notify("Phona", warning) }
                         case .leftOnClipboard(let reason):
@@ -305,6 +306,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Quitting with a dictation in flight must not leave the Mac silent.
+    /// Clicking the Dock icon of an already-running app calls this, and doing nothing here is
+    /// what made the icon look dead: Phona keeps no window open between uses, so there was
+    /// nothing for macOS to bring forward and no handler to open anything.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { openSettings() }
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         OutputMute.release()
     }
