@@ -143,7 +143,7 @@ struct SettingsView: View {
 
     private var outputExplanation: String {
         switch outputAction {
-        case .insert: return "Typed where your cursor is. Whatever you had copied stays on the clipboard."
+        case .insert: return "Typed where your cursor is."
         case .clipboard: return "Left on the clipboard for you to paste. Nothing is typed."
         case .both: return "Typed at the cursor and left on the clipboard, so Universal Clipboard "
             + "can carry it to your iPhone or iPad."
