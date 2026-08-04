@@ -394,6 +394,7 @@ coverage, it is there so the same mistake cannot ship twice:
 | tidy capitalises and closes sentences | a rejected correction returned a raw lowercase transcript |
 | common word proposals require context | the audit proposing `con = cron`, which corrupts "con man" |
 | guarded entries read the recorded flag | the audit counting punctuation-only fixes as refusals |
+| the audit asks the model, not the corrector | every inferred mishearing silently dropped, because the corrector is built to never answer |
 | signature is pinned to the identifier | every rebuild silently orphaning the Accessibility grant |
 | every cue is bundled | the start sound falling back to a macOS alert |
 | screenshots are opaque | the README unreadable in GitHub's dark theme |

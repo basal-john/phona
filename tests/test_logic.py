@@ -5,9 +5,11 @@ any of them are worth the maintenance.
 """
 
 import importlib.util
+import io
 import json
 import pathlib
 import sys
+import types
 
 import pytest
 
@@ -518,6 +520,105 @@ def test_flagged_entries_become_findings():
     }]
     findings = audit.deterministic_findings([], corrections)
     assert any(f["kind"] == "flagged_by_you" for f in findings)
+
+
+# --- the audit needs the model, not the corrector ----------------------------------
+
+class _FakeSocket:
+    """Records what the audit sends and hands back one canned reply line."""
+
+    def __init__(self, sent, reply):
+        self.sent = sent
+        self.reply = reply
+
+    def settimeout(self, _timeout):
+        pass
+
+    def connect(self, _target):
+        pass
+
+    def sendall(self, data):
+        self.sent.append(json.loads(data.decode()))
+
+    def makefile(self, _mode):
+        return io.StringIO(json.dumps(self.reply) + "\n")
+
+    def close(self):
+        pass
+
+
+def _capture_ask(monkeypatch, reply):
+    sent = []
+    stub = types.SimpleNamespace(
+        AF_UNIX=0, SOCK_STREAM=0,
+        socket=lambda *_a, **_k: _FakeSocket(sent, reply))
+    monkeypatch.setattr(audit, "socket", stub)
+    return sent
+
+
+def test_ask_model_does_not_go_through_the_corrector(monkeypatch):
+    """Regression: the audit sent its detection prompt as {"cmd": "FIX", "mode": "raw"}.
+
+    Raw mode returns the text untouched, so the prompt came back as its own echo, the
+    parser found no findings in it, and every inferred mishearing was silently dropped for
+    the whole life of the feature. Nothing in the output distinguished that from a clean
+    audit, which is what made it survive.
+    """
+    sent = _capture_ask(monkeypatch, {"state": "done", "text": "1 | free tire | free tier"})
+    audit.ask_model("Output exactly the word READY.")
+
+    assert len(sent) == 1
+    assert sent[0]["cmd"] == "ASK", "the corrector cannot answer an instruction"
+    assert sent[0].get("mode") is None, "an instruction has no correction mode"
+
+
+def test_inferred_findings_survive_the_round_trip(monkeypatch):
+    """The reply has to be parsed as the model's answer, never as the prompt echoed back."""
+    history = [{"source": "voice", "raw": "i have the free tire api key"}]
+    _capture_ask(monkeypatch, {"state": "done", "text": "1 | free tire | free tier"})
+
+    findings = audit.inference_findings(history)
+    assert [f["kind"] for f in findings] == ["likely_mishearing"]
+    assert findings[0]["suggestion"] == [{"wrong": "free tire", "right": "free tier"}]
+
+
+class _FakeConn:
+    def __init__(self, request):
+        self.request = request
+        self.replies = []
+
+    def settimeout(self, _timeout):
+        pass
+
+    def makefile(self, _mode):
+        return io.StringIO(json.dumps(self.request) + "\n")
+
+    def sendall(self, data):
+        self.replies.append(json.loads(data.decode()))
+
+    def close(self):
+        pass
+
+
+def test_ask_is_dispatched_to_the_model_and_never_to_the_corrector():
+    """The command has to reach Engine.ask. Routing it back into the correction path is the
+    original defect, so the correction entry points fail loudly here."""
+    calls = []
+
+    def _refuse(*_a, **_k):
+        raise AssertionError("an instruction must not reach the correction path")
+
+    engine = types.SimpleNamespace(
+        ask=lambda prompt: calls.append(prompt) or {"state": "done", "text": "READY"},
+        fix_text=_refuse,
+        correct=_refuse,
+        process=_refuse)
+
+    conn = _FakeConn({"cmd": "ASK", "text": "Output exactly the word READY."})
+    phonad.handle(conn, engine)
+
+    assert calls == ["Output exactly the word READY."]
+    assert conn.replies == [{"state": "done", "text": "READY"}]
 
 
 # --- the fixture is the contract ---------------------------------------------------

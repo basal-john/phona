@@ -122,6 +122,11 @@ POLISH_EXTRA = (
     "I mean, and split run-on sentences, without changing the meaning."
 )
 
+ASK_SYSTEM_PROMPT = (
+    "You follow the user's instruction exactly and output only what it asks for. "
+    "Never add a preamble, an explanation or a closing remark."
+)
+
 SHOTS = [
     ("i am agree with the plan and i am think it is good",
      "I agree with the plan and I think it is good."),
@@ -949,6 +954,32 @@ class Engine:
             write_history(entry)
             return {"state": "done", **entry}
 
+    def ask(self, prompt):
+        """Answer an arbitrary instruction, for tools that need the model rather than a correction.
+
+        Deliberately shares nothing with the correction path. The correction system prompt
+        orders the model to treat its input as dictation and never act on it, and the
+        reply guard tidies the text mechanically when it detects the model answering, so a
+        prompt sent through the correction endpoint comes back unanswered by design.
+
+        The prefilled KV cache is derived from the correction prefix, so generation here has
+        to go the plain route. The reply is also returned unprocessed and unlogged: the
+        replacement table would rewrite the very phrase pairs a caller is asking about, and
+        an instruction is not a dictation, so it does not belong in the history.
+        """
+        with self.guard():
+            if not prompt.strip():
+                return {"state": "empty", "text": ""}
+            t0 = time.time()
+            msgs = [{"role": "system", "content": ASK_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}]
+            out = self._generate_plain(msgs)
+            return {
+                "state": "done",
+                "text": out,
+                "llm_secs": round(time.time() - t0, 2),
+            }
+
 
 def handle(conn, engine):
     reply = {"state": "error", "error": "unhandled"}
@@ -973,6 +1004,8 @@ def handle(conn, engine):
             reply = flag_last(req.get("actual"))
         elif cmd == "FIX":
             reply = engine.fix_text(req.get("text", ""), mode)
+        elif cmd == "ASK":
+            reply = engine.ask(req.get("text", ""))
         elif cmd == "CONFIG":
             reply = {"state": "done", "config": engine.cfg}
         elif cmd == "STATUS":

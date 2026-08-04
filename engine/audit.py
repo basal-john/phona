@@ -64,9 +64,14 @@ def within(entry, days, key="ts"):
 
 
 def ask_model(text, timeout=180):
-    """Send one prompt through the daemon's correction endpoint is not enough here, so
-    talk to it directly with a purpose-built instruction."""
-    payload = {"cmd": "FIX", "text": text, "mode": "raw"}
+    """Run one purpose-built instruction through the daemon's ASK endpoint.
+
+    The correction endpoint cannot serve this. Its system prompt orders the model to treat
+    input as dictation and never act on it, and raw mode returns the text untouched, so a
+    detection prompt sent there came back as its own echo and every inferred finding was
+    silently dropped.
+    """
+    payload = {"cmd": "ASK", "text": text}
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(timeout)
