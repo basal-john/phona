@@ -303,11 +303,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = NSImage(
-            systemSymbolName: "waveform", accessibilityDescription: "Phona")
-        statusItem.button?.image?.isTemplate = true
+        statusItem.button?.image = Self.menuBarMark()
         statusItem.menu = NSMenu()
         statusItem.menu?.delegate = self
+    }
+
+    /// The app mark, Φ, drawn for the menu bar.
+    ///
+    /// Drawn here rather than bundled as an image so it stays sharp on any display and needs
+    /// no resource to be copied into the bundle, and drawn at all because the menu bar used
+    /// the `waveform` system symbol, which is the generic audio glyph and belongs to no
+    /// product. Marked as a template, so macOS tints it for the light or dark menu bar and it
+    /// follows the highlight when the menu is open.
+    ///
+    /// The proportions are the icon's, opened up: with no slab to sit inside, the letter fills
+    /// its frame, and the stroke stays at 1.5 pt because anything finer disappears against a
+    /// light menu bar.
+    private static func menuBarMark() -> NSImage {
+        let side: CGFloat = 15
+        let stroke: CGFloat = 1.5
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            NSColor.black.setStroke()
+            NSColor.black.setFill()
+
+            let radius = side * 0.29
+            let bowl = NSBezierPath(ovalIn: NSRect(x: rect.midX - radius, y: rect.midY - radius,
+                                                   width: radius * 2, height: radius * 2))
+            bowl.lineWidth = stroke
+            bowl.stroke()
+
+            let height = side * 0.88
+            let stem = NSBezierPath(
+                roundedRect: NSRect(x: rect.midX - stroke / 2, y: rect.midY - height / 2,
+                                    width: stroke, height: height),
+                xRadius: stroke / 2, yRadius: stroke / 2)
+            stem.fill()
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Phona"
+        return image
     }
 
     @objc private func copyEntry(_ sender: NSMenuItem) {

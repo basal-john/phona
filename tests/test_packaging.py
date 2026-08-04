@@ -133,6 +133,22 @@ def test_readme_screenshots_are_opaque(name):
         f"{name} is transparent, so it is unreadable on a dark page")
 
 
+def test_the_readme_icon_is_generated_rather_than_hand_placed():
+    """The header image was copied out of the iconset by hand, so redrawing the mark left
+    the README showing the previous one."""
+    source = (ROOT / "macapp/make_icon.py").read_text()
+    assert "docs" in source and "icon.png" in source, (
+        "make_icon.py does not write the README header, so the two can drift apart")
+
+
+def test_the_menu_bar_carries_the_app_mark():
+    """The menu bar used the `waveform` system symbol, which is the generic audio glyph and
+    matched neither the app icon nor anything specific to Phona."""
+    source = (ROOT / "macapp/Sources/PhonaApp/main.swift").read_text()
+    assert "menuBarMark()" in source
+    assert 'systemSymbolName: "waveform"' not in source
+
+
 def test_readme_documents_where_data_is_stored():
     readme = (ROOT / "README.md").read_text()
     assert "history.jsonl" in readme

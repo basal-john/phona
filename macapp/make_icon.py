@@ -1,8 +1,15 @@
 """Draw the Phona app icon and compile it to AppIcon.icns.
 
-The mark is a waveform resolving into a text cursor: voice on the left, insertion point on
-the right. Bars step down in height as they approach the caret and hand off to an I-beam,
-so the glyph reads left to right as speech becoming text.
+The mark is Φ, the letter the name comes from: Greek `phōnē`, voice. It is also a stem
+standing inside a closed counter, which is a text cursor inside a mouth, so the one glyph
+carries both halves of what the app does without borrowing the bar waveform that every
+recorder, podcast app and Voice Memos already uses.
+
+Two shapes, drawn in ember on ink. The mark it replaced needed eight, which smeared
+together at 16 px and sank into the Dock at any size.
+
+The same script writes the README header image, so the documented icon cannot drift away
+from the one the app ships.
 
 Pure stdlib plus the system `iconutil`, so there is nothing to install.
 """
@@ -15,8 +22,11 @@ import zlib
 
 OUT = pathlib.Path(__file__).parent / "Resources"
 ICONSET = OUT / "AppIcon.iconset"
+DOC_IMAGE = pathlib.Path(__file__).parent.parent / "docs" / "images" / "icon.png"
 
-BARS = [0.44, 0.72, 1.0, 0.66, 0.38]
+SLAB_TOP = (34, 33, 30)
+SLAB_BOTTOM = (21, 20, 18)
+EMBER = (238, 122, 58)
 
 
 def coverage(distance, radius):
@@ -24,27 +34,31 @@ def coverage(distance, radius):
     return max(0.0, min(1.0, (radius - distance) + 0.5))
 
 
-def blend(dst, x, y, colour, alpha):
+def span(low, high, size):
+    """The rows or columns a shape can touch, clipped to the canvas."""
+    return range(max(0, int(low) - 1), min(size, int(high) + 2))
+
+
+def over(dst, x, y, colour, alpha):
+    """Composite `colour` onto the pixel already there.
+
+    Compositing rather than overwriting is what keeps the glyph edges smooth. Replacing the
+    colour and keeping the larger alpha, which is the obvious shortcut, leaves every
+    partially covered edge pixel fully saturated against the slab, so the curve reads as a
+    staircase at the sizes where it matters most.
+    """
     if alpha <= 0:
         return
-    old = dst[y][x]
-    dst[y][x] = (colour[0], colour[1], colour[2],
-                 max(old[3], int(255 * min(1.0, alpha))))
+    a = min(1.0, alpha)
+    r, g, b, existing = dst[y][x]
+    dst[y][x] = (round(colour[0] * a + r * (1 - a)),
+                 round(colour[1] * a + g * (1 - a)),
+                 round(colour[2] * a + b * (1 - a)),
+                 max(existing, round(255 * a)))
 
 
-def draw(size):
-    """Return an RGBA pixel buffer for one icon size.
-
-    Three layers, in order: a rounded slab with a vertical gradient so light appears to fall
-    from above, the waveform bars from BARS which peak early and settle as they reach the
-    caret, then the I-beam caret the voice turns into, tinted so the handoff is legible.
-    """
-    px = [[(0, 0, 0, 0)] * size for _ in range(size)]
-
-    margin = size * 0.10
-    box = size - 2 * margin
-    radius = box * 0.235
-
+def draw_slab(px, size, margin, box, radius):
+    """The rounded ink field, lit from above."""
     for y in range(size):
         for x in range(size):
             lx, ly = x + 0.5 - margin, y + 0.5 - margin
@@ -57,48 +71,73 @@ def draw(size):
             if cov <= 0:
                 continue
             t = ly / box
-            px[y][x] = (int(88 - 34 * t), int(94 - 36 * t), int(104 - 38 * t),
-                        int(255 * cov))
+            px[y][x] = (round(SLAB_TOP[0] + (SLAB_BOTTOM[0] - SLAB_TOP[0]) * t),
+                        round(SLAB_TOP[1] + (SLAB_BOTTOM[1] - SLAB_TOP[1]) * t),
+                        round(SLAB_TOP[2] + (SLAB_BOTTOM[2] - SLAB_TOP[2]) * t),
+                        round(255 * cov))
 
-    mid = margin + box / 2
-    bar_w = box * 0.070
-    gap = box * 0.055
-    caret_gap = box * 0.080
-    caret_w = box * 0.042
-    caret_h = box * 0.54
-    serif_w = box * 0.130
-    serif_h = box * 0.042
 
-    total = len(BARS) * bar_w + (len(BARS) - 1) * gap + caret_gap + serif_w
-    start = margin + (box - total) / 2
+def proportions(size, box):
+    """Bowl radius, stem length and stroke weight for one canvas, in pixels.
 
-    for i, height in enumerate(BARS):
-        bx = start + i * (bar_w + gap)
-        bh = box * 0.42 * height
-        top = mid - bh / 2
-        br = bar_w / 2
-        for y in range(size):
-            for x in range(size):
-                lx, ly = x + 0.5 - bx, y + 0.5 - top
-                if lx < -1 or lx > bar_w + 1 or ly < -1 or ly > bh + 1:
-                    continue
-                cyy = min(max(ly, br), bh - br)
-                d = abs(lx - br) if br <= ly <= bh - br else math.hypot(lx - br, ly - cyy)
-                blend(px, x, y, (255, 255, 255), coverage(d, br))
+    Held in fractions of the icon grid the drawing stays identical at every size, and the
+    16 px cut then fails: a stroke under one pixel greys out, the counter closes up and the
+    letter turns into a blob. Small cuts are drawn optically instead, the way a type designer
+    sizes a caption weight, so the mark grows into the slab and the strokes never fall below
+    a pixel and a bit. Above 128 px nothing is adjusted.
+    """
+    zoom = 1.0 if size >= 128 else 1.0 + 0.42 * (128 - size) / 112
+    stem = min(box * 0.80 * zoom, box * 0.90)
+    radius = min(box * 0.205 * zoom, stem * 0.34)
+    return radius, stem, max(box * 0.0728 * zoom, 1.3)
 
-    caret_cx = start + len(BARS) * (bar_w + gap) - gap + caret_gap + serif_w / 2
-    stem_left = caret_cx - caret_w / 2
-    top = mid - caret_h / 2
-    for y in range(size):
-        for x in range(size):
-            fx, fy = x + 0.5, y + 0.5
-            stem = stem_left <= fx <= stem_left + caret_w and top <= fy <= top + caret_h
-            serif = (abs(fx - caret_cx) <= serif_w / 2
-                     and (abs(fy - top) <= serif_h / 2
-                          or abs(fy - (top + caret_h)) <= serif_h / 2))
-            if stem or serif:
-                blend(px, x, y, (105, 205, 255), 1.0)
 
+def draw_counter(px, size, box):
+    """The closed bowl of the phi.
+
+    An ellipse has no closed-form distance, so the stroke is placed by dividing the implicit
+    ellipse function by the magnitude of its gradient. That approximation is accurate to
+    well under a pixel this close to the curve, which is all an antialiased edge needs.
+    """
+    cx = cy = size / 2
+    radius, _, weight = proportions(size, box)
+    rx = ry = radius
+    half = weight / 2
+    for y in span(cy - ry - half, cy + ry + half, size):
+        for x in span(cx - rx - half, cx + rx + half, size):
+            dx, dy = x + 0.5 - cx, y + 0.5 - cy
+            gradient = 2.0 * math.hypot(dx / (rx * rx), dy / (ry * ry))
+            if gradient == 0:
+                continue
+            implicit = (dx / rx) ** 2 + (dy / ry) ** 2 - 1.0
+            over(px, x, y, EMBER, coverage(abs(implicit / gradient), half))
+
+
+def draw_stem(px, size, box):
+    """The vertical stroke through the bowl, which is also the text cursor."""
+    _, height, width = proportions(size, box)
+    left, top = size / 2 - width / 2, size / 2 - height / 2
+    r = width / 2
+    for y in span(top, top + height, size):
+        for x in span(left, left + width, size):
+            lx, ly = x + 0.5 - left, y + 0.5 - top
+            waist = min(max(ly, r), height - r)
+            d = abs(lx - r) if r <= ly <= height - r else math.hypot(lx - r, ly - waist)
+            over(px, x, y, EMBER, coverage(d, r))
+
+
+def draw(size):
+    """Return an RGBA pixel buffer for one icon size.
+
+    The slab is inset to the macOS icon grid, so the artwork occupies the same proportion of
+    the canvas as every other app in the Dock and lines up with them.
+    """
+    px = [[(0, 0, 0, 0)] * size for _ in range(size)]
+    margin = size * 0.10
+    box = size - 2 * margin
+    draw_slab(px, size, margin, box, box * 0.235)
+    draw_counter(px, size, box)
+    draw_stem(px, size, box)
     return px
 
 
@@ -136,6 +175,10 @@ def main():
     subprocess.run(["iconutil", "-c", "icns", str(ICONSET),
                     "-o", str(OUT / "AppIcon.icns")], check=True)
     print("built", OUT / "AppIcon.icns")
+
+    if DOC_IMAGE.parent.is_dir():
+        write_png(DOC_IMAGE, cache[256])
+        print("built", DOC_IMAGE)
 
 
 if __name__ == "__main__":
