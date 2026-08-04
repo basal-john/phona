@@ -17,6 +17,28 @@ struct SettingsView: View {
     @State private var loaded: EngineSettings?
 
     var body: some View {
+        VStack(spacing: 0) {
+            TabView {
+                general.tabItem { Text("General") }
+                dictation.tabItem { Text("Dictation") }
+                words.tabItem { Text("Words") }
+            }
+            Divider()
+            HStack {
+                Text(status).font(.callout).foregroundStyle(.secondary)
+                Spacer()
+                Button("Save and restart engine") { save() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!needsRestart)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+        }
+        .frame(width: 520, height: 560)
+        .onAppear(perform: load)
+    }
+
+    private var general: some View {
         Form {
             Section {
                 Picker("Correction", selection: $mode) {
@@ -38,49 +60,6 @@ struct SettingsView: View {
                 .pickerStyle(.radioGroup)
             }
 
-            Section("Vocabulary") {
-                Text("Words the transcriber tends to mangle. One per line.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $dictionary)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(height: 76)
-                Toggle("Bias the transcriber toward these words", isOn: $biasVocabulary)
-                Text("Improves rare names, at the cost of occasionally inventing words in silence.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Layout") {
-                Toggle("Act on spoken layout commands", isOn: $spokenLayout)
-                Text("Say \"new paragraph\", \"new line\" or \"bullet point\" as a sentence "
-                     + "of its own and it becomes a real break. Off means those words are "
-                     + "typed out.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Replacements") {
-                Text("Applied literally, before the layout pass. One per line, as wrong = right.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $replacements)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(height: 62)
-            }
-
-            Section("While dictating") {
-                Toggle("Mute other audio", isOn: $muteOthers)
-                    .onChange(of: muteOthers) { _, wanted in
-                        Settings.set("mute_others", wanted)
-                    }
-                Text("Music, a video or a voice on a call reaches the microphone through the "
-                     + "room, and the transcriber cannot tell it apart from you. The output "
-                     + "device is muted once capture starts and restored when you let go.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
             Section {
                 Toggle("Show Phona in the Dock", isOn: $showInDock)
                     .onChange(of: showInDock) { _, wanted in
@@ -98,20 +77,61 @@ struct SettingsView: View {
                         }
                     }
             }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var dictation: some View {
+        Form {
+            Section {
+                Toggle("Mute other audio", isOn: $muteOthers)
+                    .onChange(of: muteOthers) { _, wanted in
+                        Settings.set("mute_others", wanted)
+                    }
+                Text("Music, a video or a voice on a call reaches the microphone through the "
+                     + "room, and the transcriber cannot tell it apart from you. The output "
+                     + "device is muted once capture starts and restored when you let go.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
 
             Section {
-                HStack {
-                    Text(status).font(.callout).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Save and restart engine") { save() }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(!needsRestart)
-                }
+                Toggle("Act on spoken layout commands", isOn: $spokenLayout)
+                Text("Say \"new paragraph\", \"new line\" or \"bullet point\" as a sentence "
+                     + "of its own and it becomes a real break. Off means those words are "
+                     + "typed out.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460)
-        .onAppear(perform: load)
+    }
+
+    private var words: some View {
+        Form {
+            Section("Vocabulary") {
+                Text("Words the transcriber tends to mangle. One per line.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $dictionary)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(height: 120)
+                Toggle("Bias the transcriber toward these words", isOn: $biasVocabulary)
+                Text("Improves rare names, at the cost of occasionally inventing words in silence.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Replacements") {
+                Text("Applied literally, before the layout pass. One per line, as wrong = right.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $replacements)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(height: 120)
+            }
+        }
+        .formStyle(.grouped)
     }
 
     private var modeExplanation: String {
