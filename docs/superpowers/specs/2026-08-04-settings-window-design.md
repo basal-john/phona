@@ -13,7 +13,7 @@ which is the macOS convention.
 
 `SettingsView.body` puts eight `Section`s in one scrolling `Form` at a fixed 460 points wide
 (`SettingsView.swift:18-109`, `main.swift:375-377`). Nothing groups them, so the window does
-not say what relates to what, and the two `TextEditor`s are squeezed to 76 and 62 points.
+not say what relates to what, and the two `TextEditor`s are only 76 and 62 points tall.
 
 Apple's Simplicity principle is explicit that putting everything in one place looks minimal
 without being simple, and that the common path comes first with advanced options one level

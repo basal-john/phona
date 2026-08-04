@@ -36,7 +36,7 @@ no `um` or `uh`, passed as part of 29 exact / 0 failed.
 
 The descriptions also omit that Transcribe only skips the spoken-layout pass, so
 "new paragraph" and "bullet point" stay as literal words. That gate is the same early return
-in `postprocess` that skips correction (`phonad.py:862`).
+in `postprocess` that skips correction (`phonad.py:867-868`).
 
 ## Design: an orthogonal flag, not a third mode
 
@@ -62,7 +62,7 @@ Key name is `keep_on_clipboard`, matching the existing `spoken_layout`, `show_in
 **`Paster.swift`** gains a `Settings.keepOnClipboard` reader beside `insertAtCursor`,
 defaulting to `false`.
 
-**`main.swift:254`** passes the existing `restore:` parameter:
+**`main.swift:254`** will pass the existing `restore:` parameter:
 
 ```swift
 switch Paster.paste(result.text, restore: !Settings.keepOnClipboard) {
