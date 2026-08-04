@@ -1,3 +1,4 @@
+import PhonaCore
 import ServiceManagement
 import SwiftUI
 
@@ -13,6 +14,7 @@ struct SettingsView: View {
     @State private var muteOthers: Bool = true
     @State private var showInDock: Bool = true
     @State private var status: String = ""
+    @State private var loaded: EngineSettings?
 
     var body: some View {
         Form {
@@ -118,6 +120,15 @@ struct SettingsView: View {
         }
     }
 
+    /// The restart-requiring settings as the form currently shows them.
+    private var current: EngineSettings {
+        EngineSettings(mode: mode.rawValue,
+                       dictionary: EngineSettings.words(fromText: dictionary),
+                       biasVocabulary: biasVocabulary,
+                       replacements: EngineSettings.replacements(fromText: replacements),
+                       spokenLayout: spokenLayout)
+    }
+
     private func load() {
         launchAtLogin = SMAppService.mainApp.status == .enabled
         muteOthers = Settings.muteOthersWhileDictating
@@ -125,12 +136,14 @@ struct SettingsView: View {
         guard let data = try? Data(contentsOf: Paths.config),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
-        dictionary = (obj["dictionary"] as? [String] ?? []).joined(separator: "\n")
+        let words = obj["dictionary"] as? [String] ?? []
+        let pairs = obj["replacements"] as? [String: String] ?? [:]
+        dictionary = EngineSettings.text(fromWords: words)
+        replacements = EngineSettings.text(fromReplacements: pairs)
         biasVocabulary = obj["use_initial_prompt"] as? Bool ?? false
         insertAtCursor = (obj["output_action"] as? String ?? "insert") == "insert"
         spokenLayout = obj["spoken_layout"] as? Bool ?? true
-        let pairs = obj["replacements"] as? [String: String] ?? [:]
-        replacements = pairs.map { "\($0.key) = \($0.value)" }.sorted().joined(separator: "\n")
+        loaded = current
     }
 
     /// Persist the settings and restart the engine, which prefills its prompt from these
@@ -145,20 +158,8 @@ struct SettingsView: View {
         obj["use_initial_prompt"] = biasVocabulary
         obj["output_action"] = insertAtCursor ? "insert" : "clipboard"
         obj["spoken_layout"] = spokenLayout
-        obj["dictionary"] = dictionary
-            .split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-
-        var pairs: [String: String] = [:]
-        for line in replacements.split(separator: "\n") {
-            let parts = line.split(separator: "=", maxSplits: 1)
-            guard parts.count == 2 else { continue }
-            let key = parts[0].trimmingCharacters(in: .whitespaces)
-            let value = parts[1].trimmingCharacters(in: .whitespaces)
-            if !key.isEmpty { pairs[key] = value }
-        }
-        obj["replacements"] = pairs
+        obj["dictionary"] = EngineSettings.words(fromText: dictionary)
+        obj["replacements"] = EngineSettings.replacements(fromText: replacements)
 
         guard let data = try? JSONSerialization.data(
             withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) else {
