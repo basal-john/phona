@@ -58,6 +58,9 @@ struct SettingsView: View {
                     Text("Copy to clipboard").tag(false)
                 }
                 .pickerStyle(.radioGroup)
+                .onChange(of: insertAtCursor) { _, wanted in
+                    Settings.set("output_action", wanted ? "insert" : "clipboard")
+                }
             }
 
             Section {
@@ -83,7 +86,7 @@ struct SettingsView: View {
 
     private var dictation: some View {
         Form {
-            Section {
+            Section("While dictating") {
                 Toggle("Mute other audio", isOn: $muteOthers)
                     .onChange(of: muteOthers) { _, wanted in
                         Settings.set("mute_others", wanted)
@@ -95,7 +98,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section {
+            Section("Layout") {
                 Toggle("Act on spoken layout commands", isOn: $spokenLayout)
                 Text("Say \"new paragraph\", \"new line\" or \"bullet point\" as a sentence "
                      + "of its own and it becomes a real break. Off means those words are "
@@ -162,6 +165,7 @@ struct SettingsView: View {
         launchAtLogin = SMAppService.mainApp.status == .enabled
         muteOthers = Settings.muteOthersWhileDictating
         showInDock = Settings.showInDock
+        mode = .current
         guard let data = try? Data(contentsOf: Paths.config),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
