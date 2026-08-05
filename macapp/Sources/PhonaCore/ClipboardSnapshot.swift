@@ -156,18 +156,41 @@ public enum ClipboardStore {
     /// Neither takes a snapshot, and neither should, but the user still just lost whatever they
     /// had copied and used to be told so.
     ///
-    /// Cheap by design. It asks whether the pasteboard holds anything and whether any of it is
-    /// text, and never reads an image or sends a read looking for another device.
+    /// Cheap by design. It reads no data at all, only the types each item advertises, so it
+    /// never touches an image and never sends a read looking for another device.
     ///
-    /// Silent when the clipboard held text, because losing a line of text is recoverable from
-    /// wherever it was copied. An image or a file usually is not, which is the whole reason the
-    /// old warning existed.
+    /// Text is judged from the advertised types rather than by trying to read a string. A
+    /// clipboard can be textual without handing over `.string`, as RTF or HTML or UTF-16 can,
+    /// and calling that an image would have been a confident lie in a notification.
+    ///
+    /// Silent when the clipboard held text, because a line of text is recoverable from wherever
+    /// it was copied, and saying so on every dictation would be noise. Anything else usually is
+    /// not recoverable, which is the whole reason the warning exists.
     public static func replacementWarning(for board: NSPasteboard) -> String? {
-        guard !(board.pasteboardItems ?? []).isEmpty else { return nil }
-        guard board.string(forType: .string) == nil else { return nil }
-        return "Your clipboard held an image or file, and the dictation has replaced it. "
-            + "It cannot be put back."
+        let items = board.pasteboardItems ?? []
+        guard !items.isEmpty else { return nil }
+
+        let holdsText = items.contains { item in
+            item.types.contains { textTypes.contains($0.rawValue) }
+        }
+        guard !holdsText else { return nil }
+
+        return "Your clipboard held something other than text, and the dictation has replaced "
+            + "it. It cannot be put back."
     }
+
+    /// The types that mean a clipboard is carrying words, whether or not it will hand over a
+    /// plain string.
+    private static let textTypes: Set<String> = [
+        NSPasteboard.PasteboardType.string.rawValue,
+        NSPasteboard.PasteboardType.rtf.rawValue,
+        NSPasteboard.PasteboardType.rtfd.rawValue,
+        NSPasteboard.PasteboardType.html.rawValue,
+        "public.text",
+        "public.plain-text",
+        "public.utf16-plain-text",
+        "public.utf16-external-plain-text",
+    ]
 
     /// Put a snapshot back, replacing whatever is on the pasteboard now.
     @discardableResult

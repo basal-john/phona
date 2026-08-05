@@ -526,8 +526,8 @@ The clipboard is only read when it is going to be put back. Reading every repres
 not free, an item waiting on another device sends the read looking for it, so it is skipped
 when the output setting keeps the dictation on the clipboard anyway, or when Accessibility
 could not confirm a target and the dictation is being left there on purpose. Those two paths
-still say when an image or a file was displaced, from a cheap look at the pasteboard rather
-than a copy of it.
+still say when something other than text was displaced, from the types the pasteboard
+advertises rather than a copy of its contents, so nothing is read at all.
 
 **My image did not come back after a dictation.** Check **When done** in Settings. **Insert and
 copy** never restores your clipboard, by definition: it is insert without the final restore,
