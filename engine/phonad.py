@@ -344,6 +344,80 @@ def segment_gaps(segments):
     return gaps
 
 
+DASH_NUMERIC = re.compile("(?<=\\d)[\u2014\u2013]+(?=\\w)|(?<=\\w)[\u2014\u2013]+(?=\\d)")
+DASH_ASIDE = re.compile("\\s*[\u2014\u2013]+\\s*")
+
+
+def strip_long_dashes(text):
+    """Replace em and en dashes with the punctuation a person would have typed.
+
+    The model inserts them unprompted, in the middle of otherwise clean sentences, and they
+    are not a mark this user writes. A prompt rule was not enough: a 4B model accepts the
+    rule and then emits one in the next sentence anyway, so the substitution is deterministic.
+
+    A number on either side makes it a range or a compound, so it becomes a hyphen. Correcting
+    "the sprint runs 2024-2026" made the model rewrite the hyphen, and a comma gave "2024,
+    2026", which is a different fact. "a 3-day sprint" fails the same way and needs the digit
+    to be read on one side only.
+
+    Everywhere else the mark is doing the work of a comma and gets one, including between two
+    words, since that is where the model actually puts them. A run of them collapses to a
+    single comma, and one with nothing before or after it is dropped rather than left as
+    stray punctuation.
+
+    Hyphens the model left alone stay hyphens. Compound words are spelled with them and this
+    is not their fight.
+    """
+    def replace(match):
+        if not text[:match.start()].strip() or not text[match.end():].strip():
+            return ""
+        return ", "
+    return DASH_ASIDE.sub(replace, DASH_NUMERIC.sub("-", text))
+
+
+TOPIC_SHIFT = re.compile(
+    r"^(?:separately|regarding|as for|about the|another thing|one more thing|"
+    r"apart from that|other than that|coming to|on a different note|by the way|"
+    r"in the future|going forward|from now on|so in the future|secondly|"
+    r"the second (?:thing|point)|moving on)\b",
+    re.IGNORECASE)
+
+PARAGRAPH_MIN_WORDS = 45
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+def paragraph_topics(text):
+    """Break a long dictation where the speaker changes subject.
+
+    The prompt has asked for this since the beginning and the 4B model does not do it. It
+    was measured twice: six real dictations of 25 to 58 seconds came back as one block with
+    the rule stated, and again with the rule made unmissable and a worked example added. So
+    the split is done here instead, on the words the speaker actually used to change subject.
+
+    Only explicit markers count, at the start of a sentence, and only in text long enough to
+    be worth breaking up. A wrong break in the middle of a thought is worse than no break,
+    so this errs toward leaving text alone: a dictation with no marker in it is untouched.
+
+    Thresholds were chosen against every dictation on record rather than guessed. At 45
+    words and a 20 word opening paragraph, 6 of 466 were split and every split was at a real
+    change of subject. Requiring more sentences than two only lost correct splits.
+    """
+    if len(text.split()) < PARAGRAPH_MIN_WORDS or "\n" in text:
+        return text
+
+    sentences = SENTENCE_END.split(text.strip())
+    if len(sentences) < 2:
+        return text
+
+    out = [sentences[0]]
+    for sentence in sentences[1:]:
+        if TOPIC_SHIFT.match(sentence) and len(" ".join(out).split()) >= 20:
+            out.append("\n\n" + sentence)
+        else:
+            out.append(" " + sentence)
+    return "".join(out)
+
+
 def normalise_layout(text):
     """Strip the layout artefacts a chat model leaves behind.
 
@@ -524,6 +598,10 @@ def peak_db(path):
         return None
 
 
+REPEAT_RUN = 6
+MIN_SALVAGE_WORDS = 4
+
+
 def looks_hallucinated(text, seconds, max_wps):
     """Detect Whisper's degenerate repetition output."""
     words = text.split()
@@ -536,11 +614,38 @@ def looks_hallucinated(text, seconds, max_wps):
     for prev, cur in zip(lowered, lowered[1:]):
         run = run + 1 if cur == prev else 1
         best = max(best, run)
-    if best >= 6:
+    if best >= REPEAT_RUN:
         return True
     if len(words) >= 12 and len(set(lowered)) / len(lowered) < 0.25:
         return True
     return False
+
+
+def trim_repetition(text):
+    """Cut a degenerate repeated tail and return the prefix, or None when there is none.
+
+    Whisper's loop starts partway through an otherwise good transcript. One dictation came
+    back as 80 real words followed by "balloon" 219 times, and rejecting the whole thing
+    discarded the 80 the speaker had actually said. The loop is a single word repeating, so
+    the cut point is the start of the first long run.
+
+    Only the tail is removed. Anything after the run is discarded too, because once the
+    model has started looping there is no reason to trust what follows it.
+
+    The caller keeps the untrimmed transcript. It is the only record of what was heard, so
+    it stays in the history entry's `raw` and is written to the log in full.
+    """
+    words = text.split()
+    lowered = [w.strip(string.punctuation).lower() for w in words]
+    start = 0
+    for i in range(1, len(lowered)):
+        if lowered[i] != lowered[i - 1]:
+            if i - start >= REPEAT_RUN:
+                return " ".join(words[:start]).strip() or None
+            start = i
+    if len(lowered) - start >= REPEAT_RUN:
+        return " ".join(words[:start]).strip() or None
+    return None
 
 
 BUSY_TIMEOUT = 180
@@ -776,6 +881,12 @@ class Engine:
           budget back. Two content lines do not, so the blank line the prompt asks for
           between topics is not itself treated as a list.
 
+          The automatic paragraph breaks do not reach this. They are added in `postprocess`,
+          which runs after `correct` has already accepted or rejected the candidate. Relaxing
+          this to count only consecutive lines, so that paragraphs could never be mistaken for
+          a list, was tried and reverted: it fixed nothing, because the case cannot arise, and
+          it handed a three paragraph invented answer the loose running-text budget.
+
           The tight budget has a floor rather than a cutoff. Switching formulas at a word
           count made it non-monotonic, and one extra spoken word could remove six words of
           budget: saying "please" was enough to lose a correction. The floor also leaves
@@ -891,8 +1002,10 @@ class Engine:
             text = text[1:-1].strip()
         if (mode or self.cfg["mode"]) == "raw":
             return text
+        text = strip_long_dashes(text)
         if self.cfg.get("spoken_layout", True):
             text = apply_spoken_layout(text)
+        text = paragraph_topics(text)
         return normalise_layout(text)
 
     def _warm_stt(self):
@@ -927,17 +1040,29 @@ class Engine:
             if not raw:
                 return {"state": "empty", "text": "", "raw": ""}
 
+            dropped = 0
+            source = raw
             if looks_hallucinated(raw, seconds, self.cfg["max_words_per_second"]):
-                log(f"hallucination guard rejected: {raw[:60]}")
-                return {"state": "garbled", "text": "", "raw": raw}
+                salvaged = trim_repetition(raw)
+                keep = (salvaged
+                        and len(salvaged.split()) >= MIN_SALVAGE_WORDS
+                        and not looks_hallucinated(
+                            salvaged, seconds, self.cfg["max_words_per_second"]))
+                if not keep:
+                    log(f"hallucination guard rejected: {raw[:60]}")
+                    return {"state": "garbled", "text": "", "raw": raw}
+                dropped = len(raw.split()) - len(salvaged.split())
+                log(f"hallucination guard trimmed {dropped} repeated words, "
+                    f"kept {len(salvaged.split())} :: {raw}")
+                source = salvaged
 
             active = mode or self.cfg["mode"]
             t_llm = 0.0
             if active == "raw":
-                final = raw
+                final = source
             else:
                 t1 = time.time()
-                final = self.correct(raw, active)
+                final = self.correct(source, active)
                 t_llm = time.time() - t1
 
             final = self.postprocess(final, active)
@@ -952,6 +1077,7 @@ class Engine:
                 "llm_secs": round(t_llm, 2),
                 "guarded": bool(getattr(self, "last_guarded", False)),
                 "gaps": getattr(self, "last_gaps", []),
+                "trimmed": dropped,
             }
             write_history(entry)
             log(f"done stt={t_stt:.2f}s llm={t_llm:.2f}s :: {final[:80]}")

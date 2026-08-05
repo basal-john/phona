@@ -109,6 +109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.hotkeys.reenableIfNeeded()
         }
+
+        sweepAbandonedTakes()
+        Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+            self?.sweepAbandonedTakes()
+        }
     }
 
     // MARK: - Dictation
@@ -145,11 +150,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async {
                     guard mine == self.session else { return }
                     Paths.log("start failed: \(error.localizedDescription)")
-                    self.notify("Phona", error.localizedDescription)
                     self.levelTimer?.invalidate()
                     self.levelTimer = nil
                     OutputMute.release()
-                    self.hud.finish(.failed)
+                    /// The wav is created before the engine is started, so a failure part way
+                    /// through `start` leaves a file nothing else will ever claim.
+                    self.audioQueue.async { self.recorder.cancel() }
+                    self.fail(error.localizedDescription)
                 }
             }
         }
@@ -233,6 +240,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        /// A take that ran its full length without a single buffer means the capture layer is
+        /// dead, not that the speaker was quiet. It looked like an ordinary empty dictation
+        /// for an hour while coreaudiod sat wedged, and the only evidence was a 4 kB wav with
+        /// no frames in it.
+        ///
+        /// It has to come after the length check, not before. The first buffer arrives around
+        /// 450 ms after the device opens, so every hold shorter than that has captured nothing
+        /// yet through no fault of the microphone. Asked first, this told anyone who tapped
+        /// Option that their microphone was dead.
+        guard recorder.capturedAnyAudio else {
+            try? FileManager.default.removeItem(at: take.url)
+            Paths.log("the microphone delivered no audio for the whole take")
+            fail("The microphone delivered no audio. Check the input level in System "
+                 + "Settings, Sound. If it is dead there too, restart Core Audio.")
+            return
+        }
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             defer { try? FileManager.default.removeItem(at: take.url) }
@@ -250,6 +274,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard mine == self.session else { return }
                 switch outcome {
                 case .success(let result) where result.state == "done" && !result.text.isEmpty:
+                    /// Anything that delivers text clears the mark, not only a clean result.
+                    /// Left to the clean branch alone, one failure stuck to the menu bar
+                    /// through every later dictation that went to the clipboard or was
+                    /// trimmed, which is most of them for anyone who hits either often.
+                    self.clearFailureMark()
                     let action = Settings.outputAction
                     if action.insertsAtCursor {
                         switch Paster.paste(result.text, restore: !action.keepsOnClipboard) {
@@ -267,18 +296,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(result.text, forType: .string)
                     }
-                    Cue.done.play()
                     if let released = self.releasedAt { self.trace("pasted", since: released) }
-                    self.hud.finish(.done)
+                    if result.trimmedWords > 0 {
+                        /// Delivered, but shorter than what was said. The quiet cue rather than
+                        /// the completion chime, so the ear is told as well as the eye.
+                        Paths.log("trimmed \(result.trimmedWords) repeated words off the end")
+                        self.statusItem?.button?.toolTip =
+                            "Your last dictation looped. \(result.trimmedWords) repeated words "
+                            + "were cut off the end, so it may be short. What was heard, tail "
+                            + "and all, is the raw field of the last history.jsonl line."
+                        Cue.nothing.play()
+                        self.hud.finish(.trimmed)
+                    } else {
+                        Cue.done.play()
+                        self.hud.finish(.done)
+                    }
                 case .success(let result):
                     Paths.log("nothing heard, state=\(result.state) raw=\(result.raw)")
                     Cue.nothing.play()
                     self.hud.finish(.cancelled)
                 case .failure(let error):
                     Paths.log("daemon error: \(error.localizedDescription)")
-                    self.notify("Phona", error.localizedDescription)
-                    Cue.nothing.play()
-                    self.hud.finish(.failed)
+                    self.fail(error.localizedDescription)
                 }
             }
         }
@@ -463,6 +502,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func notify(_ title: String, _ body: String) {
         Paths.log("\(title): \(body)")
         statusItem?.button?.toolTip = body
+    }
+
+    /// A dictation failed outright. Say so, and keep saying so.
+    ///
+    /// The capsule leaves after a couple of seconds whatever happens, and a warning triangle
+    /// that brief is easy to read as an ordinary empty dictation. That is how a dozen
+    /// consecutive ffmpeg failures went unnoticed. The menu bar keeps a mark until a
+    /// dictation succeeds, so a persistent breakage looks persistent.
+    ///
+    /// The image position has to move with the title. A button showing only an image sits at
+    /// `.imageOnly`, and assigning a title flips it to `.imageOverlaps` without widening the
+    /// item, which draws the mark on top of the Φ instead of beside it.
+    private func fail(_ reason: String) {
+        notify("Phona", reason)
+        statusItem?.button?.imagePosition = .imageLeading
+        statusItem?.button?.title = " !"
+        Cue.nothing.play()
+        hud.finish(.failed)
+    }
+
+    /// Clear the mark, and only the mark.
+    ///
+    /// The tooltip is left alone. A successful paste can set it moments earlier to say the
+    /// clipboard held an image that could not be restored, and clearing it here destroyed
+    /// the only notice of that before it could be read.
+    private func clearFailureMark() {
+        guard statusItem?.button?.title.isEmpty == false else { return }
+        statusItem?.button?.title = ""
+        statusItem?.button?.imagePosition = .imageOnly
+    }
+
+    /// Drop takes left behind by dictations that never completed.
+    ///
+    /// A finished take is deleted once the daemon has answered, but a crash, a failure or a
+    /// dead microphone leaves the wav on disk for good. An hour of a wedged capture layer
+    /// left a pile of 4 kB files that nothing was ever going to collect.
+    ///
+    /// It runs on a timer as well as at launch. Phona is a menu bar app that stays resident
+    /// for days, so a launch-only sweep never collects anything the running session leaks.
+    ///
+    /// An unreadable modification date is a reason to keep a file, not to delete it. The CLI
+    /// writes its own takes into the same directory, so a sweeper that cannot date a file
+    /// must leave it where it is.
+    private func sweepAbandonedTakes() {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: Paths.base, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        let cutoff = Date().addingTimeInterval(-3600)
+        for url in entries where url.lastPathComponent.hasPrefix("take-")
+            && url.pathExtension == "wav" {
+            guard let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate else { continue }
+            guard modified < cutoff else { continue }
+            try? fm.removeItem(at: url)
+        }
     }
 }
 

@@ -11,6 +11,12 @@ enum HUDState: Equatable {
     case cancelled
     /// Transcribed, but there was nowhere to put it, so it waits on the clipboard.
     case clipboard
+    /// Delivered, but the transcriber looped and a repeated tail was cut off the end.
+    ///
+    /// Its own case rather than `done`, because the text that landed reads as a finished
+    /// sentence while being shorter than what was said. Passing that off as a clean result
+    /// is the one way trimming is worse than refusing outright.
+    case trimmed
     case failed
 }
 
@@ -67,14 +73,17 @@ struct HUDView: View {
 
     private var showsGlyph: Bool {
         model.state == .done || model.state == .failed || model.state == .clipboard
+            || model.state == .trimmed
     }
 
     /// The clipboard case gets its own glyph, because a checkmark would claim the text
-    /// was placed when it was not.
+    /// was placed when it was not. The trimmed case gets scissors for the same reason:
+    /// text arrived, but not all of what was said.
     private var glyphName: String {
         switch model.state {
         case .failed: return "exclamationmark.triangle.fill"
         case .clipboard: return "doc.on.clipboard"
+        case .trimmed: return "scissors"
         default: return "checkmark"
         }
     }
@@ -83,6 +92,7 @@ struct HUDView: View {
         switch model.state {
         case .failed: return .orange
         case .clipboard: return .yellow
+        case .trimmed: return .yellow
         default: return .green
         }
     }
@@ -96,7 +106,7 @@ struct HUDView: View {
             return barMin + (barMax - barMin) * CGFloat(scaled)
         case .working:
             return barMin + 3
-        case .done, .failed, .cancelled, .clipboard, .hidden:
+        case .done, .failed, .cancelled, .clipboard, .trimmed, .hidden:
             return 0
         }
     }
@@ -206,9 +216,14 @@ final class HUDPanel: NSPanel {
     /// Show the outcome, then leave.
     ///
     /// How long it lingers depends on what it is asking of the reader. A cancel goes almost
-    /// at once because there is nothing to read, a failure stays long enough for the warning
-    /// to register, and the clipboard case stays longest since it is the only one asking the
-    /// user to do something.
+    /// at once because there is nothing to read, and the cases that ask the user to do
+    /// something stay longest.
+    ///
+    /// A failure used to leave after 0.8 s, with the reason only in the menu bar tooltip.
+    /// When ffmpeg went missing that read as an ordinary empty dictation, and the real
+    /// breakage went unnoticed for over half an hour across a dozen attempts. A failure now
+    /// outstays every other outcome, and the menu bar carries a mark until the next one
+    /// succeeds.
     func finish(_ outcome: HUDState) {
         guard model.state != .hidden else { return }
         dismissWork?.cancel()
@@ -218,6 +233,8 @@ final class HUDPanel: NSPanel {
         case .done: linger = 0.45
         case .cancelled: linger = 0.3
         case .clipboard: linger = 1.4
+        case .trimmed: linger = 1.4
+        case .failed: linger = 2.5
         default: linger = 0.8
         }
         let work = DispatchWorkItem { [weak self] in self?.dismiss() }

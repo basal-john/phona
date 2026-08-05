@@ -158,6 +158,59 @@ def test_the_menu_bar_carries_the_app_mark():
     assert 'systemSymbolName: "waveform"' not in source
 
 
+def test_a_take_that_captured_nothing_is_reported_as_a_dead_microphone():
+    """A wedged capture layer produced a 4 kB wav with no frames in it, and the user was
+    shown the same quiet nothing-heard as an empty room. It went unrecognised for an hour."""
+    source = (ROOT / "macapp/Sources/PhonaApp/main.swift").read_text()
+    body = swift_function(source, "private func deliver")
+    assert "recorder.capturedAnyAudio" in body, \
+        "deliver must check whether any audio arrived before blaming the speaker"
+    assert body.index("take.seconds >= minSeconds") < body.index("capturedAnyAudio"), \
+        ("the length check must come first. The first buffer lands around 450 ms after the "
+         "device opens, so a short Option tap has captured nothing through no fault of the "
+         "microphone, and asking first called every tap a dead microphone")
+
+    recorder = (ROOT / "macapp/Sources/PhonaApp/Recorder.swift").read_text()
+    assert "receivedAnyAudio" in recorder
+    assert "var capturedAnyAudio" in recorder
+
+
+def test_a_failure_leaves_a_mark_that_outlives_the_capsule():
+    """A failure showed a warning glyph for 0.8 s with the reason only in a tooltip, so a
+    dozen consecutive ffmpeg failures read as ordinary empty dictations."""
+    source = (ROOT / "macapp/Sources/PhonaApp/main.swift").read_text()
+    assert "private func fail(" in source
+    assert "private func clearFailureMark()" in source
+
+    hud = (ROOT / "macapp/Sources/PhonaApp/HUD.swift").read_text()
+    linger = swift_function(hud, "func finish(")
+    assert "case .failed: linger = 2.5" in linger, \
+        "a failure must outstay every other outcome"
+
+
+def test_a_trimmed_result_is_never_shown_as_a_clean_one():
+    """Salvaging a looping transcript pastes text that reads as finished while being
+    shorter than what was said, so it needs its own outcome, not `done`."""
+    hud = (ROOT / "macapp/Sources/PhonaApp/HUD.swift").read_text()
+    assert "case trimmed" in hud
+    assert 'case .trimmed: return "scissors"' in hud
+
+    source = (ROOT / "macapp/Sources/PhonaApp/main.swift").read_text()
+    assert "result.trimmedWords > 0" in source
+    assert "hud.finish(.trimmed)" in source
+
+    client = (ROOT / "macapp/Sources/PhonaApp/DaemonClient.swift").read_text()
+    assert 'reply["trimmed"]' in client, "the trim count must survive the daemon reply"
+
+
+def test_abandoned_takes_are_swept_up():
+    """Finished takes are deleted, failed ones were not, so an hour of a dead microphone
+    left a pile of 4 kB wavs that nothing would ever collect."""
+    source = (ROOT / "macapp/Sources/PhonaApp/main.swift").read_text()
+    assert "private func sweepAbandonedTakes()" in source
+    assert "sweepAbandonedTakes()" in swift_function(source, "func applicationDidFinishLaunching")
+
+
 def test_readme_documents_where_data_is_stored():
     readme = (ROOT / "README.md").read_text()
     assert "history.jsonl" in readme

@@ -43,6 +43,7 @@ Options:
 
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -65,7 +66,32 @@ RECSTARTING = BASE / "recording.starting"
 CLIENTLOG = BASE / "client.log"
 MAX_LOG_BYTES = 2_000_000
 
-FFMPEG = "/opt/homebrew/bin/ffmpeg"
+FFMPEG_CANDIDATES = ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg")
+
+
+def resolve_ffmpeg():
+    """Find ffmpeg, and put its directory on PATH for anything that shells out by name.
+
+    Deliberately duplicated from phonad.py rather than shared. The two are standalone
+    scripts installed side by side, neither imports the other, and importing the daemon for
+    one helper would drag its model loading into every client invocation.
+
+    A GUI launched process inherits PATH=/usr/bin:/bin:/usr/sbin:/sbin with no Homebrew in
+    it, so a single hardcoded location is one Homebrew prefix away from breaking every
+    recording. The daemon hit exactly that.
+    """
+    found = shutil.which("ffmpeg")
+    if not found:
+        found = next((c for c in FFMPEG_CANDIDATES if os.access(c, os.X_OK)), None)
+    if found:
+        directory = str(Path(found).parent)
+        entries = os.environ.get("PATH", "").split(os.pathsep)
+        if directory not in entries:
+            os.environ["PATH"] = os.pathsep.join([directory] + entries)
+    return found
+
+
+FFMPEG = resolve_ffmpeg() or "ffmpeg"
 PLIST_LABEL = "com.basalona.phonad"
 
 SOUND_START = "/System/Library/Sounds/Tink.aiff"

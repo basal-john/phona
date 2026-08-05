@@ -652,7 +652,190 @@ def test_a_missing_ffmpeg_is_reported_rather_than_guessed_at(tmp_path, monkeypat
     assert phonad.resolve_ffmpeg() is None
 
 
-# --- the fixture is the contract ---------------------------------------------------
+@pytest.mark.parametrize("name", ["phonad", "client"])
+def test_no_engine_module_pins_a_single_ffmpeg_location(name):
+    """The daemon broke because one hardcoded Homebrew path was the only place it looked.
+    The recorder in client.py carried the same assumption. Neither may assign one."""
+    source = (ROOT / "engine" / f"{name}.py").read_text()
+    pinned = [
+        line for line in source.splitlines()
+        if line.startswith("FFMPEG =") and "resolve_ffmpeg" not in line
+    ]
+    assert not pinned, f"{name}.py hardcodes ffmpeg: {pinned}"
+    assert "def resolve_ffmpeg" in source, f"{name}.py does not resolve ffmpeg at all"
+
+
+# --- punctuation the speaker did not use ---------------------------------------------
+
+EM = "—"
+EN = "–"
+
+
+def test_the_model_cannot_smuggle_in_long_dashes():
+    """Corrections came back containing em dashes, which this user does not write. Stating
+    the rule in the prompt was not enough on a 4B model, so the substitution is done here."""
+    assert phonad.strip_long_dashes(f"it is like I said{EM}it is about survival") \
+        == "it is like I said, it is about survival"
+    assert phonad.strip_long_dashes(f"but the refinement {EM} do you want in") \
+        == "but the refinement, do you want in"
+    assert phonad.strip_long_dashes(f"the years {EN} 2024 to 2026") == "the years, 2024 to 2026"
+
+
+@pytest.mark.parametrize("source,expected", [
+    pytest.param(f"the sprint runs 2024{EN}2026", "the sprint runs 2024-2026", id="year-range"),
+    pytest.param(f"pages 10{EM}12 are missing", "pages 10-12 are missing", id="page-range"),
+    pytest.param(f"a 3{EN}day sprint", "a 3-day sprint", id="digit-then-word"),
+    pytest.param(f"chapter{EN}3 is next", "chapter-3 is next", id="word-then-digit"),
+])
+def test_a_number_beside_the_mark_makes_it_a_hyphen(source, expected):
+    """Correcting "the sprint runs 2024-2026" made the model rewrite the hyphen as an en
+    dash. A comma gave "2024, 2026", which is a different fact. Reading the digit on both
+    sides only was not enough: "a 3-day sprint" broke the same way."""
+    assert phonad.strip_long_dashes(source) == expected
+
+
+def test_a_dash_with_nothing_to_join_is_dropped():
+    """A comma at the very start or the very end is stray punctuation, not a correction."""
+    assert phonad.strip_long_dashes(f"{EM} and then we left") == "and then we left"
+    assert phonad.strip_long_dashes(f"and then we left {EM}") == "and then we left"
+
+
+def test_a_run_of_dashes_collapses_to_one_comma():
+    """Substituting one mark at a time turned two of them into ", , "."""
+    assert phonad.strip_long_dashes(f"we tried it {EM}{EM} it did not work") \
+        == "we tried it, it did not work"
+
+
+def test_hyphens_survive_the_dash_substitution():
+    """Compound words and ranges are spelled with hyphens, and rewriting those would break
+    real words rather than fix punctuation."""
+    for text in ("give me the copy-pasteable version", "a well-known issue", "2024-2026"):
+        assert phonad.strip_long_dashes(text) == text
+
+
+# --- paragraphs in a long dictation ---------------------------------------------------
+
+SOLIA = ("Hey, just a small feedback regarding reassigning the ticket. I understand you had "
+         "a discussion with her and you are reassigning, but I just want to give you a little "
+         "bit of background as well. She should be as free as possible this month because "
+         "there are a lot of priority tickets coming up. So in the future, before you "
+         "reassign something to her, please connect with me. I would probably be able to "
+         "suggest what to do in those cases.")
+
+
+def test_a_long_dictation_is_broken_where_the_speaker_changes_subject():
+    """The prompt has asked the model for this from the start and it does not do it. Six
+    real dictations of 25 to 58 seconds came back as one block, twice, once with the rule
+    stated and once with it made unmissable and demonstrated."""
+    out = phonad.paragraph_topics(SOLIA)
+    parts = out.split("\n\n")
+
+    assert len(parts) == 2
+    assert parts[1].startswith("So in the future")
+
+
+def test_a_short_dictation_is_never_broken_up():
+    """Most dictations are a sentence or two, and a paragraph break in one is noise. The
+    word count is the gate, not the sentence count, since two long sentences on two
+    different subjects do deserve the break."""
+    short = "Yes, I did the check and it works as expected. Secondly, I will look at the rest."
+    assert phonad.paragraph_topics(short) == short
+
+    two_long = (
+        "Yes, I did the check, and it works as expected, but I am still thinking about how "
+        "to enable one more option for the settings panel that we discussed. "
+        "Secondly, I noticed one more thing: when I click on the application from the dock, "
+        "I do not see the settings page at all, which is confusing.")
+    assert phonad.paragraph_topics(two_long).count("\n\n") == 1
+
+
+def test_text_with_no_topic_marker_is_left_alone():
+    """A wrong break in the middle of a thought is worse than no break, so only the words a
+    speaker actually uses to change subject count. Measured over 466 real dictations: six
+    were split, every one of them correctly, and the other 460 were untouched."""
+    flowing = " ".join(["This is one continuous thought that runs on for a while."] * 12)
+    assert phonad.paragraph_topics(flowing) == flowing
+
+
+def test_layout_the_speaker_asked_for_is_not_second_guessed():
+    """`new paragraph` has already been applied by this point. Re-splitting text that
+    carries the speaker's own breaks would put a second break beside theirs."""
+    spoken = ("Quick update on the release.\n\nRegarding the migration, it is done and "
+              "everything came back clean with no errors in the log so far, which is good "
+              "news for the deployment we have planned for the rest of this week ahead.")
+    assert phonad.paragraph_topics(spoken) == spoken
+
+
+def test_the_reply_guard_keeps_its_tight_budget_for_three_content_lines():
+    """The guard was briefly relaxed to count only consecutive lines, so that automatic
+    paragraphs could never be mistaken for an invented list.
+
+    That was wrong twice over. The paragraphs are added in `postprocess`, which runs after
+    `correct` has already accepted the candidate, so the case cannot arise. And the relaxation
+    handed a three paragraph invented answer the loose running-text budget. Reverted, and
+    pinned here so it is not reintroduced.
+    """
+    source = " ".join(["word"] * 8)
+    invented = "\n\n".join([" ".join(["word"] * 20)] * 3)
+
+    assert phonad.Engine._looks_like_a_reply(source, invented)
+
+
+def test_the_paragraph_pass_runs_after_the_reply_guard_not_before():
+    """The ordering is what makes the guard safe to leave alone, so it is worth pinning."""
+    source = (ROOT / "engine" / "phonad.py").read_text()
+    body = source[source.index("            active = mode or self.cfg[\"mode\"]"):]
+    assert body.index("self.correct(source, active)") < body.index("self.postprocess("), \
+        "paragraphs must be inserted after the candidate has been judged"
+
+
+# --- salvaging a looping transcript --------------------------------------------------
+
+BALLOON = ("yeah before you merge I also found one issue that is we are adding M dashes "
+           "I think specifically we have mentioned that M dashes should not be there "
+           + "balloon " * 219).strip()
+
+
+def test_a_looping_transcript_keeps_the_words_that_were_actually_said():
+    """A real dictation came back as real words followed by "balloon" 219 times.
+
+    The guard rejected the whole thing, so the speaker lost everything they had said to
+    remove the part they had not. The repeated tail is cut instead.
+    """
+    kept = phonad.trim_repetition(BALLOON)
+
+    assert kept is not None
+    assert kept.endswith("should not be there")
+    assert "balloon" not in kept
+    assert len(kept.split()) == 29
+
+
+def test_a_salvaged_prefix_is_itself_checked_before_being_trusted():
+    """Trimming must not be a way around the guard. A transcript that is degenerate all the
+    way through has no clean prefix to keep, and has to stay rejected."""
+    junk = "balloon " * 40
+    kept = phonad.trim_repetition(junk)
+
+    assert kept is None or phonad.looks_hallucinated(kept, 0, 6.0) or len(kept.split()) < 4
+
+
+def test_a_clean_transcript_is_never_trimmed():
+    """Repetition that is merely emphatic, not degenerate, must survive untouched."""
+    assert phonad.trim_repetition("no no no that is not what I meant at all") is None
+    assert phonad.trim_repetition("the meeting is at three") is None
+
+
+def test_the_repetition_threshold_matches_the_guard_that_rejects():
+    """Two different thresholds would leave transcripts the guard rejects and the trimmer
+    cannot cut, which is the all-or-nothing behaviour this replaced."""
+    run = "again " * phonad.REPEAT_RUN
+    text = ("this is a real sentence with plenty of distinct words in it " + run).strip()
+
+    assert phonad.looks_hallucinated(text, 0, 6.0)
+    assert phonad.trim_repetition(text) == "this is a real sentence with plenty of distinct words in it"
+
+
+# --- finding ffmpeg without a shell -------------------------------------------------
 
 def test_grammar_fixture_is_well_formed():
     """The model suite is not run here, but a malformed fixture should fail fast."""
