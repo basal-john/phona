@@ -4,7 +4,7 @@
 
 # Phona
 
-**Hold Option, speak, let go. Your words arrive corrected, where the cursor is.**
+**Hold the left Option key, speak, let go. Your words arrive corrected, where the cursor is.**
 
 Local dictation with a grammar pass, for Apple Silicon Macs. No account, no API key,
 no audio leaving your machine.
@@ -17,7 +17,7 @@ no audio leaving your machine.
 
 ## What it does
 
-You hold the Option key and talk. When you let go, phona transcribes what you said,
+You hold the left Option key and talk. When you let go, phona transcribes what you said,
 fixes the grammar, and pastes the result into whatever app you were in.
 
 ```
@@ -87,11 +87,23 @@ a warning the first time. Right click the app, choose Open, then Open again. Onc
 
 ## Using it
 
-Hold **Option** on its own, speak, release. That is the whole interface.
+Hold the **left Option** key on its own, speak, release. That is the whole interface.
 
 Option is watched, never remapped, so Option+click, Option+e and every other Option
-shortcut keep working. A hold only counts after Option has been down alone for 250 ms with
+shortcut keep working. A hold only counts after the key has been down alone for 150 ms with
 no other key pressed, and pressing any key mid-hold cancels the dictation.
+
+The right Option key is not a hotkey and never arms one. It is the key people reach for as a
+modifier, and `maskAlternate` does not say which side was pressed, so watching that flag alone
+meant the right key started dictations too. The side comes out of the device-dependent flag
+bits instead, `0x20` for left and `0x40` for right, and the right key now counts as an ordinary
+modifier: holding it does nothing, and pressing it mid-hold cancels like any other key.
+
+There is deliberately no fallback. A keyboard that reported Option with no side bit at all
+would not arm a dictation, rather than being treated as the left key, because treating it as
+left is exactly how the right key would get back in. That case is logged the first time it is
+seen, so a hotkey that stops working is diagnosable. `--probe-hotkey` logs every flag change
+with the side bits it saw.
 
 | While you hold | After you release | When it lands |
 | --- | --- | --- |
@@ -459,6 +471,8 @@ coverage, it is there so the same mistake cannot ship twice:
 | bundle version matches the git tag | the app reporting 1.0.0 while the release said 1.1.0 |
 | installer copies every module | a fresh install arriving with no audit |
 | a page named after a chat app is not chat | a GitHub page about `slack-notifier` styling a comment box as a message |
+| only the left key starts a dictation | the right Option key, the one reached for as a modifier, arming a dictation |
+| the side masks are the documented ones | a typo in a bit value, invisible here and wrong on another keyboard |
 | the style reaches the engine from the request | the chat style silently never applying, as an ordinary full stop |
 
 What CI cannot cover, and why: anything needing a granted permission, a microphone, or the
@@ -468,7 +482,8 @@ than papering over.
 
 ## Troubleshooting
 
-**Nothing happens when I hold Option.** Check Accessibility is granted, in the menu bar
+**Nothing happens when I hold Option.** Only the left Option key starts a dictation. If it is
+the left one, check Accessibility is granted, in the menu bar
 under Setup and permissions.
 
 **The waveform stays flat.** Wrong input device, or Microphone is not granted. Try Warm
