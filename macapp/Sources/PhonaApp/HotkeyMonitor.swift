@@ -121,7 +121,7 @@ final class HotkeyMonitor {
         if probing {
             let keycode = event.getIntegerValueField(.keyboardEventKeycode)
             Paths.log(String(
-                format: "hotkey probe: keycode %d (%@), flags %#010llx, left %@, right %@, ours %@",
+                format: "hotkey probe: keycode %lld (%@), flags %#010llx, left %@, right %@, ours %@",
                 keycode,
                 OptionKey.side(ofKeycode: keycode).map { $0 == .left ? "left option" : "right option" }
                     ?? "not option",
@@ -140,10 +140,7 @@ final class HotkeyMonitor {
         }
 
         let alt = OptionKey.dictationSideIsDown(flags: flags.rawValue)
-        let others = flags.contains(.maskCommand) || flags.contains(.maskControl)
-            || flags.contains(.maskShift) || flags.contains(.maskSecondaryFn)
-            || OptionKey.onlyRightIsDown(flags: flags.rawValue)
-        let altAlone = alt && !others
+        let altAlone = OptionKey.armsDictation(flags: flags.rawValue)
 
         if altAlone && !optionDown {
             optionDown = true

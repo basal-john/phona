@@ -25,6 +25,12 @@ public enum OptionKey {
     /// `CGEventFlags.maskAlternate`, either side.
     public static let eitherMask: UInt64 = 0x0008_0000
 
+    /// The modifiers that mean a shortcut is being reached for. `maskShift`, `maskControl`,
+    /// `maskCommand` and `maskSecondaryFn`, asserted against `CGEventFlags` in the tests so a
+    /// wrong bit cannot hide.
+    public static let otherModifierMask: UInt64 =
+        0x0002_0000 | 0x0004_0000 | 0x0010_0000 | 0x0080_0000
+
     public static func side(ofKeycode keycode: Int64) -> OptionSide? {
         switch keycode {
         case leftKeycode: return .left
@@ -55,9 +61,18 @@ public enum OptionKey {
         eitherIsDown(flags: flags) && !leftIsDown(flags: flags) && !rightIsDown(flags: flags)
     }
 
-    /// Whether the only Option key held is the right one, which is now an ordinary modifier
-    /// rather than a hotkey, and so has to cancel an arming hold the way any other key does.
-    public static func onlyRightIsDown(flags: UInt64) -> Bool {
-        rightIsDown(flags: flags) && !leftIsDown(flags: flags)
+    /// Whether anything is held that means a shortcut rather than a dictation.
+    ///
+    /// The right Option counts here whenever it is down, not only when it is down alone. An
+    /// earlier version asked whether it was the only Option held, which meant holding left to
+    /// arm and then pressing right left the hold running: both side bits were set, so the right
+    /// key stopped looking like an intruder at exactly the moment it became one.
+    public static func otherModifierIsDown(flags: UInt64) -> Bool {
+        flags & otherModifierMask != 0 || rightIsDown(flags: flags)
+    }
+
+    /// The whole arming decision. The left Option key held, with nothing else.
+    public static func armsDictation(flags: UInt64) -> Bool {
+        dictationSideIsDown(flags: flags) && !otherModifierIsDown(flags: flags)
     }
 }

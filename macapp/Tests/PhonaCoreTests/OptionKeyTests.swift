@@ -1,3 +1,4 @@
+import CoreGraphics
 import XCTest
 @testable import PhonaCore
 
@@ -69,13 +70,41 @@ final class OptionKeyTests: XCTestCase {
         XCTAssertFalse(OptionKey.dictationSideIsDown(flags: 0x0001_0000), "that is shift alone")
     }
 
-    /// The right key has to read as an ordinary modifier so it cancels an arming hold the
-    /// way command or shift does.
-    func testTheRightKeyAloneIsAnOrdinaryModifier() {
-        XCTAssertTrue(OptionKey.onlyRightIsDown(flags: rightOnly))
-        XCTAssertFalse(OptionKey.onlyRightIsDown(flags: leftOnly))
-        XCTAssertFalse(OptionKey.onlyRightIsDown(flags: bothKeys), "the left key is down too")
-        XCTAssertFalse(OptionKey.onlyRightIsDown(flags: 0))
+    /// The right key has to read as an ordinary modifier so it cancels an arming hold the way
+    /// command or shift does, and it has to do so whenever it is down.
+    func testTheRightKeyIsAnOrdinaryModifierWheneverItIsDown() {
+        XCTAssertTrue(OptionKey.otherModifierIsDown(flags: rightOnly))
+        XCTAssertTrue(OptionKey.otherModifierIsDown(flags: bothKeys),
+                      "still an intruder when the left key is held as well")
+        XCTAssertFalse(OptionKey.otherModifierIsDown(flags: leftOnly))
+        XCTAssertFalse(OptionKey.otherModifierIsDown(flags: 0))
+    }
+
+    /// Holding the left key and then pressing the right one has to cancel. An earlier version
+    /// asked whether the right key was the only Option held, so pressing it mid-hold left the
+    /// hold running: both side bits were set, and the right key stopped looking like an
+    /// intruder at exactly the moment it became one.
+    func testPressingTheRightKeyDuringALeftHoldCancels() {
+        XCTAssertTrue(OptionKey.armsDictation(flags: leftOnly))
+        XCTAssertFalse(OptionKey.armsDictation(flags: bothKeys))
+    }
+
+    func testAnyOtherModifierAlsoStopsItArming() {
+        for modifier in [0x0002_0000, 0x0004_0000, 0x0010_0000, 0x0080_0000] as [UInt64] {
+            XCTAssertFalse(OptionKey.armsDictation(flags: leftOnly | modifier),
+                           String(format: "%#010llx joined the hold", modifier))
+        }
+        XCTAssertFalse(OptionKey.armsDictation(flags: rightOnly))
+        XCTAssertFalse(OptionKey.armsDictation(flags: 0))
+    }
+
+    /// The other modifier bits are `CGEventFlags` values, so a typo would be invisible in
+    /// behaviour here and wrong somewhere else.
+    func testTheOtherModifierMaskMatchesCoreGraphics() {
+        let expected = CGEventFlags.maskShift.rawValue | CGEventFlags.maskControl.rawValue
+            | CGEventFlags.maskCommand.rawValue | CGEventFlags.maskSecondaryFn.rawValue
+        XCTAssertEqual(OptionKey.otherModifierMask, expected)
+        XCTAssertEqual(OptionKey.eitherMask, CGEventFlags.maskAlternate.rawValue)
     }
 
     /// The bit values are IOKit's, so a typo would be invisible in behaviour on this machine
