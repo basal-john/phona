@@ -19,6 +19,7 @@ enum Previews {
                               ("hud-working", .working),
                               ("hud-done", .done),
                               ("hud-clipboard", .clipboard),
+                              ("hud-trimmed", .trimmed),
                               ("hud-failed", .failed)] {
             let model = HUDModel()
             model.state = state

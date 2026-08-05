@@ -177,5 +177,7 @@ four seconds to start producing audio, against about 0.9 s once warm. Hammerspoo
 idle period puts the microphone back to sleep, or raise `device_open_timeout`.
 
 **Transcript is discarded as noise.** The repetition guard caught a Whisper hallucination
-loop. Lower `silence_max_db` if your microphone is quiet, or check the raw text with
-`phona history 1`.
+loop with no usable text in front of it. Where a loop follows real speech the tail is cut
+and the rest is delivered, and the count of dropped words is the `trimmed` field of the
+history entry. Either way the untrimmed transcript stays in `raw`, so check it with
+`phona history 1`. Lower `silence_max_db` if your microphone is quiet.

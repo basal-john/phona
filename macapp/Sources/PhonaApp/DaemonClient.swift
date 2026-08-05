@@ -12,6 +12,8 @@ enum DaemonClient {
         let text: String
         let sttSeconds: Double
         let llmSeconds: Double
+        /// Words cut from a looping transcript before correction. Zero for a clean result.
+        var trimmedWords: Int = 0
     }
 
     enum Failure: LocalizedError {
@@ -102,7 +104,8 @@ enum DaemonClient {
             raw: reply["raw"] as? String ?? "",
             text: reply["text"] as? String ?? "",
             sttSeconds: reply["stt_secs"] as? Double ?? 0,
-            llmSeconds: reply["llm_secs"] as? Double ?? 0
+            llmSeconds: reply["llm_secs"] as? Double ?? 0,
+            trimmedWords: reply["trimmed"] as? Int ?? 0
         )
     }
 

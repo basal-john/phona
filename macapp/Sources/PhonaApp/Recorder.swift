@@ -32,6 +32,13 @@ final class Recorder {
     private let meterLock = NSLock()
     private var meterLevel: Double = 0
     private var meterHasAudio = false
+    /// Whether any buffer arrived during this take.
+    ///
+    /// Separate from `meterHasAudio`, which `stop` clears so the next dictation starts dim.
+    /// This one survives the stop, because the interesting question is asked afterwards:
+    /// a take that captured nothing at all means the capture layer is dead, not that the
+    /// speaker was quiet, and those need different things said to the user.
+    private var receivedAnyAudio = false
 
     /// 0...1 loudness for the waveform, updated on every buffer.
     var level: Double {
@@ -52,8 +59,18 @@ final class Recorder {
     private func setMeter(level: Double? = nil, hasAudio: Bool? = nil) {
         meterLock.lock()
         if let level { meterLevel = level }
-        if let hasAudio { meterHasAudio = hasAudio }
+        if let hasAudio {
+            meterHasAudio = hasAudio
+            if hasAudio { receivedAnyAudio = true }
+        }
         meterLock.unlock()
+    }
+
+    /// True when at least one buffer arrived during the take that just ended.
+    var capturedAnyAudio: Bool {
+        meterLock.lock()
+        defer { meterLock.unlock() }
+        return receivedAnyAudio
     }
 
     private let engine = AVAudioEngine()
@@ -89,6 +106,9 @@ final class Recorder {
             throw Failure.noPermission
         }
         setMeter(level: 0, hasAudio: false)
+        meterLock.lock()
+        receivedAnyAudio = false
+        meterLock.unlock()
 
         let input = engine.inputNode
         let hardware = input.outputFormat(forBus: 0)
@@ -168,6 +188,12 @@ final class Recorder {
     /// stop use. Hopping to the main thread for the close would let a warm-up cancel land in the
     /// middle of a real open.
     func warm() {
+        /// Only ever cancel what this call opened. `start` returns without error when the
+        /// engine is already running, so warming during a live dictation used to stop it,
+        /// delete the wav in progress and lose what the speaker had already said. The launch
+        /// warm-up fires 1.5 s in, which is comfortably inside the window where someone can
+        /// already be holding the key.
+        guard !engine.isRunning else { return }
         try? start()
         Thread.sleep(forTimeInterval: 0.4)
         cancel()

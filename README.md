@@ -143,6 +143,22 @@ grounds that you can see and fix a stray "new line" but not a clause that silent
 Turn the whole thing off with `spoken_layout` in Settings. Transcribe only mode never
 applies it.
 
+A long dictation also gets a paragraph break where you change subject, without being asked.
+Only the words people actually use to turn a corner count, "so in the future", "separately",
+"secondly", "regarding", and only past about 45 words. That deliberately misses breaks
+rather than inventing them: a break in the middle of a thought is worse than none. Measured
+over 466 real dictations, six were split and 460 were left exactly as they were.
+
+The correction model was asked to do this in its prompt from the beginning and would not,
+including when the rule was made unmissable and shown a worked example. Six real dictations
+of 25 to 58 seconds came back as one block both times, which is why it is done in code.
+
+Em and en dashes are replaced with commas for the same reason. The model inserts them into
+otherwise clean sentences and will not stop when told, so the substitution happens after it
+has finished rather than being asked for. Between two digits the mark is a range and becomes
+a hyphen instead, so "2024 to 2026" does not turn into two separate years. Hyphens the model
+leaves alone are never touched, since compound words are spelled with them.
+
 ### Everything else goes quiet
 
 Music, a video in a browser tab or a voice on a call reaches the microphone through the
@@ -439,6 +455,44 @@ which control your device offers and watch a mute and a restore go through:
 
 ```bash
 /Applications/Phona.app/Contents/MacOS/PhonaApp --check-mute
+```
+
+**The capsule shows scissors.** The transcriber started looping and the repeated tail was
+cut off, so what landed is real but may be shorter than what you said. One dictation came
+back as 29 real words followed by "balloon" 219 times. The whole transcript, tail included,
+is in `~/.local/share/phona/app.log`. The menu bar says how many words were cut.
+
+**Phona says the microphone delivered no audio.** The input device produced not one buffer
+for the entire recording. That is the capture layer, not Phona, and not you being quiet.
+Check System Settings, Sound, Input and watch the level meter while you speak. If it is dead
+there too:
+
+```bash
+sudo killall coreaudiod
+```
+
+All audio cuts for about a second and launchd restarts it. A wedged Core Audio enumerates
+every device as healthy and hands out silence, so nothing else gives it away.
+
+**The capsule shows a warning triangle and the menu bar keeps a mark.** Something failed
+rather than came back empty. The mark stays until a dictation succeeds, so a breakage that
+persists looks like it. The reason is in `~/.local/share/phona/app.log`, on the line
+beginning `daemon error`.
+
+If it reads `No such file or directory: 'ffmpeg'`, the engine cannot find ffmpeg. Whisper
+shells out to it by name, and an app opened from the Dock, from Spotlight or as a login
+item is handed a PATH with no Homebrew in it, which the engine inherits. Phona now looks in
+the usual Homebrew locations itself, so this needs an actual missing ffmpeg to happen:
+
+```bash
+brew install ffmpeg
+```
+
+The engine names the binary it settled on at every start, so its log says which one is in
+use:
+
+```bash
+grep ffmpeg ~/.local/share/phona/phonad.log
 ```
 
 **Logs.** `~/.local/share/phona/app.log` for the app, `phonad.log` for the engine, and
