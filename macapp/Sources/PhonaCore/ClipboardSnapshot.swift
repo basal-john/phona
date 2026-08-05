@@ -58,28 +58,42 @@ public struct ClipboardSnapshot: Equatable {
         self.loss = loss
     }
 
+    /// Nothing was copied, because nothing was going to be put back.
+    public static let notTaken = ClipboardSnapshot(items: [], loss: .none)
+
     /// Decide what is restorable from what the pasteboard reported, one item at a time.
     ///
-    /// An item whose every type returned nothing is counted as lost rather than dropped in
-    /// silence, since that is the difference between "your clipboard is back" and a warning
-    /// the user needs to see. An item that advertises no types at all is neither: there was
-    /// nothing there to lose.
+    /// Loss is counted at two levels, because both change what a later paste produces. An
+    /// item whose every type returned nothing is gone outright, which is what a promised file
+    /// and an item waiting on Universal Clipboard both look like. An item that gave up some of
+    /// its types and not others comes back diminished, and an app that wanted one of the
+    /// missing representations will quietly take a different one instead. Counting whole items
+    /// alone reported that second case as no loss at all.
+    ///
+    /// An item that advertises no types is neither: there was nothing there to lose.
     public static func from(_ reported: [[(type: String, data: Data?)]]) -> ClipboardSnapshot {
         var items: [Item] = []
-        var lost = 0
+        var lostItems = 0
+        var lostTypes = 0
 
         for entries in reported {
             let usable = entries.compactMap { pair in
                 pair.data.map { Entry(type: pair.type, data: $0) }
             }
             if usable.isEmpty {
-                if !entries.isEmpty { lost += 1 }
+                if !entries.isEmpty { lostItems += 1 }
             } else {
+                lostTypes += entries.count - usable.count
                 items.append(Item(entries: usable))
             }
         }
 
-        let loss: ClipboardLoss = lost == 0 ? .none : (items.isEmpty ? .unreadable : .partial)
+        let loss: ClipboardLoss
+        if lostItems == 0, lostTypes == 0 {
+            loss = .none
+        } else {
+            loss = items.isEmpty ? .unreadable : .partial
+        }
         return ClipboardSnapshot(items: items, loss: loss)
     }
 

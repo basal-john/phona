@@ -123,6 +123,42 @@ final class ClipboardSnapshotTests: XCTestCase {
         XCTAssertNotNil(snapshot.warning)
     }
 
+    /// An item that gives up some of its types and not others comes back diminished, and an
+    /// app that wanted the missing representation quietly takes a different one instead.
+    /// Counting whole items alone reported this as no loss at all.
+    func testAnItemMissingOneOfItsTypesIsPartial() {
+        let snapshot = ClipboardSnapshot.from([[
+            (type: "public.rtf", data: nil),
+            (type: "public.utf8-plain-text", data: Data("kept".utf8)),
+        ]])
+        XCTAssertEqual(snapshot.loss, .partial)
+        XCTAssertTrue(snapshot.canRestore, "the text is still worth putting back")
+        XCTAssertEqual(snapshot.items.first?.entries.count, 1)
+        XCTAssertNotNil(snapshot.warning)
+    }
+
+    /// Nothing was read because nothing was going to be put back. That is not a loss and must
+    /// not be reported as one.
+    func testNotTakenIsSilent() {
+        XCTAssertFalse(ClipboardSnapshot.notTaken.canRestore)
+        XCTAssertNil(ClipboardSnapshot.notTaken.warning)
+        XCTAssertEqual(ClipboardSnapshot.notTaken.loss, .none)
+    }
+
+    /// What Universal Clipboard looks like while the other device still holds the bytes, taken
+    /// from a real pasteboard: every type advertised, every one returning nothing.
+    func testAnItemWaitingOnAnotherDeviceIsUnreadable() {
+        let snapshot = ClipboardSnapshot.from([[
+            (type: "com.apple.uikit.image", data: nil),
+            (type: "public.heic", data: nil),
+            (type: "public.png", data: nil),
+            (type: "com.apple.is-remote-clipboard", data: nil),
+        ]])
+        XCTAssertEqual(snapshot.loss, .unreadable)
+        XCTAssertFalse(snapshot.canRestore)
+        XCTAssertNotNil(snapshot.warning)
+    }
+
     /// An item advertising no types at all had nothing to lose, so it is neither restored
     /// nor counted against the user as a loss.
     func testAnItemWithNoTypesIsNotCountedAsALoss() {

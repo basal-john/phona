@@ -55,12 +55,20 @@ enum Paster {
     /// `.string` alone, so a dictation taken while an image was on the clipboard destroyed
     /// the image and said so afterwards, which it did seventeen times in one log. The care
     /// taken never to lose the dictation has to extend to what the dictation displaces.
+    ///
+    /// It is copied only when it is going to be put back. Reading every representation of every
+    /// item is not free: an item waiting on Universal Clipboard sends the read looking for
+    /// another device, and an image is megabytes. Neither belongs on the paste path when the
+    /// setting deliberately keeps the dictation on the clipboard, or when Accessibility could
+    /// not confirm a target and the dictation is being left there on purpose. Nothing is
+    /// promised in those cases, so nothing is warned about either.
     @discardableResult
     static func paste(_ text: String, restore: Bool = true) -> Outcome {
         let board = NSPasteboard.general
         let target = FocusProbe.current()
 
-        let snapshot = ClipboardStore.snapshot(of: board)
+        let willRestore = restore && target == .editable
+        let snapshot = willRestore ? ClipboardStore.snapshot(of: board) : .notTaken
         let warning = snapshot.warning
 
         board.clearContents()
@@ -74,7 +82,7 @@ enum Paster {
             return .leftOnClipboard(reason: "the paste keystroke could not be sent")
         }
 
-        if restore, target == .editable, snapshot.canRestore {
+        if willRestore, snapshot.canRestore {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 /// Only when the dictation is still there. Anything else means the user
                 /// copied something in the meantime, and that is theirs, not ours to undo.

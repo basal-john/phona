@@ -497,10 +497,20 @@ changed.
 
 What is put back is the whole clipboard, every item and every representation of it, in the
 order the pasteboard reported them, since that order decides which representation a receiving
-app takes. An image, a file, several items at once, all of it survives a dictation. Two things
-still do not: a promised file, where the pasteboard advertises a type and produces the bytes
-only for a real receiver, and anything over 32 MB, which is left alone rather than held in
-memory for the length of a dictation. Both say so instead of failing quietly.
+app takes. An image, a file, several items at once, all of it survives a dictation.
+
+Three things still do not, and each says so instead of failing quietly. A promised file, where
+the pasteboard advertises a type and produces the bytes only for a real receiver. An item
+waiting on Universal Clipboard, which looks the same, every type advertised and every one
+empty until another device hands the bytes over. And anything over 32 MB, which is left alone
+rather than held in memory for the length of a dictation. An item that gives up some of its
+representations and not others is reported too, because an app that wanted a missing one will
+quietly take a different one instead.
+
+The clipboard is only read when it is going to be put back. Reading every representation is
+not free, an item waiting on another device sends the read looking for it, so it is skipped
+when the output setting keeps the dictation on the clipboard anyway, or when Accessibility
+could not confirm a target and the dictation is being left there on purpose.
 
 **My output stayed muted.** Phona mutes the output device while it records and restores it
 when you let go, and puts it back at the next launch if it was killed in between. To see
