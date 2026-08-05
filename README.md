@@ -458,6 +458,8 @@ coverage, it is there so the same mistake cannot ship twice:
 | screenshots are opaque | the README unreadable in GitHub's dark theme |
 | bundle version matches the git tag | the app reporting 1.0.0 while the release said 1.1.0 |
 | installer copies every module | a fresh install arriving with no audit |
+| an image survives being displaced by a dictation | a dictation destroying whatever image or file was on the clipboard |
+| an empty clipboard is not a loss | a warning shown every time you dictate with nothing copied |
 | a page named after a chat app is not chat | a GitHub page about `slack-notifier` styling a comment box as a message |
 | the style reaches the engine from the request | the chat style silently never applying, as an ordinary full stop |
 
@@ -492,6 +494,13 @@ and only puts your previous clipboard back when the answer is yes. Where the ans
 uncertain, which is common in Electron apps that expose little of their hierarchy, the
 dictation stays on the clipboard. Losing what you said is worse than leaving a clipboard
 changed.
+
+What is put back is the whole clipboard, every item and every representation of it, in the
+order the pasteboard reported them, since that order decides which representation a receiving
+app takes. An image, a file, several items at once, all of it survives a dictation. Two things
+still do not: a promised file, where the pasteboard advertises a type and produces the bytes
+only for a real receiver, and anything over 32 MB, which is left alone rather than held in
+memory for the length of a dictation. Both say so instead of failing quietly.
 
 **My output stayed muted.** Phona mutes the output device while it records and restores it
 when you let go, and puts it back at the next launch if it was killed in between. To see
