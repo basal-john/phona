@@ -43,6 +43,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// from the previous hold could tear down the HUD of the next one.
     private var session = 0
 
+    /// The style of the app that was in front when a hold started, tagged with that hold.
+    ///
+    /// Tagged rather than stored plainly because it is written from a background queue and
+    /// read from another one, and an untagged value would let a slow read from the previous
+    /// hold style this one. Guarded by a lock for the same reason: `session` itself is only
+    /// ever touched on the main thread, so it cannot be consulted from either side.
+    private var styleForSession: (session: Int, style: String)?
+    private let styleLock = NSLock()
+
+    private func rememberStyle(_ style: String?, session: Int) {
+        styleLock.lock()
+        defer { styleLock.unlock() }
+        if let styleForSession, styleForSession.session > session { return }
+        styleForSession = style.map { (session, $0) }
+    }
+
+    private func style(forSession wanted: Int) -> String? {
+        styleLock.lock()
+        defer { styleLock.unlock() }
+        guard let styleForSession, styleForSession.session == wanted else { return nil }
+        return styleForSession.style
+    }
+
     /// Bring the app up without ever blocking on a permission dialog.
     ///
     /// Accepts two debug flags, `--probe-focus` and `--setup`, which open a window or log
@@ -95,6 +118,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Paths.log("focus probe: \(FocusProbe.describe())")
             }
         }
+        if CommandLine.arguments.contains("--probe-style") {
+            Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+                DispatchQueue.global(qos: .utility).async {
+                    Paths.log("style probe: \(AppContext.describe())")
+                }
+            }
+        }
         if CommandLine.arguments.contains("--setup") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.showOnboarding() }
         }
@@ -141,6 +171,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Cue.start.play()
         startLevelTimer()
         let armed = CFAbsoluteTimeGetCurrent()
+        if Settings.casualInChat {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.rememberStyle(AppContext.currentStyle(), session: mine)
+            }
+        } else {
+            rememberStyle(nil, session: mine)
+        }
         audioQueue.async { [weak self] in
             guard let self else { return }
             do {
@@ -265,7 +302,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let released = self.releasedAt { self.trace("daemon request sent", since: released) }
             let outcome = Result { try DaemonClient.process(url: take.url,
                                                             seconds: take.seconds,
-                                                            mode: nil) }
+                                                            mode: nil,
+                                                            style: self.style(forSession: mine)) }
             if let released = self.releasedAt, case .success(let r) = outcome {
                 self.trace(String(format: "daemon replied, its own stt %.2fs llm %.2fs",
                                   r.sttSeconds, r.llmSeconds), since: released)

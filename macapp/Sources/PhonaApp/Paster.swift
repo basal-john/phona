@@ -149,6 +149,13 @@ enum Settings {
     /// Whether the output device is muted while the microphone is capturing.
     static var muteOthersWhileDictating: Bool { value("mute_others", default: true) }
 
+    /// Whether a message dictated into a chat app drops its closing full stop.
+    ///
+    /// App-side rather than an engine setting, even though the daemon does the work, because
+    /// the daemon only ever acts on a style the app chose to send. Turning this off stops it
+    /// being sent, so it takes effect on the next hold instead of on the next restart.
+    static var casualInChat: Bool { value("casual_in_chat", default: true) }
+
     /// Write one key without disturbing the rest of the file.
     ///
     /// Separate from the settings window's save, which restarts the engine because the keys

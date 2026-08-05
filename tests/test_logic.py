@@ -392,6 +392,61 @@ def test_normalise_layout_keeps_runs_of_spaces(text):
     assert phonad.normalise_layout(text) == text
 
 
+# --- the chat style ----------------------------------------------------------------
+
+@pytest.mark.parametrize("text,expected", [
+    pytest.param("I pushed the fix. The tests are green.",
+                 "I pushed the fix. The tests are green", id="only-the-closing-stop"),
+    pytest.param("Can you check the staging build?",
+                 "Can you check the staging build?", id="question-mark-kept"),
+    pytest.param("That fixed it!", "That fixed it!", id="exclamation-kept"),
+    pytest.param("I guess so...", "I guess so...", id="ellipsis-is-a-tone"),
+    pytest.param("Let us ship it by 5 p.m.", "Let us ship it by 5 p.m.",
+                 id="abbreviation-keeps-its-own-stop"),
+    pytest.param("The review is signed off by J.", "The review is signed off by J.",
+                 id="an-initial-is-not-a-sentence-end"),
+    pytest.param("Bring the config, the tests, the review, etc.",
+                 "Bring the config, the tests, the review, etc.",
+                 id="conventional-abbreviation"),
+    pytest.param("Deploy is done.\n\nSeparately, the audit is still running.",
+                 "Deploy is done.\n\nSeparately, the audit is still running",
+                 id="only-the-last-paragraph-loses-it"),
+    pytest.param("We need three things.\n- A laptop.\n- A dock.",
+                 "We need three things.\n- A laptop.\n- A dock.", id="a-list-is-left-alone"),
+    pytest.param("There are two.\n1. Config.\n2. Tests.",
+                 "There are two.\n1. Config.\n2. Tests.", id="a-numbered-list-too"),
+    pytest.param("", "", id="empty"),
+    pytest.param("Done", "Done", id="nothing-to-drop"),
+])
+def test_chat_style_drops_only_the_closing_full_stop(text, expected):
+    """A message typed into Slack by hand does not end in a full stop, and one dictated with
+    one reads stiffer than anything the speaker would have written. Everything else about the
+    punctuation carries meaning, so everything else stays."""
+    assert phonad.drop_trailing_stop(text) == expected
+
+
+def _postprocess(text, style):
+    """Run postprocess without loading a model. It reads nothing but `cfg` off the engine."""
+    engine = types.SimpleNamespace(
+        cfg={"replacements": {}, "mode": "grammar", "spoken_layout": True})
+    return phonad.Engine.postprocess(engine, text, "grammar", style)
+
+
+def test_the_chat_style_only_applies_when_the_caller_asks_for_it():
+    """The daemon cannot see the screen, so the style arrives with the request. A dictation
+    into a document must come back exactly as it did before this existed."""
+    assert _postprocess("The tests are green.", "chat") == "The tests are green"
+    assert _postprocess("The tests are green.", None) == "The tests are green."
+
+
+def test_transcribe_only_mode_ignores_the_chat_style():
+    """Raw mode promises exactly what was heard, which is what the Settings window says it
+    does, so no style may edit its punctuation."""
+    engine = types.SimpleNamespace(cfg={"replacements": {}, "mode": "raw"})
+    assert phonad.Engine.postprocess(
+        engine, "the tests are green.", "raw", "chat") == "the tests are green."
+
+
 # --- the mechanical fallback -------------------------------------------------------
 
 @pytest.mark.parametrize("raw,expected", [
@@ -620,6 +675,35 @@ def test_ask_is_dispatched_to_the_model_and_never_to_the_corrector():
 
     assert calls == ["Output exactly the word READY."]
     assert conn.replies == [{"state": "done", "text": "READY"}]
+
+
+def test_the_style_reaches_the_engine_from_the_request():
+    """The app is the only thing that can see which app is in front, so the style travels in
+    the request. Dropped anywhere along the way it fails silently, as an ordinary full stop."""
+    calls = []
+    engine = types.SimpleNamespace(
+        process=lambda path, seconds, mode, style: calls.append((mode, style))
+        or {"state": "done", "text": "ok"})
+
+    conn = _FakeConn({"cmd": "PROCESS", "path": "/tmp/take.wav", "seconds": 2.0,
+                      "style": "chat"})
+    phonad.handle(conn, engine)
+
+    assert calls == [(None, "chat")]
+
+
+def test_a_request_without_a_style_still_works():
+    """`phona` on the command line has no app context to report, and neither does an older
+    build of the app, so the key is optional rather than expected."""
+    calls = []
+    engine = types.SimpleNamespace(
+        fix_text=lambda text, mode, style: calls.append((text, style))
+        or {"state": "done", "text": "ok"})
+
+    conn = _FakeConn({"cmd": "FIX", "text": "the tests is green"})
+    phonad.handle(conn, engine)
+
+    assert calls == [("the tests is green", None)]
 
 
 # --- finding ffmpeg without a shell -------------------------------------------------
