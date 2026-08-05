@@ -149,6 +149,26 @@ public enum ClipboardStore {
         return ClipboardSnapshot.from(reported)
     }
 
+    /// What to say when the clipboard is about to be replaced and will not be put back.
+    ///
+    /// That happens on two paths: the output setting keeps the dictation on the clipboard, and
+    /// Accessibility could not confirm a target so the dictation is left there deliberately.
+    /// Neither takes a snapshot, and neither should, but the user still just lost whatever they
+    /// had copied and used to be told so.
+    ///
+    /// Cheap by design. It asks whether the pasteboard holds anything and whether any of it is
+    /// text, and never reads an image or sends a read looking for another device.
+    ///
+    /// Silent when the clipboard held text, because losing a line of text is recoverable from
+    /// wherever it was copied. An image or a file usually is not, which is the whole reason the
+    /// old warning existed.
+    public static func replacementWarning(for board: NSPasteboard) -> String? {
+        guard !(board.pasteboardItems ?? []).isEmpty else { return nil }
+        guard board.string(forType: .string) == nil else { return nil }
+        return "Your clipboard held an image or file, and the dictation has replaced it. "
+            + "It cannot be put back."
+    }
+
     /// Put a snapshot back, replacing whatever is on the pasteboard now.
     @discardableResult
     public static func restore(_ snapshot: ClipboardSnapshot, to board: NSPasteboard) -> Bool {

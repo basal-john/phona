@@ -145,6 +145,28 @@ final class ClipboardSnapshotTests: XCTestCase {
         XCTAssertEqual(ClipboardSnapshot.notTaken.loss, .none)
     }
 
+    /// The insert-and-copy setting keeps the dictation on the clipboard on purpose, so nothing
+    /// is snapshotted there. A displaced image is still gone and the user is still told, because
+    /// going quiet about it was a regression against the behaviour this file replaced.
+    func testADisplacedImageIsReportedEvenWhenNothingWillBeRestored() {
+        let item = NSPasteboardItem()
+        item.setData(Self.png, forType: .png)
+        board.writeObjects([item])
+
+        XCTAssertNotNil(ClipboardStore.replacementWarning(for: board))
+    }
+
+    /// Text is recoverable from wherever it was copied, so replacing it is not worth a warning
+    /// on every dictation.
+    func testReplacingTextIsNotWorthAWarning() {
+        board.setString("something the user copied", forType: .string)
+        XCTAssertNil(ClipboardStore.replacementWarning(for: board))
+    }
+
+    func testAnEmptyClipboardIsNotWorthAWarning() {
+        XCTAssertNil(ClipboardStore.replacementWarning(for: board))
+    }
+
     /// What Universal Clipboard looks like while the other device still holds the bytes, taken
     /// from a real pasteboard: every type advertised, every one returning nothing.
     func testAnItemWaitingOnAnotherDeviceIsUnreadable() {
