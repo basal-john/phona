@@ -186,7 +186,17 @@ Measured over 271 real dictations: 159 would lose their closing stop, 112 were l
 as they were, and the single message ending in an abbreviation kept its own.
 
 Which app is in front is read when Option goes down rather than when the text comes back,
-because that is the app you were talking into. Turn it off with **Drop the closing full
+because that is the app you were talking into. Run the app with `--probe-style` and it logs
+what it saw and what it decided every two seconds, which is how the browser title read was
+checked on a real machine:
+
+```
+style probe: com.tinyspeck.slackmacgap, title "not read", style chat
+style probe: notion.id, title "not read", style none
+style probe: com.google.Chrome, title "Slack | general | Thomann - Google Chrome", style chat
+style probe: com.google.Chrome, title "slack-notifier CI · GitHub - Google Chrome", style none
+```
+ Turn it off with **Drop the closing full
 stop** in Settings, which takes effect on the next dictation rather than needing a restart.
 Transcribe only mode never applies it.
 

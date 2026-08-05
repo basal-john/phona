@@ -24,6 +24,21 @@ enum AppContext {
         return ChatApps.style(bundleIdentifier: bundle, windowTitle: title)?.rawValue
     }
 
+    /// What the style decision saw and what it decided, for `--probe-style`.
+    ///
+    /// The classification is worth being able to watch on a real machine. Whether a browser
+    /// reports its window title over accessibility is not something a unit test can answer,
+    /// and without this the only way to find out was to dictate and inspect the punctuation.
+    static func describe() -> String {
+        let app = NSWorkspace.shared.frontmostApplication
+        let bundle = app?.bundleIdentifier ?? "unknown"
+        var title = "not read"
+        if ChatApps.needsWindowTitle(app?.bundleIdentifier) {
+            title = frontWindowTitle(pid: app?.processIdentifier) ?? "accessibility said nothing"
+        }
+        return "\(bundle), title \"\(title)\", style \(currentStyle() ?? "none")"
+    }
+
     /// The title of an app's focused window, or nil when accessibility will not say.
     ///
     /// A browser that reports nothing is treated as not chat, which errs toward leaving

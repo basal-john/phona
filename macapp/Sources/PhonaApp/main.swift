@@ -118,6 +118,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Paths.log("focus probe: \(FocusProbe.describe())")
             }
         }
+        if CommandLine.arguments.contains("--probe-style") {
+            Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+                DispatchQueue.global(qos: .utility).async {
+                    Paths.log("style probe: \(AppContext.describe())")
+                }
+            }
+        }
         if CommandLine.arguments.contains("--setup") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.showOnboarding() }
         }
