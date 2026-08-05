@@ -145,6 +145,57 @@ final class ClipboardSnapshotTests: XCTestCase {
         XCTAssertEqual(ClipboardSnapshot.notTaken.loss, .none)
     }
 
+    /// The insert-and-copy setting keeps the dictation on the clipboard on purpose, so nothing
+    /// is snapshotted there. A displaced image is still gone and the user is still told, because
+    /// going quiet about it was a regression against the behaviour this file replaced.
+    func testADisplacedImageIsReportedEvenWhenNothingWillBeRestored() {
+        let item = NSPasteboardItem()
+        item.setData(Self.png, forType: .png)
+        board.writeObjects([item])
+
+        XCTAssertNotNil(ClipboardStore.replacementWarning(for: board))
+    }
+
+    /// Text is recoverable from wherever it was copied, so replacing it is not worth a warning
+    /// on every dictation.
+    func testReplacingTextIsNotWorthAWarning() {
+        board.setString("something the user copied", forType: .string)
+        XCTAssertNil(ClipboardStore.replacementWarning(for: board))
+    }
+
+    /// A clipboard can carry words without handing over a plain string. Calling that an image
+    /// would have been a confident lie in a notification.
+    func testTextThatDoesNotHandOverAPlainStringIsStillText() {
+        for type in [NSPasteboard.PasteboardType.rtf,
+                     NSPasteboard.PasteboardType.html,
+                     NSPasteboard.PasteboardType("public.utf16-external-plain-text")] {
+            board.clearContents()
+            let item = NSPasteboardItem()
+            item.setData(Data("words".utf8), forType: type)
+            board.writeObjects([item])
+
+            XCTAssertNil(ClipboardStore.replacementWarning(for: board), type.rawValue)
+        }
+    }
+
+    /// Anything that is not text reads as not recoverable, whatever kind it is.
+    func testNonTextContentIsReportedWhateverItIs() {
+        for type in [NSPasteboard.PasteboardType.png,
+                     NSPasteboard.PasteboardType.pdf,
+                     NSPasteboard.PasteboardType.fileURL] {
+            board.clearContents()
+            let item = NSPasteboardItem()
+            item.setData(Self.png, forType: type)
+            board.writeObjects([item])
+
+            XCTAssertNotNil(ClipboardStore.replacementWarning(for: board), type.rawValue)
+        }
+    }
+
+    func testAnEmptyClipboardIsNotWorthAWarning() {
+        XCTAssertNil(ClipboardStore.replacementWarning(for: board))
+    }
+
     /// What Universal Clipboard looks like while the other device still holds the bytes, taken
     /// from a real pasteboard: every type advertised, every one returning nothing.
     func testAnItemWaitingOnAnotherDeviceIsUnreadable() {

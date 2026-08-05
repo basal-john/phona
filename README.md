@@ -525,7 +525,15 @@ quietly take a different one instead.
 The clipboard is only read when it is going to be put back. Reading every representation is
 not free, an item waiting on another device sends the read looking for it, so it is skipped
 when the output setting keeps the dictation on the clipboard anyway, or when Accessibility
-could not confirm a target and the dictation is being left there on purpose.
+could not confirm a target and the dictation is being left there on purpose. Those two paths
+still say when something other than text was displaced, from the types the pasteboard
+advertises rather than a copy of its contents, so nothing is read at all.
+
+**My image did not come back after a dictation.** Check **When done** in Settings. **Insert and
+copy** never restores your clipboard, by definition: it is insert without the final restore,
+which is exactly what leaves the dictation there for Universal Clipboard to carry to another
+device. An image on the clipboard is therefore gone after a dictation on that setting, and
+always was. Choose **Insert at cursor** to keep what you had copied.
 
 **My output stayed muted.** Phona mutes the output device while it records and restores it
 when you let go, and puts it back at the next launch if it was killed in between. To see

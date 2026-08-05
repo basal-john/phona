@@ -60,8 +60,12 @@ enum Paster {
     /// item is not free: an item waiting on Universal Clipboard sends the read looking for
     /// another device, and an image is megabytes. Neither belongs on the paste path when the
     /// setting deliberately keeps the dictation on the clipboard, or when Accessibility could
-    /// not confirm a target and the dictation is being left there on purpose. Nothing is
-    /// promised in those cases, so nothing is warned about either.
+    /// not confirm a target and the dictation is being left there on purpose.
+    ///
+    /// Those two paths still say what was displaced, from a cheap look at the pasteboard rather
+    /// than a copy of it. Skipping the snapshot there was right, and taking the warning with it
+    /// was not: on the insert-and-copy setting a displaced image went silently, where before it
+    /// was at least reported.
     @discardableResult
     static func paste(_ text: String, restore: Bool = true) -> Outcome {
         let board = NSPasteboard.general
@@ -69,7 +73,9 @@ enum Paster {
 
         let willRestore = restore && target == .editable
         let snapshot = willRestore ? ClipboardStore.snapshot(of: board) : .notTaken
-        let warning = snapshot.warning
+        let warning = willRestore
+            ? snapshot.warning
+            : ClipboardStore.replacementWarning(for: board)
 
         board.clearContents()
         board.setString(text, forType: .string)
