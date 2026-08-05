@@ -53,13 +53,18 @@ def resolve_ffmpeg():
     inherits that in turn. Every transcription then failed with FileNotFoundError while the
     binary sat one directory away, and the same daemon started from a terminal worked, which
     made it look intermittent.
+
+    Empty entries are dropped while rebuilding PATH. An unset PATH, or one with a stray
+    leading or trailing separator, splits to an empty string, and an empty entry means the
+    current working directory. Writing that back would let anything named ffmpeg in whatever
+    directory the daemon happens to be in run instead of the real one.
     """
     found = shutil.which("ffmpeg")
     if not found:
         found = next((c for c in FFMPEG_CANDIDATES if os.access(c, os.X_OK)), None)
     if found:
         directory = str(Path(found).parent)
-        entries = os.environ.get("PATH", "").split(os.pathsep)
+        entries = [e for e in os.environ.get("PATH", "").split(os.pathsep) if e]
         if directory not in entries:
             os.environ["PATH"] = os.pathsep.join([directory] + entries)
     return found
@@ -1216,7 +1221,9 @@ def main():
     cfg = load_config()
     log(f"daemon starting, pid {os.getpid()}")
     if FFMPEG == "ffmpeg":
-        log("ffmpeg not found, transcription will fail. Install it with: brew install ffmpeg")
+        log(f"ffmpeg not found on PATH or in {', '.join(FFMPEG_CANDIDATES)}, so transcription "
+            f"will fail. Install it, with brew install ffmpeg or otherwise, and make sure it "
+            f"is on PATH or in one of those locations")
     else:
         log(f"ffmpeg at {FFMPEG}")
     engine = Engine(cfg)

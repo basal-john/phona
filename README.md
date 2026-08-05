@@ -488,8 +488,12 @@ the usual Homebrew locations itself, so this needs an actual missing ffmpeg to h
 brew install ffmpeg
 ```
 
-The engine names the binary it settled on at every start, so `grep ffmpeg
-~/.local/share/phona/phonad.log` says which one is in use.
+The engine names the binary it settled on at every start, so its log says which one is in
+use:
+
+```bash
+grep ffmpeg ~/.local/share/phona/phonad.log
+```
 
 **Logs.** `~/.local/share/phona/app.log` for the app, `phonad.log` for the engine, and
 `history.jsonl` for every dictation with what was heard next to what was corrected.

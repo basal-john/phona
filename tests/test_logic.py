@@ -652,6 +652,35 @@ def test_a_missing_ffmpeg_is_reported_rather_than_guessed_at(tmp_path, monkeypat
     assert phonad.resolve_ffmpeg() is None
 
 
+@pytest.mark.parametrize("resolver", [
+    pytest.param(lambda: phonad.resolve_ffmpeg(), id="phonad"),
+])
+@pytest.mark.parametrize("hostile", ["", ":", "/usr/bin:", ":/usr/bin", "::"])
+def test_rebuilding_path_never_leaves_the_working_directory_on_it(
+        resolver, hostile, tmp_path, monkeypatch):
+    """An unset PATH, or one with a stray separator, splits to an empty string, and an empty
+    PATH entry means the current working directory. Writing that back would let anything
+    named ffmpeg in the daemon's working directory run instead of the real one."""
+    binary = tmp_path / "ffmpeg"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+
+    monkeypatch.setenv("PATH", hostile)
+    monkeypatch.setattr(phonad, "FFMPEG_CANDIDATES", (str(binary),))
+
+    assert resolver() == str(binary)
+    assert "" not in os.environ["PATH"].split(os.pathsep)
+
+
+@pytest.mark.parametrize("name", ["phonad", "client"])
+def test_both_engine_modules_drop_empty_path_entries(name):
+    """client.py carries its own copy of the resolver, and is never imported by the tests,
+    so the hardening has to be asserted on its source."""
+    source = (ROOT / "engine" / f"{name}.py").read_text()
+    assert 'os.environ.get("PATH", "").split(os.pathsep) if e' in source, \
+        f"{name}.py can write an empty PATH entry back"
+
+
 @pytest.mark.parametrize("name", ["phonad", "client"])
 def test_no_engine_module_pins_a_single_ffmpeg_location(name):
     """The daemon broke because one hardcoded Homebrew path was the only place it looked.

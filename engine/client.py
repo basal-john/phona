@@ -79,13 +79,17 @@ def resolve_ffmpeg():
     A GUI launched process inherits PATH=/usr/bin:/bin:/usr/sbin:/sbin with no Homebrew in
     it, so a single hardcoded location is one Homebrew prefix away from breaking every
     recording. The daemon hit exactly that.
+
+    Empty entries are dropped while rebuilding PATH, since an empty entry means the current
+    working directory and writing it back would let anything named ffmpeg sitting there run
+    instead of the real one.
     """
     found = shutil.which("ffmpeg")
     if not found:
         found = next((c for c in FFMPEG_CANDIDATES if os.access(c, os.X_OK)), None)
     if found:
         directory = str(Path(found).parent)
-        entries = os.environ.get("PATH", "").split(os.pathsep)
+        entries = [e for e in os.environ.get("PATH", "").split(os.pathsep) if e]
         if directory not in entries:
             os.environ["PATH"] = os.pathsep.join([directory] + entries)
     return found
