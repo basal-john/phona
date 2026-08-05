@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var biasVocabulary: Bool = false
     @State private var outputAction: OutputAction = .insert
     @State private var spokenLayout: Bool = true
+    @State private var casualInChat: Bool = true
     @State private var muteOthers: Bool = true
     @State private var showInDock: Bool = true
     @State private var status: String = ""
@@ -110,6 +111,19 @@ struct SettingsView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+
+            Section("Chat apps") {
+                Toggle("Drop the closing full stop", isOn: $casualInChat)
+                    .onChange(of: casualInChat) { _, wanted in
+                        Settings.set("casual_in_chat", wanted)
+                    }
+                Text("In Slack, Discord, WhatsApp, Teams, Messages and the same sites in a "
+                     + "browser, a message ends without a full stop, the way a typed one "
+                     + "does. Stops between sentences, question marks, exclamation marks and "
+                     + "lists are left alone.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }
@@ -177,6 +191,7 @@ struct SettingsView: View {
     private func load() {
         launchAtLogin = SMAppService.mainApp.status == .enabled
         muteOthers = Settings.muteOthersWhileDictating
+        casualInChat = Settings.casualInChat
         showInDock = Settings.showInDock
         mode = .current
         guard let data = try? Data(contentsOf: Paths.config),

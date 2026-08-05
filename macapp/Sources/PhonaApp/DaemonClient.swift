@@ -94,9 +94,14 @@ enum DaemonClient {
     }
 
     /// Ask the daemon to transcribe and correct a recording.
-    static func process(url: URL, seconds: Double, mode: String?) throws -> Result {
+    ///
+    /// The style says what kind of app the text is going into. It is omitted rather than sent
+    /// empty when there is nothing to say, so an older daemon that does not know the key
+    /// behaves exactly as it did before.
+    static func process(url: URL, seconds: Double, mode: String?, style: String? = nil) throws -> Result {
         var payload: [String: Any] = ["cmd": "PROCESS", "path": url.path, "seconds": seconds]
         if let mode { payload["mode"] = mode }
+        if let style { payload["style"] = style }
         let reply = try request(payload)
         if let error = reply["error"] as? String { throw Failure.transport(error) }
         return Result(

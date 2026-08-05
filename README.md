@@ -159,6 +159,37 @@ has finished rather than being asked for. Between two digits the mark is a range
 a hyphen instead, so "2024 to 2026" does not turn into two separate years. Hyphens the model
 leaves alone are never touched, since compound words are spelled with them.
 
+### Chat apps end without a full stop
+
+Nobody types a full stop at the end of a Slack message, so a dictated one reads stiffer than
+anything you would have written by hand. Dictate into a chat app and the closing stop is
+dropped:
+
+| Say | Get |
+| --- | --- |
+| "I pushed the fix, the tests are green" | `I pushed the fix. The tests are green` |
+| "can you check the staging build" | `Can you check the staging build?` |
+
+Only the last mark of the message, and only when it is a full stop. Stops between sentences
+stay, because they are what separates one thought from the next. A question mark or an
+exclamation mark carries meaning a full stop does not, so both are left alone. An ellipsis is
+a tone rather than a sentence end. An abbreviation keeps the stop that belongs to it, so
+"it is 11:30 a.m." is untouched, and a message containing a list is left alone entirely,
+since stripping the stop off the final item only would read as a bug.
+
+Slack, Discord, WhatsApp, Teams and Messages count, and so do the same sites in a browser,
+recognised from the window title. The title has to match a whole segment of it, so a GitHub
+page about `slack-notifier` is not mistaken for Slack. A browser that will not report its
+title is treated as not a chat app, which errs toward leaving your punctuation alone.
+
+Measured over 271 real dictations: 159 would lose their closing stop, 112 were left exactly
+as they were, and the single message ending in an abbreviation kept its own.
+
+Which app is in front is read when Option goes down rather than when the text comes back,
+because that is the app you were talking into. Turn it off with **Drop the closing full
+stop** in Settings, which takes effect on the next dictation rather than needing a restart.
+Transcribe only mode never applies it.
+
 ### Everything else goes quiet
 
 Music, a video in a browser tab or a voice on a call reaches the microphone through the
@@ -189,8 +220,8 @@ the menu bar alone.
 ### Settings
 
 Vocabulary for words the transcriber mangles, literal replacements applied before the
-layout pass (`jeera = Jira`), correction mode, spoken layout commands, muting other audio,
-the Dock icon, and open at login.
+layout pass (`jeera = Jira`), correction mode, spoken layout commands, the closing full stop
+in chat apps, muting other audio, the Dock icon, and open at login.
 
 ## How it works
 
@@ -201,6 +232,7 @@ Option held
   -> Whisper large-v3-turbo transcribes
   -> repetition guard discards degenerate output
   -> Qwen3-4B rewrites it as correct English
+  -> layout settles, and a chat app loses the closing full stop
   -> pasted at the cursor, clipboard restored
 ```
 
@@ -416,6 +448,8 @@ coverage, it is there so the same mistake cannot ship twice:
 | screenshots are opaque | the README unreadable in GitHub's dark theme |
 | bundle version matches the git tag | the app reporting 1.0.0 while the release said 1.1.0 |
 | installer copies every module | a fresh install arriving with no audit |
+| a page named after a chat app is not chat | a GitHub page about `slack-notifier` styling a comment box as a message |
+| the style reaches the engine from the request | the chat style silently never applying, as an ordinary full stop |
 
 What CI cannot cover, and why: anything needing a granted permission, a microphone, or the
 language model. The TCC bug that cost an hour this morning is invisible to any test that

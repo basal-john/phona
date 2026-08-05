@@ -423,6 +423,43 @@ def paragraph_topics(text):
     return "".join(out)
 
 
+CHAT_KEEP_STOP = {"etc", "vs", "approx", "dr", "mr", "mrs", "ms", "prof", "inc", "ltd",
+                  "jr", "sr", "no", "al", "eg", "ie"}
+
+
+def drop_trailing_stop(text):
+    """Drop the full stop that closes a chat message, and nothing else.
+
+    Slack, Discord and iMessage are the apps where a typed message does not end in a full
+    stop, and a dictation that does reads as stiffer than anything the speaker would have
+    typed by hand. Only the final mark goes. Stops between sentences stay, because removing
+    them changes where one thought ends and the next begins, and a question mark or an
+    exclamation mark carries meaning a full stop does not, so both are left alone.
+
+    A message containing a list is left untouched. Removing the stop from the last item
+    only, while every item above it kept one, reads as a defect rather than as a style.
+
+    An abbreviation ends in a full stop that belongs to the word. "5 p.m." carries the mark
+    inside it, so it is recognised by the inner stop rather than by a list of every
+    abbreviation in the language, and a single letter is an initial. The short list covers
+    what is left, where the stop is conventional but the word has no inner one.
+
+    A run of stops is an ellipsis, which is a tone rather than a sentence end, so it stays.
+    """
+    if not text or LIST_LINE.search(text):
+        return text
+    stripped = text.rstrip()
+    if not stripped.endswith(".") or stripped.endswith(".."):
+        return text
+    words = stripped[:-1].split()
+    if not words or "." in words[-1]:
+        return text
+    bare = words[-1].strip(string.punctuation).lower()
+    if len(bare) <= 1 or bare in CHAT_KEEP_STOP:
+        return text
+    return stripped[:-1]
+
+
 def normalise_layout(text):
     """Strip the layout artefacts a chat model leaves behind.
 
@@ -992,13 +1029,18 @@ class Engine:
                 self.cache = None
         return self._generate_plain(msgs)
 
-    def postprocess(self, text, mode=None):
+    def postprocess(self, text, mode=None, style=None):
         """Apply the replacements and settle the layout.
 
         Raw mode is left alone beyond the replacements. It promises exactly what was heard,
         so rewriting layout there would make the Settings window's own description false,
         and the clipboard commands run through here too, where flattening the layout of
         pasted text is destructive rather than tidy.
+
+        The chat style is a deterministic pass here rather than a second system prompt. The
+        prefilled KV cache is derived from one prompt at startup, so a per-app prompt would
+        miss the cache on every dictation into that app, and the same model has already been
+        measured accepting a punctuation rule and then breaking it in the next sentence.
         """
         for wrong, right in (self.cfg.get("replacements") or {}).items():
             text = re.sub(rf"\b{re.escape(wrong)}\b", right, text, flags=re.IGNORECASE)
@@ -1011,7 +1053,10 @@ class Engine:
         if self.cfg.get("spoken_layout", True):
             text = apply_spoken_layout(text)
         text = paragraph_topics(text)
-        return normalise_layout(text)
+        text = normalise_layout(text)
+        if style == "chat":
+            text = drop_trailing_stop(text)
+        return text
 
     def _warm_stt(self):
         silent = BASE / "_warm.wav"
@@ -1027,8 +1072,13 @@ class Engine:
 
     # -- requests ----------------------------------------------------------
 
-    def process(self, path, seconds, mode=None):
-        """Transcribe a recorded wav, correct it and record the result in history."""
+    def process(self, path, seconds, mode=None, style=None):
+        """Transcribe a recorded wav, correct it and record the result in history.
+
+        The style names the kind of app the text is going into, sent by the caller because
+        the daemon cannot see the screen. It is recorded in history so an audit can tell a
+        message that was styled from one that was not.
+        """
         with self.guard():
             path = Path(path)
             if not path.exists():
@@ -1070,12 +1120,13 @@ class Engine:
                 final = self.correct(source, active)
                 t_llm = time.time() - t1
 
-            final = self.postprocess(final, active)
+            final = self.postprocess(final, active, style)
             entry = {
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "source": "voice",
                 "seconds": round(seconds, 2),
                 "mode": active,
+                "style": style,
                 "raw": raw,
                 "text": final,
                 "stt_secs": round(t_stt, 2),
@@ -1088,19 +1139,20 @@ class Engine:
             log(f"done stt={t_stt:.2f}s llm={t_llm:.2f}s :: {final[:80]}")
             return {"state": "done", **entry}
 
-    def fix_text(self, text, mode=None):
+    def fix_text(self, text, mode=None, style=None):
         with self.guard():
             if not text.strip():
                 return {"state": "empty", "raw": text, "text": ""}
             active = mode or self.cfg["mode"]
             t0 = time.time()
             out = self.postprocess(
-                text if active == "raw" else self.correct(text, active), active)
+                text if active == "raw" else self.correct(text, active), active, style)
             entry = {
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "source": "text",
                 "seconds": 0,
                 "mode": active,
+                "style": style,
                 "raw": text,
                 "text": out,
                 "stt_secs": 0,
@@ -1151,15 +1203,17 @@ def handle(conn, engine):
 
         cmd = (req.get("cmd") or "").upper()
         mode = req.get("mode")
+        style = req.get("style")
 
         if cmd == "PING":
             reply = {"state": "ready"}
         elif cmd == "PROCESS":
-            reply = engine.process(req.get("path", ""), float(req.get("seconds") or 0), mode)
+            reply = engine.process(req.get("path", ""), float(req.get("seconds") or 0),
+                                   mode, style)
         elif cmd == "FLAG":
             reply = flag_last(req.get("actual"))
         elif cmd == "FIX":
-            reply = engine.fix_text(req.get("text", ""), mode)
+            reply = engine.fix_text(req.get("text", ""), mode, style)
         elif cmd == "ASK":
             reply = engine.ask(req.get("text", ""))
         elif cmd == "CONFIG":
