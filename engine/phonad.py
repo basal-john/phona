@@ -22,6 +22,7 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import signal
 import socket
 import string
@@ -40,7 +41,31 @@ HISTORY = BASE / "history.jsonl"
 CORRECTIONS = BASE / "corrections.jsonl"
 CONFIG = BASE / "config.json"
 
-FFMPEG = "/opt/homebrew/bin/ffmpeg"
+FFMPEG_CANDIDATES = ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg")
+
+
+def resolve_ffmpeg():
+    """Find ffmpeg, and put its directory on PATH for the libraries that need it there.
+
+    Phona's own calls pass an absolute path, but mlx_whisper shells out to a bare "ffmpeg"
+    and so depends on PATH. A GUI app launched from the Dock, from Spotlight or as a login
+    item inherits PATH=/usr/bin:/bin:/usr/sbin:/sbin with no Homebrew in it, and the daemon
+    inherits that in turn. Every transcription then failed with FileNotFoundError while the
+    binary sat one directory away, and the same daemon started from a terminal worked, which
+    made it look intermittent.
+    """
+    found = shutil.which("ffmpeg")
+    if not found:
+        found = next((c for c in FFMPEG_CANDIDATES if os.access(c, os.X_OK)), None)
+    if found:
+        directory = str(Path(found).parent)
+        entries = os.environ.get("PATH", "").split(os.pathsep)
+        if directory not in entries:
+            os.environ["PATH"] = os.pathsep.join([directory] + entries)
+    return found
+
+
+FFMPEG = resolve_ffmpeg() or "ffmpeg"
 
 DEFAULTS = {
     "stt_model": "mlx-community/whisper-large-v3-turbo",
@@ -1064,6 +1089,10 @@ def main():
     lock = acquire_single_instance_lock()
     cfg = load_config()
     log(f"daemon starting, pid {os.getpid()}")
+    if FFMPEG == "ffmpeg":
+        log("ffmpeg not found, transcription will fail. Install it with: brew install ffmpeg")
+    else:
+        log(f"ffmpeg at {FFMPEG}")
     engine = Engine(cfg)
 
     SOCK.unlink(missing_ok=True)

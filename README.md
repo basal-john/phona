@@ -441,6 +441,22 @@ which control your device offers and watch a mute and a restore go through:
 /Applications/Phona.app/Contents/MacOS/PhonaApp --check-mute
 ```
 
+**The capsule shows a warning triangle and nothing arrives.** Something failed rather than
+came back empty. The reason is in `~/.local/share/phona/app.log`, on the line beginning
+`daemon error`.
+
+If it reads `No such file or directory: 'ffmpeg'`, the engine cannot find ffmpeg. Whisper
+shells out to it by name, and an app opened from the Dock, from Spotlight or as a login
+item is handed a PATH with no Homebrew in it, which the engine inherits. Phona now looks in
+the usual Homebrew locations itself, so this needs an actual missing ffmpeg to happen:
+
+```bash
+brew install ffmpeg
+```
+
+The engine names the binary it settled on at every start, so `grep ffmpeg
+~/.local/share/phona/phonad.log` says which one is in use.
+
 **Logs.** `~/.local/share/phona/app.log` for the app, `phonad.log` for the engine, and
 `history.jsonl` for every dictation with what was heard next to what was corrected.
 

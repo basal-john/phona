@@ -7,6 +7,7 @@ any of them are worth the maintenance.
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import sys
 import types
@@ -619,6 +620,36 @@ def test_ask_is_dispatched_to_the_model_and_never_to_the_corrector():
 
     assert calls == ["Output exactly the word READY."]
     assert conn.replies == [{"state": "done", "text": "READY"}]
+
+
+# --- finding ffmpeg without a shell -------------------------------------------------
+
+def test_ffmpeg_is_found_and_put_on_path_without_a_shell_environment(tmp_path, monkeypatch):
+    """A Dock launched or login item app hands the daemon PATH=/usr/bin:/bin:/usr/sbin:/sbin.
+
+    Phona's own calls pass an absolute path, but mlx_whisper shells out to a bare "ffmpeg",
+    so every dictation failed with FileNotFoundError while the binary sat in
+    /opt/homebrew/bin. Starting the same daemon from a terminal worked, which made it look
+    intermittent rather than environmental.
+    """
+    binary = tmp_path / "ffmpeg"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+
+    monkeypatch.setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+    monkeypatch.setattr(phonad, "FFMPEG_CANDIDATES", (str(binary),))
+
+    assert phonad.resolve_ffmpeg() == str(binary)
+    assert str(tmp_path) in os.environ["PATH"].split(os.pathsep)
+
+
+def test_a_missing_ffmpeg_is_reported_rather_than_guessed_at(tmp_path, monkeypatch):
+    """The daemon has to be able to say so at startup, since the failure otherwise reaches
+    the user as an errno with no instruction attached."""
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(phonad, "FFMPEG_CANDIDATES", (str(tmp_path / "absent"),))
+
+    assert phonad.resolve_ffmpeg() is None
 
 
 # --- the fixture is the contract ---------------------------------------------------

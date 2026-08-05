@@ -72,6 +72,15 @@ def test_update_script_exists_and_is_executable():
     assert script.stat().st_mode & 0o111, "update.sh must be executable"
 
 
+def test_update_script_leaves_no_second_copy_of_the_app():
+    """The staged build copy used to stay in macapp/build after being installed, so Spotlight
+    and Launchpad offered two Phonas with the same identifier and no way to tell them apart.
+    """
+    script = (ROOT / "update.sh").read_text()
+    assert "rm -rf macapp/build/Phona.app" in script, \
+        "update.sh must remove the staged copy once it is installed"
+
+
 # --- the app bundle ----------------------------------------------------------------
 
 def test_every_cue_is_bundled():

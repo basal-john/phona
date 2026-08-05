@@ -41,6 +41,12 @@ sleep 1
 rm -rf /Applications/Phona.app
 cp -R macapp/build/Phona.app /Applications/Phona.app
 
+# The staged copy is dropped once it is installed. Left behind it is a second launchable
+# Phona in Spotlight and Launchpad, carrying the same bundle identifier and the same
+# designated requirement as the real one, so opening the wrong one looks identical and
+# goes stale the moment the next version is installed.
+rm -rf macapp/build/Phona.app
+
 say "restarting the engine"
 pkill -f phonad.py 2>/dev/null || true
 open -a /Applications/Phona.app
