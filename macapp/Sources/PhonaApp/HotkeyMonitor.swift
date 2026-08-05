@@ -1,11 +1,17 @@
 import AppKit
 import Foundation
+import PhonaCore
 
-/// Watches the Option key without remapping it.
+/// Watches the left Option key without remapping it.
 ///
 /// A listen-only event tap observes flag changes and key presses. Option keeps working
 /// normally for Option+click, Option+e and every other shortcut. A hold only counts once
 /// Option has been down alone for `holdDelay` with no other key pressed.
+///
+/// The left key only. `maskAlternate` is set by either one, so watching it meant the right
+/// key started dictations too, which is the one Option most often reached for as a modifier.
+/// `OptionKey` reads the side out of the device-dependent flag bits, and the right key is
+/// treated as an ordinary modifier from here on.
 final class HotkeyMonitor {
     var onBegin: () -> Void = {}
     var onEnd: () -> Void = {}
@@ -24,6 +30,13 @@ final class HotkeyMonitor {
     /// Set by the app while a hands-free dictation is running.
     var handsFree = false
 
+    /// `--probe-hotkey` logs every flag change with the side bits it saw.
+    ///
+    /// Whether a given keyboard reports the device-dependent bits is not something a unit
+    /// test can answer, and the whole left-only behaviour rests on them, so there has to be
+    /// a way to read them off a real keyboard.
+    var probing = false
+
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var optionDown = false
@@ -31,6 +44,8 @@ final class HotkeyMonitor {
     private var armed = false
     private var timer: Timer?
     private var lastTapEnded: Date?
+    /// Said once, not on every flag change, because it would otherwise fill the log.
+    private var reportedSidelessOption = false
 
     static func hasAccessibility(prompt: Bool) -> Bool {
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
@@ -103,10 +118,29 @@ final class HotkeyMonitor {
         }
 
         let flags = event.flags
-        let alt = flags.contains(.maskAlternate)
-        let others = flags.contains(.maskCommand) || flags.contains(.maskControl)
-            || flags.contains(.maskShift) || flags.contains(.maskSecondaryFn)
-        let altAlone = alt && !others
+        if probing {
+            let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+            Paths.log(String(
+                format: "hotkey probe: keycode %lld (%@), flags %#010llx, left %@, right %@, ours %@",
+                keycode,
+                OptionKey.side(ofKeycode: keycode).map { $0 == .left ? "left option" : "right option" }
+                    ?? "not option",
+                flags.rawValue,
+                OptionKey.leftIsDown(flags: flags.rawValue) ? "down" : "up",
+                OptionKey.rightIsDown(flags: flags.rawValue) ? "down" : "up",
+                OptionKey.dictationSideIsDown(flags: flags.rawValue) ? "yes" : "no"))
+        }
+
+        if OptionKey.optionWithoutSide(flags: flags.rawValue), !reportedSidelessOption {
+            reportedSidelessOption = true
+            Paths.log(String(
+                format: "this keyboard reports Option with no side bit (flags %#010llx), so the "
+                    + "hold cannot be told from the right key and dictation will not arm",
+                flags.rawValue))
+        }
+
+        let alt = OptionKey.dictationSideIsDown(flags: flags.rawValue)
+        let altAlone = OptionKey.armsDictation(flags: flags.rawValue)
 
         if altAlone && !optionDown {
             optionDown = true

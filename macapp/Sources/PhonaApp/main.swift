@@ -81,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         OutputMute.recoverFromInterruptedDictation()
         buildStatusItem()
 
+        hotkeys.probing = CommandLine.arguments.contains("--probe-hotkey")
         hotkeys.onBegin = { [weak self] in self?.beginDictation() }
         hotkeys.onEnd = { [weak self] in self?.endDictation() }
         hotkeys.onAbort = { [weak self] in self?.abortDictation() }
