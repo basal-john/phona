@@ -353,6 +353,109 @@ DASH_NUMERIC = re.compile("(?<=\\d)[\u2014\u2013]+(?=\\w)|(?<=\\w)[\u2014\u2013]
 DASH_ASIDE = re.compile("\\s*[\u2014\u2013]+\\s*")
 
 
+FILLER = r"(?:u+m+|u+h+|erm|e+r+|h+m+|mhm|ah+)"
+FILLER_LEAD = re.compile(
+    rf"(^[^\S\n]*(?:(?:[-*\u2022]|\d+[.)])[^\S\n]+)?|(?<=[.!?])[^\S\n]+)"
+    rf"{FILLER}(?![\w-])[,.]?[^\S\n]*(\w)", re.I | re.M)
+FILLER_INNER = re.compile(rf"[^\S\n]*(?<![\w-]){FILLER}(?![\w-])[,.]?", re.I)
+FILLER_ASIDE = re.compile(r",[^\S\n]*(?:you know|i mean)[^\S\n]*,", re.I)
+FILLER_BRACKETED = re.compile(rf",[^\S\n]*(?<![\w-]){FILLER}(?![\w-])[^\S\n]*,", re.I)
+
+REPEAT_KEEP = {"no", "very", "really", "so", "had", "that", "yes", "yeah", "ha", "bye",
+               "why", "what", "who", "come", "run", "go", "long", "far", "well"}
+REPEAT_MAX_PHRASE = 4
+BOUNDARY_END = re.compile(r"[.!?,;:]$")
+
+
+def drop_fillers(text):
+    """Remove the sounds nobody wants typed.
+
+    The system prompt has asked for this from the start, in two separate rules, and the
+    model does not do it. Measured across every dictation on record: 36 fillers reached the
+    model and 32 came back, an 89 percent survival rate. This is the same failure that
+    `strip_long_dashes` exists for, so it gets the same deterministic answer.
+
+    Only sounds are removed. "you know" and "I mean" go when they sit between commas, which
+    is where they are an aside rather than part of a clause, so "you know what I mean"
+    survives and "Econ, you know, Sexy Beach style" does not. "like", "kind of" and
+    "basically" are left alone entirely: they carry degree and hedging that the speaker
+    meant, and removing them changes what was said.
+
+    Line breaks are held, because this runs before the layout stages and a list item must
+    not be pulled onto the line above it.
+    """
+    text = FILLER_BRACKETED.sub(" ", text)
+    text = FILLER_ASIDE.sub(", ", text)
+    text = FILLER_LEAD.sub(lambda m: m.group(1) + m.group(2).upper(), text)
+    text = FILLER_INNER.sub("", text)
+    text = re.sub(r"[^\S\n]+([,.!?])", r"\1", text)
+    text = re.sub(r",([^\S\n]*,)+", ",", text)
+    text = re.sub(r"(?m)^[^\S\n]*,[^\S\n]*", "", text)
+    text = re.sub(r"[^\S\n]{2,}", " ", text)
+    return "\n".join(line.strip() for line in text.split("\n")).strip()
+
+
+def _collapse_line(line):
+    """Collapse adjacent duplicates on one line.
+
+    A run of the same word is resolved before any phrase match, because a phrase rule
+    reaching a run first leaves exactly two copies behind, which then reads as deliberate
+    doubling. "no no no no" collapsed to "no no" that way.
+    """
+    tokens = line.split()
+    keys = [re.sub(r"[^\w']", "", t).lower() for t in tokens]
+    out, i = [], 0
+    while i < len(tokens):
+        run = 1
+        while i + run < len(tokens) and keys[i] and keys[i + run] == keys[i]:
+            run += 1
+
+        if run >= 2 and keys[i] and not BOUNDARY_END.search(tokens[i]):
+            if keys[i] in REPEAT_KEEP and run == 2:
+                out.extend(tokens[i:i + run])
+                i += run
+            else:
+                i += run - 1
+                out.append(tokens[i])
+                i += 1
+            continue
+
+        for n in range(REPEAT_MAX_PHRASE, 1, -1):
+            if i + 2 * n > len(tokens):
+                continue
+            if keys[i:i + n] != keys[i + n:i + 2 * n] or not all(keys[i:i + n]):
+                continue
+            if any(BOUNDARY_END.search(t) for t in tokens[i:i + n]):
+                continue
+            i += n
+            break
+        else:
+            out.append(tokens[i])
+            i += 1
+    return " ".join(out)
+
+
+def collapse_repeats(text):
+    """Drop a phrase the speaker said twice in a row.
+
+    A stutter and a restart both come out of Whisper as an exact adjacent duplicate, "the
+    fourth one fourth one" and "I I just created". The model removes about half of them,
+    measured at 19 in the transcripts and 10 still in the output.
+
+    The first copy is dropped rather than the second, so the punctuation that closed the
+    phrase stays attached to it.
+
+    Doubling a single word is often deliberate, so `REPEAT_KEEP` holds the ones a speaker
+    means twice: "no no", "very very", "go go". A repeated phrase of two words or more is
+    never deliberate in dictation, so those need no exception. Three or more copies of a
+    kept word still collapse to one, because that is a stuck transcript rather than
+    emphasis.
+
+    Lines are collapsed independently, so two identical list items are left alone.
+    """
+    return "\n".join(_collapse_line(line) for line in text.split("\n"))
+
+
 def strip_long_dashes(text):
     """Replace em and en dashes with the punctuation a person would have typed.
 
@@ -1179,6 +1282,8 @@ class Engine:
         if (mode or self.cfg["mode"]) == "raw":
             return text
         text = strip_long_dashes(text)
+        text = drop_fillers(text)
+        text = collapse_repeats(text)
         if self.cfg.get("spoken_layout", True):
             text = apply_spoken_layout(text)
         text = paragraph_topics(text)

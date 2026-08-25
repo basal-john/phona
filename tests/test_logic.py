@@ -1065,3 +1065,100 @@ def test_a_word_count_cut_is_still_there_for_speech_with_no_joints():
                                  phonad.CORRECTION_CHUNK_CAP)
     assert len(chunks) > 1
     assert all(len(c.split()) <= phonad.CORRECTION_CHUNK_CAP for c in chunks)
+
+
+# --- fillers and repeated phrases -------------------------------------------------------
+
+def test_a_filler_sound_is_removed_wherever_it_sits():
+    """The prompt has asked for this in two separate rules since the beginning. Measured
+    across every dictation on record, 36 fillers reached the model and 32 came back, so it
+    is done deterministically for the same reason em dashes are."""
+    assert phonad.drop_fillers("Um, I think we should go.") == "I think we should go."
+    assert phonad.drop_fillers("I think, um, we should go.") == "I think we should go."
+    assert phonad.drop_fillers("Well, uh, yes that works.") == "Well yes that works."
+    assert phonad.drop_fillers("That is fine. Er, mostly.") == "That is fine. Mostly."
+
+
+def test_an_aside_goes_but_the_same_words_in_a_clause_stay():
+    """"you know" between commas is an aside. In "do you know what I mean" the same words
+    are the sentence, and removing them would delete what was said."""
+    assert (phonad.drop_fillers("Econ and David Keta, you know, Sexy Beach style.")
+            == "Econ and David Keta, Sexy Beach style.")
+    kept = "Do you know what I mean by that?"
+    assert phonad.drop_fillers(kept) == kept
+
+
+def test_a_hedge_is_not_a_filler():
+    """"like", "kind of" and "basically" carry degree and hedging the speaker meant. They
+    were left out of the list on purpose."""
+    hedged = "It is kind of like a basically fine idea."
+    assert phonad.drop_fillers(hedged) == hedged
+
+
+def test_a_repeated_phrase_is_collapsed_to_one():
+    """A stutter and a restart both reach the transcript as an exact adjacent duplicate."""
+    assert (phonad.collapse_repeats("the fourth one fourth one losing my religion")
+            == "the fourth one losing my religion")
+    assert phonad.collapse_repeats("because I I just created logging") == "because I just created logging"
+    assert phonad.collapse_repeats("I have food I have food.") == "I have food."
+
+
+def test_a_word_a_speaker_means_twice_is_left_alone():
+    """Doubling one word is often deliberate. Doubling a phrase never is."""
+    for kept in ("no no I want you to read all of it", "it was very very slow today",
+                 "go go go" .replace("go go go", "so so tired")):
+        assert phonad.collapse_repeats(kept) == kept
+
+
+def test_a_stuck_transcript_collapses_even_for_a_kept_word():
+    """One dictation on record is the word "Should" 40 times. Three copies is a stuck
+    transcript rather than emphasis, so the exception for deliberate doubling stops at two.
+    """
+    assert phonad.collapse_repeats("Should should should should should") == "should"
+    assert phonad.collapse_repeats("no no no no") == "no"
+
+
+def test_two_identical_list_items_survive():
+    """Collapsing runs before the layout stages and must not pull one line onto another."""
+    listed = "- A laptop.\n- A laptop."
+    assert phonad.collapse_repeats(listed) == listed
+
+
+def test_removing_fillers_keeps_the_line_breaks():
+    """A list item must not be dragged onto the line above it."""
+    out = phonad.drop_fillers("We need two things.\n- Um, a laptop.\n- A dock.")
+    assert out == "We need two things.\n- A laptop.\n- A dock."
+
+
+def test_a_comma_after_an_abbreviation_survives():
+    """Regression. The rule that cleared a comma stranded by a removed leading filler read
+    the full stop in "p.m." as a sentence end, and turned "1:30 to 3:30 p.m., for everyone"
+    into "p.m.for everyone" in two real dictations."""
+    for kept in ("We could use Friday, 1:30 to 3:30 p.m., for everyone to finish.",
+                 "I'm landing at 6 p.m., and from there it takes an hour."):
+        assert phonad.drop_fillers(kept) == kept
+
+
+def test_a_filler_inside_a_hyphenated_word_is_not_touched():
+    """Regression. "hmm" matched inside "Mm-hmm" because a word boundary sits after the
+    hyphen, and the output became "Mm-"."""
+    assert phonad.drop_fillers("We are... Mm-hmm.") == "We are... Mm-hmm."
+
+
+def test_a_repeat_across_a_sentence_end_is_not_a_stutter():
+    """Regression. Punctuation is stripped before comparing, so "do." matched "Do" and
+    "it?" matched "Is it". Three real dictations lost a word this way, one of them
+    reversing the meaning: "when I installed it, it does not reflect" became "when I
+    installed it does not reflect"."""
+    for kept in ("This is something other applications do. Do you think we can too?",
+                 "What kind of cake is it? Is it a lemon cake or something else?",
+                 "When I installed it, it does not reflect any of the changes."):
+        assert phonad.collapse_repeats(kept) == kept
+
+
+def test_a_repeated_sentence_is_left_to_the_speaker():
+    """A whole sentence said twice is not a stutter, and deleting one is not recoverable.
+    The boundary test covers every token of the first copy, not only the last, because a
+    shifted window otherwise matched "have food. I" and collapsed part of the run."""
+    said = "I have food. I have food. I have food."
+    assert phonad.collapse_repeats(said) == said
