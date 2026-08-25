@@ -1101,8 +1101,22 @@ class Engine:
         return msgs
 
     def _render(self, msgs, add_generation_prompt):
-        return self.tokenizer.apply_chat_template(
-            msgs, tokenize=False, add_generation_prompt=add_generation_prompt)
+        """Render the chat template, with thinking off where the template offers the switch.
+
+        The Instruct-2507 models have no thinking mode and their template rejects the
+        argument, so it is passed optionally. A hybrid Qwen3 needs it: measured on
+        Qwen3-8B-4bit, every request came back opening with a <think> block, the reply guard
+        rejected all 55 of them as the model answering rather than correcting, and every
+        case fell through to the mechanical tidy. The suite read 0 failures while correcting
+        nothing at all, and one pass took 576 seconds against 21 for the 4B.
+        """
+        try:
+            return self.tokenizer.apply_chat_template(
+                msgs, tokenize=False, add_generation_prompt=add_generation_prompt,
+                enable_thinking=False)
+        except TypeError:
+            return self.tokenizer.apply_chat_template(
+                msgs, tokenize=False, add_generation_prompt=add_generation_prompt)
 
     def _encode(self, text):
         return self.tokenizer.encode(text, add_special_tokens=False)
