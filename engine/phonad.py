@@ -392,7 +392,9 @@ def drop_fillers(text):
     text = re.sub(r",([^\S\n]*,)+", ",", text)
     text = re.sub(r"(?m)^[^\S\n]*,[^\S\n]*", "", text)
     text = re.sub(r"[^\S\n]{2,}", " ", text)
-    return "\n".join(line.strip() for line in text.split("\n")).strip()
+    lines = [line.strip() for line in text.split("\n")]
+    lines = [line for line in lines if not re.fullmatch(r"(?:\d+[.)]|[-*\u2022])", line)]
+    return "\n".join(lines).strip()
 
 
 def _collapse_line(line):
@@ -639,6 +641,27 @@ def split_for_correction(text, target=CORRECTION_CHUNK_WORDS, cap=CORRECTION_CHU
     if current:
         chunks.append(" ".join(current))
     return chunks
+
+
+def join_corrected(parts):
+    """Rejoin corrected chunks without gluing one onto the layout of the one before.
+
+    A space is right between two pieces of prose and wrong after a list. The speaker can
+    enumerate inside one chunk and carry on talking into the next, and joining those with a
+    space put the next chunk's first sentence on the end of the final bullet, as
+    "- A dock. Then we ship it." A chunk that ends laid out gets a newline instead.
+    """
+    out = ""
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if not out:
+            out = part
+            continue
+        out += "\n" if LIST_LINE.search(out.split("\n")[-1]) else " "
+        out += part
+    return out
 
 
 CHAT_KEEP_STOP = {"etc", "vs", "approx", "dr", "mr", "mrs", "ms", "prof", "inc", "ltd",
@@ -1227,7 +1250,7 @@ class Engine:
             return self._correct_one(text, effective)
 
         log(f"correcting {len(text.split())} words as {len(chunks)} chunks")
-        return " ".join(self._correct_one(chunk, effective) for chunk in chunks)
+        return join_corrected(self._correct_one(chunk, effective) for chunk in chunks)
 
     def _correct_one(self, text, effective):
         """Correct one chunk, retrying once and tidying mechanically if that also fails.

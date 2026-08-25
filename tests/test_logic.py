@@ -1162,3 +1162,22 @@ def test_a_repeated_sentence_is_left_to_the_speaker():
     shifted window otherwise matched "have food. I" and collapsed part of the run."""
     said = "I have food. I have food. I have food."
     assert phonad.collapse_repeats(said) == said
+
+
+def test_rejoining_chunks_does_not_glue_prose_onto_a_list():
+    """Regression from the loophole pass. The speaker can enumerate inside one chunk and
+    keep talking into the next. Joining the corrected pieces with a space put the next
+    chunk's first sentence on the end of the final bullet, as "- A dock. Then we ship it."
+    """
+    out = phonad.join_corrected(["We need three things.\n- A laptop.\n- A dock.",
+                                 "Then we ship it."])
+    assert out.endswith("- A dock.\nThen we ship it.")
+    assert phonad.join_corrected(["First part.", "Second part."]) == "First part. Second part."
+    assert phonad.join_corrected(["First part.", "", "Second part."]) == "First part. Second part."
+
+
+def test_a_list_item_that_was_only_a_filler_leaves_no_bare_marker():
+    """Regression from the loophole pass. Removing the filler from "- Um." left "-" alone
+    on its line."""
+    assert phonad.drop_fillers("- Um.\n- A laptop.") == "- A laptop."
+    assert phonad.drop_fillers("- Um.\n- Um.") == ""
