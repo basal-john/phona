@@ -862,12 +862,46 @@ def test_a_short_dictation_is_never_broken_up():
     assert phonad.paragraph_topics(two_long).count("\n\n") == 1
 
 
-def test_text_with_no_topic_marker_is_left_alone():
-    """A wrong break in the middle of a thought is worse than no break, so only the words a
-    speaker actually uses to change subject count. Measured over 466 real dictations: six
-    were split, every one of them correctly, and the other 460 were untouched."""
-    flowing = " ".join(["This is one continuous thought that runs on for a while."] * 12)
-    assert phonad.paragraph_topics(flowing) == flowing
+def test_text_with_no_topic_marker_is_left_alone_until_it_runs_on():
+    """Only the words a speaker actually uses to change subject count, until the text is
+    long enough that one unbroken block is itself the defect.
+
+    Requiring a marker was measured across every dictation on record: 1 of 72 over the 45
+    word gate was split. Speech changes subject on "so" and "then" far more often than on
+    "separately", and those are too common to match on, so length is the second trigger.
+    """
+    sentence = "This is one continuous thought that runs on for a while."
+    modest = " ".join([sentence] * 6)
+    assert len(modest.split()) < phonad.PARAGRAPH_RUN_ON_WORDS
+    assert phonad.paragraph_topics(modest) == modest
+
+    flowing = " ".join([sentence] * 12)
+    out = phonad.paragraph_topics(flowing)
+    assert out.count("\n\n") >= 1
+    assert " ".join(out.split()) == " ".join(flowing.split())
+
+
+def test_a_run_on_break_never_lands_mid_sentence():
+    """Length is only allowed to break where the speaker had already stopped. A break
+    inside a thought is the failure this whole stage is trying to avoid."""
+    flowing = " ".join(["Some words that carry a single thought along."] * 20)
+    for block in phonad.paragraph_topics(flowing).split("\n\n"):
+        assert block.endswith(".")
+
+
+def test_a_run_on_never_leaves_a_stranded_paragraph():
+    """A trailing fragment is folded back into the block before it, so length never
+    produces an orphan paragraph. Swept across lengths rather than one hand-picked case,
+    because the orphan only appears when the last sentence lands just past a break."""
+    sentence = "Some words that carry a single thought along."
+    for count in range(2, 40):
+        for tail in ("", " Right."):
+            text = " ".join([sentence] * count) + tail
+            blocks = phonad.paragraph_topics(text).split("\n\n")
+            if len(blocks) == 1:
+                continue
+            short = [b for b in blocks if len(b.split()) < phonad.PARAGRAPH_MIN_BLOCK_WORDS]
+            assert not short, f"{count} sentences, tail {tail!r}, orphan {short}"
 
 
 def test_layout_the_speaker_asked_for_is_not_second_guessed():
@@ -958,3 +992,76 @@ def test_grammar_fixture_is_well_formed():
     for case in cases:
         assert "input" in case and "group" in case
         assert any(k in case for k in ("expect", "expect_contains", "expect_not_contains"))
+
+
+# --- splitting a long dictation for correction -----------------------------------------
+
+def test_a_short_dictation_is_corrected_in_one_request():
+    """Most dictations are well inside the guard's reach, and one request keeps the model's
+    view of the whole utterance. Measured: 0 of 127 refusals under 20 words."""
+    text = " ".join(["A short thought that stands on its own."] * 4)
+    assert phonad.split_for_correction(text) == [text]
+
+
+def test_a_long_dictation_is_split_for_correction():
+    """The guard's refusal rate tracks length: 0 of 127 under 20 words, 2 of 13 at 100 and
+    over. The model is handed less rather than asked to do better."""
+    text = " ".join(["This is a sentence about the release and what it changed."] * 20)
+    chunks = phonad.split_for_correction(text)
+    assert len(chunks) > 1
+    assert all(len(c.split()) <= phonad.CORRECTION_CHUNK_CAP for c in chunks)
+
+
+def test_splitting_never_loses_or_reorders_a_word():
+    """A chunk boundary is a layout decision, so rejoining has to give the source back."""
+    for count in range(1, 60):
+        text = " ".join(["Words that carry the thought along, and then some more."] * count)
+        assert " ".join(phonad.split_for_correction(text)).split() == text.split()
+
+
+def test_a_transcript_with_no_punctuation_is_still_split():
+    """This is the case that matters. A long uninterrupted dictation comes back from
+    Whisper with no sentence end in it, so a sentence-only split would hand the model the
+    whole thing and lose the correction to the guard."""
+    text = " ".join(["word"] * 260)
+    chunks = phonad.split_for_correction(text)
+    assert len(chunks) > 1
+    assert all(len(c.split()) <= phonad.CORRECTION_CHUNK_CAP for c in chunks)
+    assert " ".join(chunks).split() == text.split()
+
+
+def test_a_run_on_is_cut_at_a_clause_before_a_word_count():
+    """A comma is the least damaging place to cut speech that never reaches a full stop."""
+    clause = "and then we looked at the log for a while longer than expected"
+    text = ", ".join([clause] * 12)
+    for chunk in phonad.split_for_correction(text):
+        assert chunk.split()[0] == "and" or chunk.startswith(clause.split()[0])
+
+
+def test_a_run_on_is_cut_at_a_spoken_joint_not_mid_phrase():
+    """Regression. Cutting a punctuation-free transcript on a word count alone split this
+    dictation between "too" and "mainstream". The model then closed the piece with a full
+    stop and capitalised the next, giving "it shouldn't be like too. Mainstream the too
+    mainstream". Speech without punctuation is still jointed by "so", "and" and "because".
+    """
+    run_on = ("okay this is something basal should or must have listened so it shouldn't "
+              "be like too mainstream the too mainstream which was globally available like "
+              "i said everyone must have heard this so basically i want you to act like "
+              "somebody who is expert in a music industry who are introducing me to the "
+              "missed gems from the past and i also want you to be picky about it")
+    for chunk in phonad.break_run_on(run_on, phonad.CORRECTION_CHUNK_WORDS,
+                                     phonad.CORRECTION_CHUNK_CAP):
+        assert not chunk.endswith(" too")
+        assert not chunk.startswith("mainstream ")
+    assert " ".join(phonad.break_run_on(
+        run_on, phonad.CORRECTION_CHUNK_WORDS, phonad.CORRECTION_CHUNK_CAP)).split() == run_on.split()
+
+
+def test_a_word_count_cut_is_still_there_for_speech_with_no_joints():
+    """The last resort has to remain, or a long stretch with no comma and no joint word
+    would be handed to the model whole, which is the failure this all exists to prevent."""
+    text = " ".join(["word"] * 300)
+    chunks = phonad.break_run_on(text, phonad.CORRECTION_CHUNK_WORDS,
+                                 phonad.CORRECTION_CHUNK_CAP)
+    assert len(chunks) > 1
+    assert all(len(c.split()) <= phonad.CORRECTION_CHUNK_CAP for c in chunks)

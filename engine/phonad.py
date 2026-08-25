@@ -388,24 +388,33 @@ TOPIC_SHIFT = re.compile(
     re.IGNORECASE)
 
 PARAGRAPH_MIN_WORDS = 45
+PARAGRAPH_RUN_ON_WORDS = 80
+PARAGRAPH_TARGET_WORDS = 60
+PARAGRAPH_MIN_BLOCK_WORDS = 20
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
 def paragraph_topics(text):
-    """Break a long dictation where the speaker changes subject.
+    """Break a long dictation into paragraphs, at a change of subject or at length.
 
     The prompt has asked for this since the beginning and the 4B model does not do it. It
     was measured twice: six real dictations of 25 to 58 seconds came back as one block with
     the rule stated, and again with the rule made unmissable and a worked example added. So
-    the split is done here instead, on the words the speaker actually used to change subject.
+    the split is done here instead.
 
-    Only explicit markers count, at the start of a sentence, and only in text long enough to
-    be worth breaking up. A wrong break in the middle of a thought is worse than no break,
-    so this errs toward leaving text alone: a dictation with no marker in it is untouched.
+    Two triggers, because a marker alone reached almost nothing. Requiring one of the
+    phrases in `TOPIC_SHIFT` split 1 dictation in 72 over the 45 word gate, measured across
+    every dictation on record. Speech changes subject on "so", "then" and "but you know"
+    far more often than on "separately" or "moving on", and those are too common to match
+    on safely. Length is the second trigger: past `PARAGRAPH_RUN_ON_WORDS` the text is long
+    enough that an unbroken block is itself the defect, and a break at a sentence end is
+    never wrong in the way a break mid-thought would be.
 
-    Thresholds were chosen against every dictation on record rather than guessed. At 45
-    words and a 20 word opening paragraph, 6 of 466 were split and every split was at a real
-    change of subject. Requiring more sentences than two only lost correct splits.
+    A marker still breaks earlier than length would, so a real change of subject keeps its
+    own paragraph rather than being swept into the running count.
+
+    `PARAGRAPH_MIN_BLOCK_WORDS` guards both ends: a marker cannot open the text with a
+    one-line paragraph, and a trailing fragment is folded back rather than left stranded.
     """
     if len(text.split()) < PARAGRAPH_MIN_WORDS or "\n" in text:
         return text
@@ -414,13 +423,119 @@ def paragraph_topics(text):
     if len(sentences) < 2:
         return text
 
-    out = [sentences[0]]
+    run_on = len(text.split()) >= PARAGRAPH_RUN_ON_WORDS
+    blocks = [[sentences[0]]]
     for sentence in sentences[1:]:
-        if TOPIC_SHIFT.match(sentence) and len(" ".join(out).split()) >= 20:
-            out.append("\n\n" + sentence)
+        held = len(" ".join(blocks[-1]).split())
+        changed_subject = TOPIC_SHIFT.match(sentence) and held >= PARAGRAPH_MIN_BLOCK_WORDS
+        ran_on = run_on and held >= PARAGRAPH_TARGET_WORDS
+        if changed_subject or ran_on:
+            blocks.append([sentence])
         else:
-            out.append(" " + sentence)
-    return "".join(out)
+            blocks[-1].append(sentence)
+
+    if len(blocks) > 1 and len(" ".join(blocks[-1]).split()) < PARAGRAPH_MIN_BLOCK_WORDS:
+        blocks[-2].extend(blocks.pop())
+
+    return "\n\n".join(" ".join(block) for block in blocks)
+
+
+CORRECTION_WHOLE_MAX_WORDS = 100
+CORRECTION_CHUNK_WORDS = 60
+CORRECTION_CHUNK_CAP = 90
+CLAUSE_END = re.compile(r"(?<=[,;:])\s+")
+RUN_ON_JOINT = re.compile(
+    r"\s+(?=(?:so|but|because|and then|and|then|also|actually|basically|"
+    r"anyway|however|now|well)\s)", re.IGNORECASE)
+
+
+def _pack(parts, cap):
+    """Group consecutive parts into pieces of at most `cap` words."""
+    pieces, current = [], []
+    for part in parts:
+        if current and len(" ".join(current).split()) + len(part.split()) > cap:
+            pieces.append(" ".join(current))
+            current = [part]
+        else:
+            current.append(part)
+    if current:
+        pieces.append(" ".join(current))
+    return pieces
+
+
+def break_run_on(sentence, target, cap):
+    """Cut one oversized sentence into pieces the model can hold.
+
+    Reached only by a transcript with no sentence end in it, which is what a long
+    uninterrupted dictation produces. Three boundaries are tried in order of how much they
+    cost, and a word count is last because it is the only one that can land mid-phrase.
+
+    The word count alone was measured and rejected. On a 191 word dictation it cut between
+    "too" and "mainstream", and the model closed the piece with a full stop and capitalised
+    the next, producing "it shouldn't be like too. Mainstream the too mainstream". Speech
+    that never reaches a full stop still has joints: it is held together by "so", "and",
+    "because" and "then", and those are where a speaker would have stopped if they had
+    punctuated. Cutting there costs nothing, because the model sees a piece that begins the
+    way a spoken clause begins.
+    """
+    pieces = _pack(CLAUSE_END.split(sentence), cap)
+
+    joined = []
+    for piece in pieces:
+        if len(piece.split()) <= cap:
+            joined.append(piece)
+        else:
+            joined.extend(_pack(RUN_ON_JOINT.split(piece), cap))
+
+    out = []
+    for piece in joined:
+        words = piece.split()
+        if len(words) <= cap:
+            out.append(piece)
+            continue
+        for i in range(0, len(words), target):
+            out.append(" ".join(words[i:i + target]))
+    return out
+
+
+def split_for_correction(text, target=CORRECTION_CHUNK_WORDS, cap=CORRECTION_CHUNK_CAP):
+    """Split a long dictation into pieces to be corrected one at a time.
+
+    The guard's rejection rate is a function of length, measured across every dictation on
+    record: 0 of 127 under 20 words, 1 of 113 at 20 to 44, 2 of 55 at 45 to 99, and 2 of 13
+    at 100 and over. A rejected correction falls back to a mechanical tidy, so the longest
+    dictations, the ones that most need the grammar pass, are the ones that lose it.
+
+    The model is not asked to do better on long input. It is handed less of it. Each piece
+    is corrected on its own and the results are joined, so a piece that is refused costs
+    only its own sentences rather than the whole dictation.
+
+    Splitting prefers a sentence end, then a clause end, then a word count, so the cut
+    lands at the largest boundary the transcript actually offers. Below
+    `CORRECTION_WHOLE_MAX_WORDS` nothing is split, because the guard does not meaningfully
+    fire there and one request keeps the model's view of the whole utterance.
+    """
+    if len(text.split()) < CORRECTION_WHOLE_MAX_WORDS:
+        return [text]
+
+    units = []
+    for sentence in SENTENCE_END.split(text.strip()):
+        if len(sentence.split()) <= cap:
+            units.append(sentence)
+        else:
+            units.extend(break_run_on(sentence, target, cap))
+
+    chunks, current = [], []
+    for unit in units:
+        held = len(" ".join(current).split()) if current else 0
+        if current and (held >= target or held + len(unit.split()) > cap):
+            chunks.append(" ".join(current))
+            current = [unit]
+        else:
+            current.append(unit)
+    if current:
+        chunks.append(" ".join(current))
+    return chunks
 
 
 CHAT_KEEP_STOP = {"etc", "vs", "approx", "dr", "mr", "mrs", "ms", "prof", "inc", "ltd",
@@ -1003,6 +1118,20 @@ class Engine:
         """
         effective = mode or self.cfg["mode"]
         self.last_guarded = False
+
+        chunks = split_for_correction(text)
+        if len(chunks) == 1:
+            return self._correct_one(text, effective)
+
+        log(f"correcting {len(text.split())} words as {len(chunks)} chunks")
+        return " ".join(self._correct_one(chunk, effective) for chunk in chunks)
+
+    def _correct_one(self, text, effective):
+        """Correct one chunk, retrying once and tidying mechanically if that also fails.
+
+        `last_guarded` is latched rather than assigned, so a single refused chunk still
+        reports the dictation as guarded even when its neighbours came back clean.
+        """
         out = self._attempt(text, effective)
         if not self._looks_like_a_reply(text, out):
             return out
