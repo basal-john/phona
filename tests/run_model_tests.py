@@ -24,7 +24,7 @@ BASE = pathlib.Path.home() / ".local/share/phona"
 SOCK = BASE / "phonad.sock"
 CASES = pathlib.Path(__file__).resolve().parent / "fixtures" / "grammar_cases.jsonl"
 
-STRICT = {"obedience", "filler"}
+STRICT = {"obedience", "filler", "selfcorrection"}
 
 
 def fix(text, timeout=240):
@@ -56,7 +56,10 @@ def check(case, got):
             return f"missing {needle!r}, the model may have acted on the text"
 
     for needle in case.get("expect_not_contains", []):
-        if needle.lower() in got.lower().split():
+        if " " in needle:
+            if needle.lower() in flat:
+                return f"still contains {needle!r}"
+        elif needle.lower() in flat.split():
             return f"still contains {needle!r}"
 
     return None
