@@ -19,6 +19,7 @@ said.
 """
 
 import contextlib
+import difflib
 import json
 import os
 import re
@@ -192,6 +193,64 @@ SHOTS = [
      "- A docking station.\n"
      "- Two monitors."),
 ]
+
+
+SELF_CORRECTION_MARKER = re.compile(
+    r"\b(?:sorry|i mean|no wait|wait no|scratch that|or rather|rather|no no)\b", re.I)
+
+SELF_CORRECTION_SYSTEM = (
+    "You resolve spoken self-corrections in dictated text.\n"
+    "A self-correction is where the speaker names something, stops, and names a replacement "
+    "for that same thing. Keep only the replacement and delete the discarded words and the "
+    "marker that joined them.\n"
+    "If the text contains no self-correction, repeat it back exactly, character for "
+    "character. That is the common case and it is always the safe answer.\n"
+    "Never rephrase, never fix grammar, never add or reorder words. Deleting a discarded "
+    "alternative is the only thing you may do. Output only the text."
+)
+
+SELF_CORRECTION_SHOTS = [
+    ("You use Text to Speak, sorry, Speak to Text application for writing messages.",
+     "You use Speak to Text application for writing messages."),
+    ("Should we not release this to GitHub Actions? Sorry, not GitHub Actions, to our "
+     "GitHub repository, so that users can also use it.",
+     "Should we not release this to our GitHub repository, so that users can also use it?"),
+    ("Can you check the iPhone app, sorry, Mac app menu settings.",
+     "Can you check the Mac app menu settings."),
+    ("Sorry, I am not clear on what you are trying to do now, because all I wanted to know "
+     "is how the one-on-one went.",
+     "Sorry, I am not clear on what you are trying to do now, because all I wanted to know "
+     "is how the one-on-one went."),
+    ("Hey, you do not have to feel sorry about it, it is not something you are enforcing, "
+     "so it is totally fine.",
+     "Hey, you do not have to feel sorry about it, it is not something you are enforcing, "
+     "so it is totally fine."),
+    ("When I click on a season, it takes me to the season overview rather than the episode "
+     "of the actual release.",
+     "When I click on a season, it takes me to the season overview rather than the episode "
+     "of the actual release."),
+]
+
+
+def only_deletes(source, candidate):
+    """True when the candidate is the source with words removed and nothing else.
+
+    The pass exists to drop a discarded alternative, so anything it adds or reorders is a
+    failure however plausible it reads. Checked here rather than trusted to the prompt,
+    because the same 4B model has already been measured accepting a rule and breaking it in
+    the next sentence.
+
+    Putting the rule in the shared system prompt was tried first and measured: it changed
+    30.6 percent of all outputs to serve the 4 percent that contain a marker, and 46 of 49
+    changes were on dictations with no self-correction in them. A separate pass reaches only
+    the text that matched, so the rest of the corpus cannot move at all.
+    """
+    src, got = source.split(), candidate.split()
+    if not got or len(got) >= len(src):
+        return False
+    key = lambda words: [w.lower().strip(".,!?;:") for w in words]
+    opcodes = difflib.SequenceMatcher(None, key(src), key(got)).get_opcodes()
+    return all(tag in ("equal", "delete") for tag, *_ in opcodes)
 
 
 LAYOUT_COMMANDS = {
@@ -664,6 +723,52 @@ def join_corrected(parts):
     return out
 
 
+CONTRACTIONS = {
+    "don't": "do not", "doesn't": "does not", "didn't": "did not",
+    "can't": "cannot", "won't": "will not", "shan't": "shall not",
+    "isn't": "is not", "aren't": "are not", "wasn't": "was not",
+    "weren't": "were not", "hasn't": "has not", "haven't": "have not",
+    "hadn't": "had not", "shouldn't": "should not", "couldn't": "could not",
+    "wouldn't": "would not", "mustn't": "must not", "needn't": "need not",
+    "i'm": "I am", "i've": "I have", "i'll": "I will", "i'd": "I would",
+    "you're": "you are", "you've": "you have", "you'll": "you will",
+    "we're": "we are", "we've": "we have", "we'll": "we will",
+    "they're": "they are", "they've": "they have", "they'll": "they will",
+    "there's": "there is", "that's": "that is", "what's": "what is",
+    "here's": "here is", "let's": "let us", "he's": "he is", "she's": "she is",
+}
+CONTRACTION_RE = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in sorted(CONTRACTIONS, key=len, reverse=True)) +
+    r")\b", re.I)
+IT_S_HAS = re.compile(r"\bit's(?=\s+(?:been|got|had)\b)", re.I)
+IT_S_IS = re.compile(r"\bit's\b", re.I)
+
+
+def _match_case(source, replacement):
+    """Give the replacement the capitalisation the speaker's word had."""
+    if source[:1].isupper():
+        return replacement[:1].upper() + replacement[1:]
+    return replacement
+
+
+def expand_contractions(text):
+    """Write contractions out in full, for text going somewhere that expects it.
+
+    Mail is the case. A message typed into Slack keeps "don't", and the same sentence in an
+    email to someone outside the team reads as careless. This is deterministic rather than a
+    prompt rule for the reason the rest of this file already is: the model accepts a rule of
+    this shape and then breaks it a sentence later.
+
+    "it's" is handled apart from the table because it expands two ways. Followed by "been",
+    "got" or "had" it is "it has", and everywhere else "it is". "its" without the apostrophe
+    is a possessive and is never touched.
+    """
+    text = IT_S_HAS.sub(lambda m: _match_case(m.group(0), "it has"), text)
+    text = IT_S_IS.sub(lambda m: _match_case(m.group(0), "it is"), text)
+    return CONTRACTION_RE.sub(
+        lambda m: _match_case(m.group(0), CONTRACTIONS[m.group(0).lower()]), text)
+
+
 CHAT_KEEP_STOP = {"etc", "vs", "approx", "dr", "mr", "mrs", "ms", "prof", "inc", "ltd",
                   "jr", "sr", "no", "al", "eg", "ie"}
 
@@ -965,6 +1070,8 @@ class Engine:
         self.last_guarded = False
         self.prefix_tokens = []
         self.cache = None
+        self.fix_prefix_tokens = []
+        self.fix_cache = None
 
         import mlx_whisper
         from mlx_lm import load
@@ -975,6 +1082,7 @@ class Engine:
         log(f"loading llm {cfg['llm_model']}")
         self.model, self.tokenizer = load(self.llm_target)
         self._build_prefix()
+        self._build_fix_prefix()
 
         log(f"warming stt {cfg['stt_model']}")
         self._warm_stt()
@@ -1049,6 +1157,92 @@ class Engine:
         result = self.mlx_whisper.transcribe(str(path), **kwargs)
         self.last_gaps = segment_gaps(result.get("segments") or [])
         return result["text"].strip()
+
+    def _fix_messages(self):
+        return ([{"role": "system", "content": SELF_CORRECTION_SYSTEM}]
+                + [m for u, a in SELF_CORRECTION_SHOTS
+                   for m in ({"role": "user", "content": u},
+                             {"role": "assistant", "content": a})])
+
+    def _build_fix_prefix(self):
+        """Prefill a second cache for the self-correction pass.
+
+        A second prefilled cache costs about 223 MB, measured on this model, and a few
+        seconds at startup. It buys a pass whose prompt is entirely its own, so the rule it
+        carries cannot reach the dictations it was never meant to touch.
+        """
+        if not self.cfg.get("self_correction", True):
+            log("self-correction pass disabled by config")
+            return
+        try:
+            import mlx.core as mx
+            from mlx_lm.models.cache import make_prompt_cache
+
+            base = self._fix_messages()
+            ta = self._encode(self._render(base + [{"role": "user", "content": "alpha"}], True))
+            tb = self._encode(self._render(base + [{"role": "user", "content": "bravo"}], True))
+            n = 0
+            for x, y in zip(ta, tb):
+                if x != y:
+                    break
+                n += 1
+            if n < 16:
+                raise RuntimeError(f"shared token prefix too short ({n})")
+
+            tokens = ta[:n]
+            self.fix_cache = make_prompt_cache(self.model)
+            self.model(mx.array(tokens)[None], cache=self.fix_cache)
+            mx.eval([c.state for c in self.fix_cache])
+            self.fix_prefix_tokens = tokens
+            log(f"self-correction prefix cached, {len(tokens)} tokens")
+        except Exception as exc:
+            log(f"self-correction pass unavailable: {exc}")
+            self.fix_cache = None
+            self.fix_prefix_tokens = []
+
+    def resolve_self_correction(self, text):
+        """Drop the alternative a speaker discarded out loud, or return the text unchanged.
+
+        Gated on a marker so the model is only asked about text that could plausibly carry
+        one. Measured over every dictation on record, 14 of 378 match and 364 are never sent
+        at all, which is the whole point: the rule cannot disturb what it never sees.
+
+        The marker is deliberately loose. Precision is not its job, because a false match
+        only costs one generation that comes back unchanged. "sorry" is an apology far more
+        often than a correction, and that is fine here.
+        """
+        if self.fix_cache is None or not SELF_CORRECTION_MARKER.search(text):
+            return text
+        try:
+            from mlx_lm import generate
+            from mlx_lm.sample_utils import make_sampler
+            from mlx_lm.models.cache import trim_prompt_cache
+
+            msgs = self._fix_messages() + [{"role": "user", "content": text}]
+            tokens = self._encode(self._render(msgs, True))
+            cut = len(self.fix_prefix_tokens)
+            if tokens[:cut] != self.fix_prefix_tokens:
+                return text
+            before = self.fix_cache[0].offset
+            try:
+                out = generate(self.model, self.tokenizer, prompt=tokens[cut:],
+                               max_tokens=400, sampler=make_sampler(temp=0.0),
+                               prompt_cache=self.fix_cache, verbose=False).strip()
+            finally:
+                grew = self.fix_cache[0].offset - before
+                if grew > 0:
+                    trim_prompt_cache(self.fix_cache, grew)
+                    if self.fix_cache[0].offset != before:
+                        log("self-correction cache trim did not take, disabling the pass")
+                        self.fix_cache = None
+        except Exception as exc:
+            log(f"self-correction pass failed: {exc}")
+            return text
+
+        if out == text or not only_deletes(text, out):
+            return text
+        log(f"self-correction resolved, dropped {len(text.split()) - len(out.split())} words")
+        return out
 
     def _generate_cached(self, msgs):
         """Generate reusing the prefilled prefix, then return the cache to its prior size.
@@ -1307,12 +1501,16 @@ class Engine:
         text = strip_long_dashes(text)
         text = drop_fillers(text)
         text = collapse_repeats(text)
+        if (mode or self.cfg["mode"]) == "polish":
+            text = self.resolve_self_correction(text)
         if self.cfg.get("spoken_layout", True):
             text = apply_spoken_layout(text)
         text = paragraph_topics(text)
         text = normalise_layout(text)
         if style == "chat":
             text = drop_trailing_stop(text)
+        elif style == "mail":
+            text = expand_contractions(text)
         return text
 
     def _warm_stt(self):

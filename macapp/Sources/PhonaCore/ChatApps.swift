@@ -7,6 +7,8 @@ import Foundation
 public enum MessageStyle: String {
     /// A chat app, where a typed message does not end in a full stop.
     case chat
+    /// A mail client, where contractions are written out in full.
+    case mail
 }
 
 /// Which apps count as chat.
@@ -28,6 +30,30 @@ public enum ChatApps {
         "desktop.WhatsApp",
         "com.microsoft.teams",
         "com.microsoft.teams2",
+    ]
+
+    /// Apps that are mail whatever window is open.
+    ///
+    /// Mail and Outlook were read off the installed bundles. Spark, Airmail and Missive are
+    /// the published identifiers for apps not installed here, so those three have not been
+    /// confirmed against a running app.
+    public static let mailIdentifiers: Set<String> = [
+        "com.apple.mail",
+        "com.microsoft.Outlook",
+        "com.readdle.smartemail-Mac",
+        "it.bloop.airmail2",
+        "com.missiveapp.missive",
+        "com.superhuman.electron",
+    ]
+
+    /// Titles a mail tab carries, matched the same way a chat tab's is.
+    static let mailTitleMarkers: Set<String> = [
+        "gmail",
+        "inbox",
+        "outlook",
+        "mail",
+        "proton mail",
+        "fastmail",
     ]
 
     /// Browsers, where the app identity says nothing and the window title is the only
@@ -67,12 +93,20 @@ public enum ChatApps {
         return browserIdentifiers.contains(bundleIdentifier)
     }
 
-    /// The style for what is in front, or nil when this is not a chat target.
+    /// The style for what is in front, or nil when it is neither a chat nor a mail target.
+    ///
+    /// Chat is tested before mail, because a chat identifier is unambiguous while "mail" as
+    /// a browser title marker is not: a Gmail tab and a page about Gmail read alike, and a
+    /// Slack tab titled "Slack | mail" should stay chat.
     public static func style(bundleIdentifier: String?, windowTitle: String?) -> MessageStyle? {
         guard let bundleIdentifier else { return nil }
         if bundleIdentifiers.contains(bundleIdentifier) { return .chat }
+        if mailIdentifiers.contains(bundleIdentifier) { return .mail }
         guard browserIdentifiers.contains(bundleIdentifier), let windowTitle else { return nil }
-        return segments(of: windowTitle).contains(where: titleMarkers.contains) ? .chat : nil
+        let parts = segments(of: windowTitle)
+        if parts.contains(where: titleMarkers.contains) { return .chat }
+        if parts.contains(where: mailTitleMarkers.contains) { return .mail }
+        return nil
     }
 
     /// Split a window title into the parts a site and a browser join it from.

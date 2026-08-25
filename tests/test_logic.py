@@ -1181,3 +1181,76 @@ def test_a_list_item_that_was_only_a_filler_leaves_no_bare_marker():
     on its line."""
     assert phonad.drop_fillers("- Um.\n- A laptop.") == "- A laptop."
     assert phonad.drop_fillers("- Um.\n- Um.") == ""
+
+
+# --- resolving a spoken self-correction --------------------------------------------------
+
+def test_only_deletes_accepts_a_pure_deletion():
+    """The pass may drop the alternative the speaker discarded and nothing else."""
+    src = "You use Text to Speak, sorry, Speak to Text application for writing messages."
+    got = "You use Speak to Text application for writing messages."
+    assert phonad.only_deletes(src, got)
+
+
+def test_only_deletes_rejects_an_invented_word():
+    """Putting this rule in the shared prompt was measured changing 30.6% of all outputs,
+    46 of 49 of them on dictations with no self-correction in them. The pass is checked
+    rather than trusted."""
+    src = "Can you check the iPhone app, sorry, Mac app menu settings."
+    assert not phonad.only_deletes(src, "Please check the Mac app menu settings.")
+    assert not phonad.only_deletes(src, "Check the Mac application menu settings.")
+
+
+def test_only_deletes_rejects_anything_not_shorter():
+    """A rewrite that keeps the length is the failure mode size alone cannot see."""
+    src = "The tests failed on CI yesterday."
+    assert not phonad.only_deletes(src, src)
+    assert not phonad.only_deletes(src, "The tests were failing on CI yesterday.")
+    assert not phonad.only_deletes(src, "")
+
+
+def test_only_deletes_rejects_a_reorder():
+    """Deleting is allowed. Moving words is not, however plausible the result reads."""
+    src = "one two three four five six"
+    assert phonad.only_deletes(src, "one two five six")
+    assert not phonad.only_deletes(src, "six five one two")
+
+
+def test_the_marker_gate_lets_the_corpus_past_untouched():
+    """364 of the 378 dictations on record carry no marker and are never sent to the pass.
+    That is what bounds the blast radius, so the gate is worth pinning."""
+    assert phonad.SELF_CORRECTION_MARKER.search("iPhone app, sorry, Mac app menu settings.")
+    assert phonad.SELF_CORRECTION_MARKER.search("the menu bar, I mean the top menu bar")
+    for clean in ("The deployment finished and all tests are green.",
+                  "Can you review this pull request when you have a moment?",
+                  "We need to update the config before Friday."):
+        assert not phonad.SELF_CORRECTION_MARKER.search(clean)
+
+
+# --- mail style ---------------------------------------------------------------------------
+
+def test_mail_style_writes_contractions_out():
+    """A message typed into Slack keeps "don't". The same sentence in an email to someone
+    outside the team reads as careless."""
+    assert (phonad.expand_contractions("I don't think we're ready.")
+            == "I do not think we are ready.")
+    assert (phonad.expand_contractions("She's here and he's not, that's fine.")
+            == "She is here and he is not, that is fine.")
+
+
+def test_it_s_expands_two_ways():
+    """"it's" is "it has" before been, got and had, and "it is" everywhere else."""
+    assert phonad.expand_contractions("It's been a while.") == "It has been a while."
+    assert phonad.expand_contractions("It's got worse.") == "It has got worse."
+    assert phonad.expand_contractions("It's ready now.") == "It is ready now."
+
+
+def test_a_possessive_its_is_never_touched():
+    """"its" without the apostrophe is a possessive and means something else entirely."""
+    kept = "Do not worry, its scope is unchanged."
+    assert phonad.expand_contractions(kept) == kept
+
+
+def test_expanding_keeps_the_speakers_capitalisation():
+    assert phonad.expand_contractions("Don't stop.") == "Do not stop."
+    assert phonad.expand_contractions("we don't stop.") == "we do not stop."
