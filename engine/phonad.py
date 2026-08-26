@@ -579,8 +579,18 @@ def paragraph_topics(text):
 
     `PARAGRAPH_MIN_BLOCK_WORDS` guards both ends: a marker cannot open the text with a
     one-line paragraph, and a trailing fragment is folded back rather than left stranded.
+
+    Text that already carries line breaks is handled one segment at a time rather than
+    abandoned. Returning early on any newline was measured suppressing every break in a
+    1542 word result, because 8 newlines had arrived from the chunk join rather than from
+    the speaker, and one of them was enough to skip all 23 breaks. Per segment, layout the
+    speaker asked for still survives untouched, since each of their segments is short
+    enough to fall under the word gate on its own.
     """
-    if len(text.split()) < PARAGRAPH_MIN_WORDS or "\n" in text:
+    if "\n" in text:
+        return "\n".join(paragraph_topics(part) for part in text.split("\n"))
+
+    if len(text.split()) < PARAGRAPH_MIN_WORDS:
         return text
 
     sentences = SENTENCE_END.split(text.strip())
@@ -607,6 +617,7 @@ def paragraph_topics(text):
 CORRECTION_WHOLE_MAX_WORDS = 100
 CORRECTION_CHUNK_WORDS = 60
 CORRECTION_CHUNK_CAP = 90
+CORRECTION_MAX_CHUNKS = 12
 CLAUSE_END = re.compile(r"(?<=[,;:])\s+")
 RUN_ON_JOINT = re.compile(
     r"\s+(?=(?:so|but|because|and then|and|then|also|actually|basically|"
@@ -678,6 +689,13 @@ def split_for_correction(text, target=CORRECTION_CHUNK_WORDS, cap=CORRECTION_CHU
     lands at the largest boundary the transcript actually offers. Below
     `CORRECTION_WHOLE_MAX_WORDS` nothing is split, because the guard does not meaningfully
     fire there and one request keeps the model's view of the whole utterance.
+
+    The count is capped, because the work is otherwise unbounded in the length of the
+    recording. At 60 words a piece a full five minute dictation is 30 pieces and up to 60
+    generations counting the retry, and one was measured at 131 seconds against 55 for the
+    same text in a single request. Past `CORRECTION_MAX_CHUNKS` the pieces are grown to fit
+    the cap instead, which trades some correction quality on a very long dictation for a
+    bound on how long it can take.
     """
     if len(text.split()) < CORRECTION_WHOLE_MAX_WORDS:
         return [text]
@@ -689,6 +707,15 @@ def split_for_correction(text, target=CORRECTION_CHUNK_WORDS, cap=CORRECTION_CHU
         else:
             units.extend(break_run_on(sentence, target, cap))
 
+    chunks = _gather(units, target, cap)
+    if len(chunks) <= CORRECTION_MAX_CHUNKS:
+        return chunks
+
+    grown = max(target, -(-len(text.split()) // CORRECTION_MAX_CHUNKS))
+    return _gather(units, grown, grown + (cap - target))
+
+
+def _gather(units, target, cap):
     chunks, current = [], []
     for unit in units:
         held = len(" ".join(current).split()) if current else 0
@@ -745,7 +772,15 @@ IT_S_IS = re.compile(r"\bit's\b", re.I)
 
 
 def _match_case(source, replacement):
-    """Give the replacement the capitalisation the speaker's word had."""
+    """Give the replacement the capitalisation the speaker's word had.
+
+    A word that is entirely upper case is left that way. Capitalising only the first letter
+    of the replacement turned "IT'S BEEN" into "It has BEEN", which is neither what was
+    said nor a case a reader would write.
+    """
+    letters = [c for c in source if c.isalpha()]
+    if letters and all(c.isupper() for c in letters):
+        return replacement.upper()
     if source[:1].isupper():
         return replacement[:1].upper() + replacement[1:]
     return replacement

@@ -46,11 +46,14 @@ json.dump(cfg, open(path, "w"), indent=2)
 PY
 
 echo "switching to $TARGET"
-"$HOME/.local/bin/phona" restart >/dev/null 2>&1
+# The rollback below is the whole point of the backup, and `set -e` would exit before
+# reaching it if the restart returned non-zero.
+"$HOME/.local/bin/phona" restart >/dev/null 2>&1 || true
 
 for _ in $(seq 1 80); do
     if tail -5 "$HOME/.local/share/phona/phonad.log" | grep -q "engine ready"; then
         echo "ready: $(current)"
+        rm -f "$CONFIG.bak-switch"
         exit 0
     fi
     sleep 3
@@ -58,5 +61,6 @@ done
 
 echo "engine did not report ready, rolling back" >&2
 cp "$CONFIG.bak-switch" "$CONFIG"
-"$HOME/.local/bin/phona" restart >/dev/null 2>&1
+rm -f "$CONFIG.bak-switch"
+"$HOME/.local/bin/phona" restart >/dev/null 2>&1 || true
 exit 1

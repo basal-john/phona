@@ -1254,3 +1254,41 @@ def test_a_possessive_its_is_never_touched():
 def test_expanding_keeps_the_speakers_capitalisation():
     assert phonad.expand_contractions("Don't stop.") == "Do not stop."
     assert phonad.expand_contractions("we don't stop.") == "we do not stop."
+
+
+def test_a_stray_newline_does_not_suppress_every_paragraph_break():
+    """Regression. A chunk join can leave a newline the speaker never spoke, and returning
+    early on any newline meant one of them suppressed all 23 breaks in a 1542 word result.
+    Each segment is now laid out on its own."""
+    para = " ".join(["This is a sentence that carries the thought along."] * 14)
+    joined = para + "\n" + para
+    out = phonad.paragraph_topics(joined)
+    assert out.count("\n\n") >= 2
+    assert " ".join(out.split()) == " ".join(joined.split())
+
+
+def test_layout_the_speaker_asked_for_survives_the_per_segment_pass():
+    """Their own segments are short enough to fall under the word gate, so breaking the
+    text apart to lay each one out leaves their layout exactly as it was."""
+    spoken = ("Quick update on the release.\n\nRegarding the migration, it is done and "
+              "everything came back clean with no errors in the log so far, which is good "
+              "news for the deployment we have planned for the rest of this week ahead.")
+    assert phonad.paragraph_topics(spoken) == spoken
+
+
+def test_the_number_of_chunks_is_bounded():
+    """Regression. At 60 words a piece a five minute dictation was 30 pieces and up to 60
+    generations, and one took 131 seconds against 55 for the same text in one request."""
+    for words in (1200, 1800, 3000, 6000):
+        text = " ".join(["word"] * words)
+        chunks = phonad.split_for_correction(text)
+        assert len(chunks) <= phonad.CORRECTION_MAX_CHUNKS + 1, f"{words} gave {len(chunks)}"
+        assert " ".join(chunks).split() == text.split()
+
+
+def test_a_word_in_capitals_stays_in_capitals():
+    """Regression. Capitalising only the first letter turned "IT'S BEEN" into "It has
+    BEEN"."""
+    assert phonad.expand_contractions("IT'S BEEN") == "IT HAS BEEN"
+    assert phonad.expand_contractions("DON'T STOP") == "DO NOT STOP"
+    assert phonad.expand_contractions("It's been") == "It has been"

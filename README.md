@@ -219,6 +219,21 @@ recognised from the window title. The title has to match a whole segment of it, 
 page about `slack-notifier` is not mistaken for Slack. A browser that will not report its
 title is treated as not a chat app, which errs toward leaving your punctuation alone.
 
+### Mail writes contractions out in full
+
+The same look at what is in front decides this one. Dictate into Mail, Outlook, Superhuman
+or a webmail tab and "I don't think we're ready" arrives as "I do not think we are ready".
+Everywhere else the contraction stays, because it is how you talk and how you would have
+typed it into Slack.
+
+Only contractions change. Nothing is reworded and no sentence is restructured, so the mail
+version says exactly what the chat version says. "it's" is the one that expands two ways,
+"it has" before been, got and had, and "it is" everywhere else. A possessive "its" has no
+apostrophe and is never touched.
+
+Chat is decided before mail, so a Slack tab whose title happens to carry the word mail
+stays chat.
+
 Measured over 271 real dictations: 159 would lose their closing stop, 112 were left exactly
 as they were, and the single message ending in an abbreviation kept its own.
 
