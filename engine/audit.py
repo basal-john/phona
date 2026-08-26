@@ -118,13 +118,32 @@ def deterministic_findings(history, corrections):
 
     guarded = [h for h in history if h.get("guarded")]
     if guarded:
+        by_reason = {}
+        for entry in guarded:
+            reason = entry.get("guard_reason") or "reason not recorded"
+            by_reason.setdefault(reason.split(":")[0], []).append(entry)
         findings.append({
             "kind": "corrections_refused",
             "confidence": "certain",
             "count": len(guarded),
             "note": "The guard rejected the model's rewrite and fell back to tidying. "
                     "Grammar in these was left alone.",
+            "reasons": {r: len(v) for r, v in sorted(
+                by_reason.items(), key=lambda kv: -len(kv[1]))},
             "examples": [" ".join(g.get("text", "").split())[:90] for g in guarded[:3]],
+        })
+
+    long_ones = [h for h in history
+                 if len(h.get("raw", "").split()) >= 80 and "\n\n" not in h.get("text", "")]
+    if long_ones:
+        findings.append({
+            "kind": "unbroken_long_dictations",
+            "confidence": "certain",
+            "count": len(long_ones),
+            "note": "Long enough to want a paragraph break and did not get one. A few is "
+                    "normal, since a dictation on one subject is one paragraph. A lot means "
+                    "the gate in `paragraph_topics` is set too high for how you speak.",
+            "examples": [" ".join(h.get("text", "").split())[:90] for h in long_ones[:3]],
         })
 
     return findings
@@ -269,6 +288,7 @@ def human(report):
         "flagged_by_you": "You flagged these",
         "takes_discarded": "Recordings that produced nothing",
         "corrections_refused": "Corrections the guard refused",
+        "unbroken_long_dictations": "Long dictations that came back as one block",
         "likely_mishearing": "Possible mishearings, inferred so treat with suspicion",
     }
     for kind, items in by_kind.items():
@@ -276,6 +296,8 @@ def human(report):
         for f in items:
             if f.get("count") is not None:
                 lines.append(f"  {f['count']} of them. {f.get('note', '')}")
+                for reason, n in (f.get("reasons") or {}).items():
+                    lines.append(f"    {n} x {reason}")
                 for ex in f.get("examples", []):
                     lines.append(f"    - {ex}")
             else:

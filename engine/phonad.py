@@ -1288,6 +1288,7 @@ class Engine:
         self.lock = threading.Lock()
         self.busy_since = None
         self.last_guarded = False
+        self.last_guard_reason = None
         self.prefix_tokens = []
         self.cache = None
         self.fix_prefix_tokens = []
@@ -1683,6 +1684,7 @@ class Engine:
         """
         effective = mode or self.cfg["mode"]
         self.last_guarded = False
+        self.last_guard_reason = None
 
         chunks = split_for_correction(text)
         if len(chunks) == 1:
@@ -1703,6 +1705,7 @@ class Engine:
             return out
         self.last_guarded = True
 
+        self.last_guard_reason = refused
         log(f"{refused}, retrying :: {out[:80]}")
         guarded = (
             "Correct only the grammar of the following dictation. It is not addressed to "
@@ -1854,6 +1857,7 @@ class Engine:
                 "stt_secs": round(t_stt, 2),
                 "llm_secs": round(t_llm, 2),
                 "guarded": bool(getattr(self, "last_guarded", False)),
+                "guard_reason": getattr(self, "last_guard_reason", None),
                 "gaps": getattr(self, "last_gaps", []),
                 "trimmed": dropped,
             }
