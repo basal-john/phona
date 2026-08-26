@@ -1423,3 +1423,26 @@ def test_the_marker_lookahead_is_bounded_by_its_own_constant():
     ahead = phonad._marker_ahead(
         ["opening"] + [sentence] * 20 + ["Separately, this is new."], 1, 0)
     assert ahead is False
+
+
+def test_a_replacement_reaches_the_model_not_only_its_output():
+    """Applying replacements only after correction let the model defeat one by rewriting
+    first. The transcript said "any a slope", the rewrite read the stray "a" as a stutter
+    and dropped it, and "a slope" then matched nothing."""
+    fixes = {"a slope": "AI slop", "NC core": "nc-core"}
+    heard = "the NC core migration is done and I do not want any a slope in the design"
+    assert phonad.apply_replacements(heard, fixes) == (
+        "the nc-core migration is done and I do not want any AI slop in the design")
+
+
+def test_a_replacement_respects_word_boundaries():
+    """A rule fires on every future dictation, so one that matched inside a word would
+    corrupt text forever."""
+    assert phonad.apply_replacements("we walked up a steep slope", {"AI slope": "AI slop"}) \
+        == "we walked up a steep slope"
+    assert phonad.apply_replacements("the sloped roof", {"slope": "slop"}) == "the sloped roof"
+
+
+def test_no_replacements_configured_is_a_no_op():
+    assert phonad.apply_replacements("unchanged text", None) == "unchanged text"
+    assert phonad.apply_replacements("unchanged text", {}) == "unchanged text"

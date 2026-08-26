@@ -512,6 +512,20 @@ REPEAT_MAX_PHRASE = 4
 BOUNDARY_END = re.compile(r"[.!?,;:]$")
 
 
+def apply_replacements(text, replacements):
+    """Substitute the configured literal fixes.
+
+    Run on the transcript before correction as well as on the result afterwards. Running it
+    only afterwards let the model defeat a replacement by rewriting first: the transcript
+    said "any a slope", the rewrite read the stray "a" as a stutter and dropped it, and
+    "a slope" then matched nothing. The model should be given the corrected term rather than
+    asked to make sense of the misheard one.
+    """
+    for wrong, right in (replacements or {}).items():
+        text = re.sub(rf"\b{re.escape(wrong)}\b", right, text, flags=re.IGNORECASE)
+    return text
+
+
 def drop_fillers(text):
     """Remove the sounds nobody wants typed.
 
@@ -1766,9 +1780,7 @@ class Engine:
         miss the cache on every dictation into that app, and the same model has already been
         measured accepting a punctuation rule and then breaking it in the next sentence.
         """
-        for wrong, right in (self.cfg.get("replacements") or {}).items():
-            text = re.sub(rf"\b{re.escape(wrong)}\b", right, text, flags=re.IGNORECASE)
-        text = text.strip()
+        text = apply_replacements(text, self.cfg.get("replacements")).strip()
         if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
             text = text[1:-1].strip()
         if (mode or self.cfg["mode"]) == "raw":
@@ -1841,6 +1853,8 @@ class Engine:
                     f"kept {len(salvaged.split())} :: {raw}")
                 source = salvaged
 
+            source = apply_replacements(source, self.cfg.get("replacements"))
+
             active = mode or self.cfg["mode"]
             t_llm = 0.0
             if active == "raw":
@@ -1876,8 +1890,9 @@ class Engine:
                 return {"state": "empty", "raw": text, "text": ""}
             active = mode or self.cfg["mode"]
             t0 = time.time()
+            source = apply_replacements(text, self.cfg.get("replacements"))
             out = self.postprocess(
-                text if active == "raw" else self.correct(text, active), active, style)
+                source if active == "raw" else self.correct(source, active), active, style)
             entry = {
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "source": "text",
@@ -1889,6 +1904,7 @@ class Engine:
                 "stt_secs": 0,
                 "llm_secs": round(time.time() - t0, 2),
                 "guarded": bool(getattr(self, "last_guarded", False)),
+                "guard_reason": getattr(self, "last_guard_reason", None),
             }
             write_history(entry)
             return {"state": "done", **entry}
