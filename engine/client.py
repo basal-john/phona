@@ -257,6 +257,46 @@ def wait_for_pid(timeout=6.0):
     return recording_pid()
 
 
+AUDIO = BASE / "audio"
+
+
+def retain_or_remove(take, keep_days):
+    """Keep the recording for a while, or delete it as usual.
+
+    Off by default, because a dictation recording is the most private thing this tool
+    touches and nothing needs it once the transcript exists. It is worth turning on to
+    compare speech models, which cannot be done from transcripts alone: the same words have
+    to go through both, and asking someone to say a sentence twice is neither the same audio
+    nor a fair test.
+
+    Old takes are pruned on every run, so turning this on cannot fill the disk and
+    forgetting to turn it off costs one rolling window rather than everything.
+    """
+    try:
+        days = float(keep_days or 0)
+    except (TypeError, ValueError):
+        days = 0
+    if days <= 0:
+        take.unlink(missing_ok=True)
+        return
+
+    try:
+        AUDIO.mkdir(parents=True, exist_ok=True)
+        take.replace(AUDIO / take.name)
+    except OSError as exc:
+        clog(f"could not keep the recording: {exc}")
+        take.unlink(missing_ok=True)
+        return
+
+    cutoff = time.time() - days * 86400
+    for old_take in AUDIO.glob("take-*.wav"):
+        try:
+            if old_take.stat().st_mtime < cutoff:
+                old_take.unlink()
+        except OSError:
+            pass
+
+
 def begin_recording(conf):
     """Start capturing, and return once the device is producing audio.
 
@@ -770,7 +810,7 @@ def main():
             print(f"phona: could not reach the daemon. {exc}", file=sys.stderr)
             return 1
         finally:
-            take.unlink(missing_ok=True)
+            retain_or_remove(take, conf.get("keep_audio_days", 0))
 
         if as_json:
             print(json.dumps(reply, indent=2))

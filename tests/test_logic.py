@@ -28,6 +28,7 @@ def load(name):
 
 phonad = load("phonad")
 audit = load("audit")
+client = load("client")
 
 
 # --- the guard that stops the model acting on dictation -----------------------------
@@ -1455,3 +1456,57 @@ def test_a_replacement_value_is_typed_out_literally():
     assert phonad.apply_replacements("the foo here", {"foo": r"bar\1"}) == r"the bar\1 here"
     assert phonad.apply_replacements("the path here", {"path": r"C:\temp"}) == r"the C:\temp here"
     assert phonad.apply_replacements("the x here", {"x": r"a\g<9>"}) == r"the a\g<9> here"
+
+
+# --- keeping a recording -----------------------------------------------------------------
+
+def test_a_recording_is_deleted_when_retention_is_off(tmp_path, monkeypatch):
+    """Off is the default. A dictation recording is the most private thing this tool
+    touches and nothing needs it once the transcript exists."""
+    monkeypatch.setattr(client, "AUDIO", tmp_path / "audio")
+    take = tmp_path / "take-1.wav"
+    take.write_bytes(b"audio")
+    client.retain_or_remove(take, 0)
+    assert not take.exists()
+    assert not (tmp_path / "audio").exists()
+
+
+def test_a_recording_is_kept_when_retention_is_on(tmp_path, monkeypatch):
+    monkeypatch.setattr(client, "AUDIO", tmp_path / "audio")
+    take = tmp_path / "take-2.wav"
+    take.write_bytes(b"audio")
+    client.retain_or_remove(take, 7)
+    assert not take.exists()
+    assert (tmp_path / "audio" / "take-2.wav").read_bytes() == b"audio"
+
+
+def test_kept_recordings_are_pruned_past_the_window(tmp_path, monkeypatch):
+    """Pruning on every run is what makes this safe to turn on. Forgetting to turn it off
+    costs one rolling window rather than every recording ever made."""
+    import os
+    import time as _time
+    audio = tmp_path / "audio"
+    audio.mkdir()
+    monkeypatch.setattr(client, "AUDIO", audio)
+    stale = audio / "take-old.wav"
+    stale.write_bytes(b"old")
+    old_enough = _time.time() - 9 * 86400
+    os.utime(stale, (old_enough, old_enough))
+
+    take = tmp_path / "take-new.wav"
+    take.write_bytes(b"new")
+    client.retain_or_remove(take, 7)
+
+    assert not stale.exists()
+    assert (audio / "take-new.wav").exists()
+
+
+def test_a_bad_retention_value_is_treated_as_off(tmp_path, monkeypatch):
+    """The value comes from a file edited by hand, and the safe reading of nonsense is to
+    keep nothing."""
+    monkeypatch.setattr(client, "AUDIO", tmp_path / "audio")
+    for bad in ("", None, "seven"):
+        take = tmp_path / "take-bad.wav"
+        take.write_bytes(b"audio")
+        client.retain_or_remove(take, bad)
+        assert not take.exists()

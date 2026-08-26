@@ -89,6 +89,7 @@ DEFAULTS = {
     "max_words_per_second": 6.0,
     "dictionary": ["Phona"],
     "replacements": {},
+    "keep_audio_days": 0,
 }
 
 SYSTEM_PROMPT = (
@@ -1883,6 +1884,7 @@ class Engine:
                 "llm_secs": round(t_llm, 2),
                 "guarded": bool(getattr(self, "last_guarded", False)),
                 "guard_reason": getattr(self, "last_guard_reason", None),
+                "audio": os.path.basename(path) if path else None,
                 "gaps": getattr(self, "last_gaps", []),
                 "trimmed": dropped,
             }

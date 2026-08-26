@@ -177,6 +177,20 @@ second answer is checked the same way. Only if that fails too do you get the tid
 transcript instead of a rewrite. That happened on 2 of 30 real dictations, both of them
 badly misheard, where the raw words are more use than a confident rewrite of nonsense.
 
+### Keeping the recordings, when you need to compare
+
+Every recording is deleted the moment its transcript exists. Nothing needs it after that, and
+a dictation recording is the most private thing this tool touches.
+
+Set `keep_audio_days` and each take is kept under `~/.local/share/phona/audio/` for that many
+days instead. There is one reason to want it: comparing two speech models honestly. That
+cannot be done from transcripts, because the same words have to go through both, and saying
+a sentence twice gives you two recordings rather than one comparison.
+
+Old takes are pruned on every run, so turning it on cannot fill the disk and forgetting to
+turn it off costs one rolling window rather than every recording ever made. Set it back to
+`0` when the comparison is finished.
+
 ### Layout
 
 Count items off and they come back as a list. Saying "there are three things, first the
