@@ -871,7 +871,7 @@ def test_text_with_no_topic_marker_is_left_alone_until_it_runs_on():
     "separately", and those are too common to match on, so length is the second trigger.
     """
     sentence = "This is one continuous thought that runs on for a while."
-    modest = " ".join([sentence] * 6)
+    modest = " ".join([sentence] * 4)
     assert len(modest.split()) < phonad.PARAGRAPH_RUN_ON_WORDS
     assert phonad.paragraph_topics(modest) == modest
 

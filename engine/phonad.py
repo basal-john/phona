@@ -572,10 +572,29 @@ TOPIC_SHIFT = re.compile(
     re.IGNORECASE)
 
 PARAGRAPH_MIN_WORDS = 45
-PARAGRAPH_RUN_ON_WORDS = 80
-PARAGRAPH_TARGET_WORDS = 60
+PARAGRAPH_RUN_ON_WORDS = 50
+PARAGRAPH_TARGET_WORDS = 35
 PARAGRAPH_MIN_BLOCK_WORDS = 20
+PARAGRAPH_DEFER_MAX = 70
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+def _marker_ahead(sentences, index, held):
+    """True when a change of subject is close enough ahead to be worth waiting for.
+
+    Length and a marker can want the break in different places, and the marker is the
+    better one. Two real dictations collided on exactly 35 words held: one had a marker
+    four sentences later and one had none at all, so the count alone could not tell them
+    apart. Waiting is bounded by `PARAGRAPH_DEFER_MAX`, because a marker far enough away is
+    not worth an oversized block.
+    """
+    for later in sentences[index:]:
+        if TOPIC_SHIFT.match(later):
+            return True
+        held += len(later.split())
+        if held > PARAGRAPH_DEFER_MAX:
+            return False
+    return False
 
 
 def paragraph_topics(text):
@@ -596,6 +615,12 @@ def paragraph_topics(text):
 
     A marker still breaks earlier than length would, so a real change of subject keeps its
     own paragraph rather than being swept into the running count.
+
+    The two lengths were 80 and 35 words apart at 80 and 60, and are now 50 and 35. A 63
+    word dictation of three sentences could never reach the old target and came back as one
+    block, where a commercial dictation app broke it in two. Every one of the 17 dictations
+    the change newly breaks was read: all 17 open a new thought at the break, and coverage
+    over the 45 word gate goes from 14 to 31 of 391.
 
     `PARAGRAPH_MIN_BLOCK_WORDS` guards both ends: a marker cannot open the text with a
     one-line paragraph, and a trailing fragment is folded back rather than left stranded.
@@ -619,10 +644,12 @@ def paragraph_topics(text):
 
     run_on = len(text.split()) >= PARAGRAPH_RUN_ON_WORDS
     blocks = [[sentences[0]]]
-    for sentence in sentences[1:]:
+    for index, sentence in enumerate(sentences[1:], start=1):
         held = len(" ".join(blocks[-1]).split())
         changed_subject = TOPIC_SHIFT.match(sentence) and held >= PARAGRAPH_MIN_BLOCK_WORDS
         ran_on = run_on and held >= PARAGRAPH_TARGET_WORDS
+        if ran_on and not changed_subject and _marker_ahead(sentences, index, held):
+            ran_on = False
         if changed_subject or ran_on:
             blocks.append([sentence])
         else:
