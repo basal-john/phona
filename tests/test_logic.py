@@ -1395,3 +1395,31 @@ def test_the_first_word_of_a_sentence_is_not_a_proper_noun():
     """It is capitalised by position, not because it names anything."""
     assert phonad.invented_names("the config lives in the repo",
                                  "The config lives in the repo. Nothing else changed.") == []
+
+
+def test_length_waits_for_a_change_of_subject_that_is_close_ahead():
+    """A marker is the better break, so a length break is deferred when one is near. Two
+    real dictations held exactly 35 words at the candidate break: one had a marker four
+    sentences later and one had none, so the count alone could not separate them."""
+    sentence = "We looked at the numbers again and nothing had moved since Friday."
+    lead = " ".join([sentence] * 4)
+    with_marker = lead + " Separately, the migration is still waiting on review."
+    assert len(with_marker.split()) >= phonad.PARAGRAPH_MIN_WORDS
+    blocks = phonad.paragraph_topics(with_marker).split("\n\n")
+    assert len(blocks) == 2
+    assert blocks[1].startswith("Separately")
+
+
+def test_length_stops_waiting_for_a_marker_too_far_away():
+    """Waiting is bounded, or a distant marker buys an oversized paragraph."""
+    sentence = "We looked at the numbers again and nothing had moved since Friday."
+    far = " ".join([sentence] * 3) + " " + " ".join([sentence] * 8) + \
+        " Separately, the migration is still waiting on review."
+    assert phonad.paragraph_topics(far).count("\n\n") >= 2
+
+
+def test_the_marker_lookahead_is_bounded_by_its_own_constant():
+    sentence = "Some words that carry the thought along nicely."
+    ahead = phonad._marker_ahead(
+        ["opening"] + [sentence] * 20 + ["Separately, this is new."], 1, 0)
+    assert ahead is False

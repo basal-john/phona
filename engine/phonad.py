@@ -690,6 +690,9 @@ def paragraph_topics(text):
 
     `PARAGRAPH_MIN_BLOCK_WORDS` guards both ends: a marker cannot open the text with a
     one-line paragraph, and a trailing fragment is folded back rather than left stranded.
+    A block the speaker opened with a change of subject is never folded, short or not.
+    Folding it undid the break it had just earned, so "Separately, the migration is still
+    waiting on review" lost its own paragraph for being eight words long.
 
     Text that already carries line breaks is handled one segment at a time rather than
     abandoned. Returning early on any newline was measured suppressing every break in a
@@ -721,7 +724,9 @@ def paragraph_topics(text):
         else:
             blocks[-1].append(sentence)
 
-    if len(blocks) > 1 and len(" ".join(blocks[-1]).split()) < PARAGRAPH_MIN_BLOCK_WORDS:
+    if (len(blocks) > 1
+            and len(" ".join(blocks[-1]).split()) < PARAGRAPH_MIN_BLOCK_WORDS
+            and not TOPIC_SHIFT.match(blocks[-1][0])):
         blocks[-2].extend(blocks.pop())
 
     return "\n\n".join(" ".join(block) for block in blocks)
