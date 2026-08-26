@@ -244,13 +244,33 @@ def only_deletes(source, candidate):
     30.6 percent of all outputs to serve the 4 percent that contain a marker, and 46 of 49
     changes were on dictations with no self-correction in them. A separate pass reaches only
     the text that matched, so the rest of the corpus cannot move at all.
+
+    Words are matched loosely to find the deletion and then compared exactly, because a
+    loose comparison alone would let the model relabel or repunctuate a word it kept and
+    still be read as having only deleted. The one exception is the opening word, which may
+    change case, since deleting the start of a sentence leaves whatever now begins it
+    needing a capital.
     """
     src, got = source.split(), candidate.split()
     if not got or len(got) >= len(src):
         return False
-    key = lambda words: [w.lower().strip(".,!?;:") for w in words]
-    opcodes = difflib.SequenceMatcher(None, key(src), key(got)).get_opcodes()
-    return all(tag in ("equal", "delete") for tag, *_ in opcodes)
+
+    loose = [w.lower().strip(".,!?;:") for w in src], [w.lower().strip(".,!?;:") for w in got]
+    opcodes = difflib.SequenceMatcher(None, *loose).get_opcodes()
+    if not all(tag in ("equal", "delete") for tag, *_ in opcodes):
+        return False
+
+    kept = [src[i] for tag, i1, i2, _, _ in opcodes if tag == "equal"
+            for i in range(i1, i2)]
+    if len(kept) != len(got):
+        return False
+    for position, (before, after) in enumerate(zip(kept, got)):
+        if before == after:
+            continue
+        if position == 0 and before.lower() == after.lower():
+            continue
+        return False
+    return True
 
 
 LAYOUT_COMMANDS = {
@@ -1473,8 +1493,9 @@ class Engine:
         return False
 
     def correct(self, text, mode=None):
-        """Returns the corrected text. Sets self.last_guarded for the caller to record."""
-        """Correct one utterance.
+        """Correct one utterance and return the corrected text.
+
+        Sets `self.last_guarded` for the caller to record.
 
         The KV cache was prefilled from the configured mode's system prompt, so a
         per-request mode override has to bypass it and build the prompt from scratch.

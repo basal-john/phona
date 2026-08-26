@@ -1292,3 +1292,16 @@ def test_a_word_in_capitals_stays_in_capitals():
     assert phonad.expand_contractions("IT'S BEEN") == "IT HAS BEEN"
     assert phonad.expand_contractions("DON'T STOP") == "DO NOT STOP"
     assert phonad.expand_contractions("It's been") == "It has been"
+
+
+def test_only_deletes_rejects_a_relabelled_word():
+    """A loose comparison alone let the pass relabel or repunctuate a word it kept and
+    still read as having only deleted, which is not what the prompt promises."""
+    assert not phonad.only_deletes("We told Basal it was ready.", "We told basal ready.")
+    assert not phonad.only_deletes("one two three four", "one two, three")
+
+
+def test_only_deletes_allows_the_opening_word_to_be_recapitalised():
+    """Deleting the start of a sentence leaves whatever now begins it needing a capital."""
+    assert phonad.only_deletes("the iphone app, sorry, mac app settings.",
+                               "Mac app settings.")

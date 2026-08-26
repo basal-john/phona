@@ -7,7 +7,8 @@ the prompt, the few-shot examples or the guard.
     python tests/run_model_tests.py
     python tests/run_model_tests.py --group obedience
 
-Exit code is non-zero when a case in the STRICT groups fails, obedience and filler, because
+Exit code is non-zero when a case in the STRICT groups fails, obedience, filler and
+selfcorrection, because
 those are correctness rather than wording. Wording differences in the grammar groups are reported but tolerated,
 since a paraphrase is not a defect and pinning exact strings would make the suite
 unmaintainable.
