@@ -45,6 +45,7 @@ struct SettingsView: View {
                 Picker("Correction", selection: $mode) {
                     Text("Grammar").tag(Mode.grammar)
                     Text("Polish").tag(Mode.polish)
+                    Text("Write").tag(Mode.write)
                     Text("Transcribe only").tag(Mode.raw)
                 }
                 .pickerStyle(.segmented)
@@ -168,6 +169,7 @@ struct SettingsView: View {
         switch mode {
         case .grammar: return "Fixes grammar and punctuation, keeps your wording."
         case .polish: return "Also removes filler words and splits run-on sentences."
+        case .write: return "Rewrites your speech into the text you would have typed."
         case .raw: return "No correction. Inserts exactly what was heard."
         }
     }

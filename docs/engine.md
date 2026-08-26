@@ -126,7 +126,7 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | `stt_model` | `whisper-large-v3-turbo` | any mlx-community Whisper repo |
 | `llm_model` | `Qwen3-4B-Instruct-2507-4bit` | any mlx-lm chat model |
 | `language` | `en` | set to `auto` to detect, or `de` for German |
-| `mode` | `grammar` | `grammar`, `polish` or `raw` |
+| `mode` | `grammar` | `grammar`, `polish`, `write` or `raw` |
 | `input_device` | `:default` | avfoundation index, for example `:1` |
 | `silence_max_db` | `-42.0` | quieter than this counts as silence |
 | `max_words_per_second` | `6.0` | above this the transcript is treated as noise |

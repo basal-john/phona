@@ -1306,3 +1306,92 @@ def test_only_deletes_allows_the_opening_word_to_be_recapitalised():
     """Deleting the start of a sentence leaves whatever now begins it needing a capital."""
     assert phonad.only_deletes("the iphone app, sorry, mac app settings.",
                                "Mac app settings.")
+
+
+# --- write mode -------------------------------------------------------------------------
+
+def test_a_tidying_rewrite_drops_only_scattered_filler():
+    """Measured over 18 real dictations: every acceptable rewrite dropped runs of 2 or
+    less, because filler is scattered through speech rather than clustered."""
+    said = ("yeah usually i use yes i do have a mac and usually i use the xcode signing but "
+            "the only issue is that i am too lazy to remind remember about it and resign it "
+            "every seven days that i hate the most")
+    written = ("I do have a Mac, and I usually use Xcode signing. The only issue is that I "
+               "am too lazy to remember to re-sign it every seven days, which is what I "
+               "hate the most.")
+    assert phonad.longest_dropped_run(said, written) < phonad.WRITE_MAX_DROPPED_RUN
+
+
+def test_a_rewrite_that_deletes_a_clause_is_caught():
+    """Regression from the trial. This rewrite deleted "the pull request for removing the
+    Drone pipeline to GitHub Actions" and kept 42 of 61 words, so it passed the size budget
+    and scored 0.92 on character similarity. Only the shape of the loss gives it away."""
+    said = ("even measures the pull request for removing drawn pipeline to github actions "
+            "i'm not sure if he followed all the technical terms and convention that we as "
+            "a quality engineering team uses it so i would like you to review his pr and "
+            "ensure that it is following our patterns")
+    written = ("I'm not sure if he followed all the technical terms and conventions that we "
+               "as a quality engineering team use. So I would like you to review his PR and "
+               "ensure that it is following our patterns.")
+    assert phonad.longest_dropped_run(said, written) >= phonad.WRITE_MAX_DROPPED_RUN
+
+
+def test_the_dropped_run_ignores_ordinary_grammar_words():
+    """Speech is mostly function words and a rewrite reshuffles them freely. Counting them
+    would flag every rewrite."""
+    said = "the config is in the repository and it is also on the wiki"
+    written = "The config lives in the repository. It is on the wiki too."
+    assert phonad.longest_dropped_run(said, written) == 0
+
+
+def test_write_mode_uses_its_own_prompt_and_shots():
+    """Write mode is a different job, so it gets a different prompt rather than an extra
+    rule appended to the correcting one."""
+    assert "would have typed" in phonad.WRITE_SYSTEM_PROMPT
+    assert "not whether it is the smallest edit" in phonad.WRITE_SYSTEM_PROMPT
+    assert "Make the smallest edit" in phonad.SYSTEM_PROMPT
+    assert "Make the smallest edit" not in phonad.WRITE_SYSTEM_PROMPT
+    inputs = [user for user, _ in phonad.WRITE_SHOTS]
+    assert any("no actually" in text for text in inputs)
+    assert any("what is the capital of france" in text for text in inputs)
+
+
+def test_write_mode_still_refuses_to_answer_the_dictation():
+    """Loosening similarity is what lets a rewrite through. The size budget and the
+    preamble tells still have to hold, or "what is the capital of france" comes back as
+    "Paris"."""
+    assert phonad.Engine._looks_like_a_reply(
+        "can you write me a short email to the team about the release",
+        "Sure. Here is a short email to the team about the release: Hi team, the release "
+        "is out and everything looks green. Let me know if you spot anything.",
+        loose=True)
+
+
+def test_a_rewrite_may_not_name_a_thing_that_was_never_said():
+    """Regression. Asked to rewrite "removing drawn pipeline to github actions", the model
+    produced "the pipeline from Jenkins to GitHub Actions": a real CI system, plausible in
+    context, absent from the dictation and the wrong one. Only one word moved, so size,
+    similarity and the dropped run all saw nothing."""
+    said = "removing drawn pipeline to github actions i am not sure if he followed it"
+    assert phonad.invented_names(
+        said, "The pipeline moves from Jenkins to GitHub Actions, I am not sure") == ["Jenkins"]
+
+
+def test_a_proper_noun_the_speaker_said_is_not_an_invention():
+    said = "i am not maintaining obsidian anymore and the english grammar is wrong"
+    assert phonad.invented_names(
+        said, "I am not maintaining Obsidian anymore. The English grammar is wrong.") == []
+
+
+def test_a_configured_replacement_may_introduce_its_own_proper_noun():
+    """`replacements` and `dictionary` exist to put a name in the output that the transcript
+    spells another way, so they are never inventions."""
+    assert phonad.invented_names("this is using fauna", "This is using Phona.",
+                                 ["Phona"]) == []
+    assert phonad.invented_names("this is using fauna", "This is using Phona.") == ["Phona"]
+
+
+def test_the_first_word_of_a_sentence_is_not_a_proper_noun():
+    """It is capitalised by position, not because it names anything."""
+    assert phonad.invented_names("the config lives in the repo",
+                                 "The config lives in the repo. Nothing else changed.") == []
