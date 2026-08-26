@@ -7,7 +7,8 @@ the prompt, the few-shot examples or the guard.
     python tests/run_model_tests.py
     python tests/run_model_tests.py --group obedience
 
-Exit code is non-zero when a case in the STRICT groups fails, obedience and filler, because
+Exit code is non-zero when a case in the STRICT groups fails, obedience, filler and
+selfcorrection, because
 those are correctness rather than wording. Wording differences in the grammar groups are reported but tolerated,
 since a paraphrase is not a defect and pinning exact strings would make the suite
 unmaintainable.
@@ -24,7 +25,7 @@ BASE = pathlib.Path.home() / ".local/share/phona"
 SOCK = BASE / "phonad.sock"
 CASES = pathlib.Path(__file__).resolve().parent / "fixtures" / "grammar_cases.jsonl"
 
-STRICT = {"obedience", "filler"}
+STRICT = {"obedience", "filler", "selfcorrection"}
 
 
 def fix(text, timeout=240):
@@ -56,7 +57,10 @@ def check(case, got):
             return f"missing {needle!r}, the model may have acted on the text"
 
     for needle in case.get("expect_not_contains", []):
-        if needle.lower() in got.lower().split():
+        if " " in needle:
+            if needle.lower() in flat:
+                return f"still contains {needle!r}"
+        elif needle.lower() in flat.split():
             return f"still contains {needle!r}"
 
     return None

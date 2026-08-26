@@ -13,10 +13,17 @@ final class ChatAppsTests: XCTestCase {
                                       windowTitle: nil), .chat)
     }
 
-    func testAnythingElseIsNotChat() {
-        XCTAssertNil(ChatApps.style(bundleIdentifier: "com.apple.mail", windowTitle: nil))
+    func testAnythingElseHasNoStyle() {
         XCTAssertNil(ChatApps.style(bundleIdentifier: "com.microsoft.VSCode", windowTitle: nil))
+        XCTAssertNil(ChatApps.style(bundleIdentifier: "com.apple.Terminal", windowTitle: nil))
         XCTAssertNil(ChatApps.style(bundleIdentifier: nil, windowTitle: "Slack"))
+    }
+
+    /// Mail used to have no style, because chat was the only one. It is mail now, and this
+    /// is the assertion that changed when the second style landed.
+    func testMailIsNoLongerStyleless() {
+        XCTAssertEqual(ChatApps.style(bundleIdentifier: "com.apple.mail",
+                                      windowTitle: nil), .mail)
     }
 
     /// The titles Slack, Discord and Teams actually put in a browser window, including the
@@ -79,5 +86,39 @@ final class ChatAppsTests: XCTestCase {
     /// The raw value is what travels to the daemon, which compares it as a string.
     func testTheRawValueIsTheStringTheDaemonExpects() {
         XCTAssertEqual(MessageStyle.chat.rawValue, "chat")
+        XCTAssertEqual(MessageStyle.mail.rawValue, "mail")
+    }
+
+    /// A mail client is mail whatever window is open, the same way a chat app is chat.
+    func testAMailAppIsMail() {
+        XCTAssertEqual(ChatApps.style(bundleIdentifier: "com.apple.mail",
+                                      windowTitle: nil), .mail)
+        XCTAssertEqual(ChatApps.style(bundleIdentifier: "com.microsoft.Outlook",
+                                      windowTitle: nil), .mail)
+    }
+
+    /// A webmail tab is mail, read the same way a chat tab is read.
+    func testAWebmailTabIsMail() {
+        XCTAssertEqual(ChatApps.style(bundleIdentifier: "com.google.Chrome",
+                                      windowTitle: "Inbox (3) - basal@example.com - Gmail"),
+                       .mail)
+        XCTAssertEqual(ChatApps.style(bundleIdentifier: "com.google.Chrome",
+                                      windowTitle: "Outlook | Mail"), .mail)
+    }
+
+    /// Chat is decided before mail. A chat tab whose title happens to carry a mail word
+    /// stays chat, which is why the order in `style` is not incidental.
+    func testChatWinsOverMailWhenATitleCarriesBoth() {
+        XCTAssertEqual(ChatApps.style(bundleIdentifier: "com.google.Chrome",
+                                      windowTitle: "Slack | mail"), .chat)
+    }
+
+    /// A page merely named after a mail app is not mail, for the same reason
+    /// "slack-notifier" is not Slack.
+    func testAPageAboutMailIsNotMail() {
+        XCTAssertNil(ChatApps.style(bundleIdentifier: "com.google.Chrome",
+                                    windowTitle: "gmail-clone on GitHub"))
+        XCTAssertNil(ChatApps.style(bundleIdentifier: "com.google.Chrome",
+                                    windowTitle: "How mailmerge works"))
     }
 }

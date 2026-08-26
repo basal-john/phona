@@ -134,6 +134,7 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | `dictionary` | `["Phona"]` | vocabulary hint, only used when the flag above is on |
 | `replacements` | `{}` | literal fixes, applied before the layout pass, for example `{"jeera": "Jira"}` |
 | `spoken_layout` | `true` | act on `new paragraph`, `new line`, `bullet point` spoken as a sentence of their own |
+| `self_correction` | `true` | resolve a correction the speaker spoke aloud, "the iPhone app, sorry, the Mac app" |
 | `pin_models` | `true` | load the cached snapshot instead of re-resolving the hub |
 | `min_seconds` | `0.4` | shorter recordings are discarded as a slip of the key |
 | `device_open_timeout` | `6.0` | seconds to wait for the input to start producing audio |

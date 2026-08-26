@@ -80,8 +80,8 @@ jobs:
       - name: Shell scripts are valid
         run: |
           brew install shellcheck
-          bash -n install.sh update.sh macapp/build.sh
-          shellcheck -S error install.sh update.sh macapp/build.sh
+          bash -n install.sh update.sh switch-model.sh macapp/build.sh
+          shellcheck -S error install.sh update.sh switch-model.sh macapp/build.sh
 
       - name: Installer works on a clean target
         run: |

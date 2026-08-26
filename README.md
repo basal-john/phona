@@ -128,6 +128,19 @@ team aware of it". The cost is that a word which is wrong but real, "conform" wh
 meant "confirm", now survives, since the corrector cannot tell it from a word you chose. Use
 `replacements` for the ones you hit repeatedly.
 
+Filler sounds and stutters are removed after the model rather than by asking it. The prompt
+had asked for filler removal from the start, in two separate rules, and 32 of the 36 fillers
+on record came back anyway. So "um", "uh" and "er" are cut deterministically, the same way
+em dashes are. "you know" and "I mean" go only between commas, where they are an aside, so
+"do you know what I mean" survives untouched. "like", "kind of" and "basically" are left
+alone on purpose, because they carry hedging you meant.
+
+A phrase said twice in a row is collapsed to one, so "the fourth one fourth one" and "I I
+just created" come out clean. A single word doubled is often deliberate and stays, "no no"
+and "very very", though three or more copies collapse regardless, since that is a stuck
+transcript. A whole sentence repeated is left to you: deleting one is not recoverable, and
+"this is something other applications do. Do you think we can too?" is not a stutter.
+
 ### Layout
 
 Count items off and they come back as a list. Saying "there are three things, first the
@@ -155,11 +168,23 @@ grounds that you can see and fix a stray "new line" but not a clause that silent
 Turn the whole thing off with `spoken_layout` in Settings. Transcribe only mode never
 applies it.
 
-A long dictation also gets a paragraph break where you change subject, without being asked.
-Only the words people actually use to turn a corner count, "so in the future", "separately",
-"secondly", "regarding", and only past about 45 words. That deliberately misses breaks
-rather than inventing them: a break in the middle of a thought is worse than none. Measured
-over 466 real dictations, six were split and 460 were left exactly as they were.
+A long dictation also gets paragraph breaks, without being asked. Two things trigger one.
+The first is the words people use to turn a corner, "so in the future", "separately",
+"secondly", "regarding", past about 45 words. The second is length alone: past 80 words a
+paragraph closes at the first sentence end after 60, because by then one unbroken block is
+itself the problem. A break only ever lands where you had already stopped talking.
+
+The phrase list on its own reached almost nothing, 1 dictation in 72 over the 45 word gate,
+because speech turns a corner on "so" and "then" far more often than on "separately", and
+those are too common to match on safely. With length as the second trigger, coverage over 80
+words went from 4 in 21 to 11 in 21, and no dictation loses or reorders a word.
+
+Past 100 words the transcript is corrected in pieces of about 60 words rather than in one
+request. The guard that stops the model answering your dictation instead of correcting it
+refuses more often the longer the input gets, 0 of 127 under 20 words against 2 of 13 over
+100, and a refusal costs you the grammar pass entirely. In pieces, both refusals on record
+disappear and the two long dictations get faster, because neither burns a retry and a
+fallback any more.
 
 The correction model was asked to do this in its prompt from the beginning and would not,
 including when the rule was made unmissable and shown a worked example. Six real dictations
@@ -193,6 +218,21 @@ Slack, Discord, WhatsApp, Teams and Messages count, and so do the same sites in 
 recognised from the window title. The title has to match a whole segment of it, so a GitHub
 page about `slack-notifier` is not mistaken for Slack. A browser that will not report its
 title is treated as not a chat app, which errs toward leaving your punctuation alone.
+
+### Mail writes contractions out in full
+
+The same look at what is in front decides this one. Dictate into Mail, Outlook, Superhuman
+or a webmail tab and "I don't think we're ready" arrives as "I do not think we are ready".
+Everywhere else the contraction stays, because it is how you talk and how you would have
+typed it into Slack.
+
+Only contractions change. Nothing is reworded and no sentence is restructured, so the mail
+version says exactly what the chat version says. "it's" is the one that expands two ways,
+"it has" before been, got and had, and "it is" everywhere else. A possessive "its" has no
+apostrophe and is never touched.
+
+Chat is decided before mail, so a Slack tab whose title happens to carry the word mail
+stays chat.
 
 Measured over 271 real dictations: 159 would lose their closing stop, 112 were left exactly
 as they were, and the single message ending in an abbreviation kept its own.
