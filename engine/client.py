@@ -42,6 +42,7 @@ Options:
 """
 
 import json
+import math
 import os
 import shutil
 import signal
@@ -271,12 +272,20 @@ def retain_or_remove(take, keep_days):
 
     Old takes are pruned on every run, so turning this on cannot fill the disk and
     forgetting to turn it off costs one rolling window rather than everything.
+
+    A value has to be finite as well as positive. `float("nan")` parses, and `nan <= 0` is
+    false, so nonsense in the config read as retention on. The cutoff was then nan, every
+    comparison against it false, and nothing was ever pruned: the one setting whose whole
+    safety argument is that it expires would have kept every recording forever.
+
+    Everything in the directory is pruned rather than only `take-*`, because a take whose
+    staging failed keeps the name `recording.wav` and would otherwise never expire.
     """
     try:
         days = float(keep_days or 0)
     except (TypeError, ValueError):
         days = 0
-    if days <= 0:
+    if not math.isfinite(days) or days <= 0:
         take.unlink(missing_ok=True)
         return
 
@@ -289,7 +298,7 @@ def retain_or_remove(take, keep_days):
         return
 
     cutoff = time.time() - days * 86400
-    for old_take in AUDIO.glob("take-*.wav"):
+    for old_take in AUDIO.glob("*.wav"):
         try:
             if old_take.stat().st_mtime < cutoff:
                 old_take.unlink()

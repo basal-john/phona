@@ -1503,10 +1503,35 @@ def test_kept_recordings_are_pruned_past_the_window(tmp_path, monkeypatch):
 
 def test_a_bad_retention_value_is_treated_as_off(tmp_path, monkeypatch):
     """The value comes from a file edited by hand, and the safe reading of nonsense is to
-    keep nothing."""
+    keep nothing.
+
+    "nan" and "inf" parse as floats and are not <= 0, so they read as retention on. The
+    cutoff was then nan or -inf, every comparison against it false, and nothing was ever
+    pruned: the one setting whose safety argument is that it expires kept everything.
+    """
     monkeypatch.setattr(client, "AUDIO", tmp_path / "audio")
-    for bad in ("", None, "seven"):
+    for bad in ("", None, "seven", "nan", "inf", "-inf", float("nan"), float("inf")):
         take = tmp_path / "take-bad.wav"
         take.write_bytes(b"audio")
         client.retain_or_remove(take, bad)
         assert not take.exists()
+
+
+def test_pruning_reaches_a_take_that_kept_the_staging_name(tmp_path, monkeypatch):
+    """When staging fails the take keeps the name `recording.wav`, so a glob for `take-*`
+    would move it into the directory and then never expire it."""
+    import os
+    import time as _time
+    audio = tmp_path / "audio"
+    audio.mkdir()
+    monkeypatch.setattr(client, "AUDIO", audio)
+    stale = audio / "recording.wav"
+    stale.write_bytes(b"old")
+    old_enough = _time.time() - 9 * 86400
+    os.utime(stale, (old_enough, old_enough))
+
+    take = tmp_path / "take-new.wav"
+    take.write_bytes(b"new")
+    client.retain_or_remove(take, 7)
+
+    assert not stale.exists()
