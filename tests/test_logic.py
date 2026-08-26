@@ -1080,7 +1080,8 @@ def test_a_filler_sound_is_removed_wherever_it_sits():
 
 
 def test_an_aside_goes_but_the_same_words_in_a_clause_stay():
-    """"you know" between commas is an aside. In "do you know what I mean" the same words
+    """The words "you know" between commas are an aside. In "do you know what I mean" the
+    same words
     are the sentence, and removing them would delete what was said."""
     assert (phonad.drop_fillers("Econ and David Keta, you know, Sexy Beach style.")
             == "Econ and David Keta, Sexy Beach style.")
@@ -1089,7 +1090,7 @@ def test_an_aside_goes_but_the_same_words_in_a_clause_stay():
 
 
 def test_a_hedge_is_not_a_filler():
-    """"like", "kind of" and "basically" carry degree and hedging the speaker meant. They
+    """The hedges "like", "kind of" and "basically" carry degree the speaker meant. They
     were left out of the list on purpose."""
     hedged = "It is kind of like a basically fine idea."
     assert phonad.drop_fillers(hedged) == hedged
@@ -1239,14 +1240,14 @@ def test_mail_style_writes_contractions_out():
 
 
 def test_it_s_expands_two_ways():
-    """"it's" is "it has" before been, got and had, and "it is" everywhere else."""
+    """The word "it's" is "it has" before been, got and had, and "it is" elsewhere."""
     assert phonad.expand_contractions("It's been a while.") == "It has been a while."
     assert phonad.expand_contractions("It's got worse.") == "It has got worse."
     assert phonad.expand_contractions("It's ready now.") == "It is ready now."
 
 
 def test_a_possessive_its_is_never_touched():
-    """"its" without the apostrophe is a possessive and means something else entirely."""
+    """The word "its" without the apostrophe is a possessive and means something else."""
     kept = "Do not worry, its scope is unchanged."
     assert phonad.expand_contractions(kept) == kept
 
