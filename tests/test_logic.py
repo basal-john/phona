@@ -1446,3 +1446,12 @@ def test_a_replacement_respects_word_boundaries():
 def test_no_replacements_configured_is_a_no_op():
     assert phonad.apply_replacements("unchanged text", None) == "unchanged text"
     assert phonad.apply_replacements("unchanged text", {}) == "unchanged text"
+
+
+def test_a_replacement_value_is_typed_out_literally():
+    """These values come from a file the user edits by hand. Passing one straight to
+    `re.sub` makes it a regex replacement, so a backslash is read as a group reference and
+    "bar\\1" raised "invalid group reference 1" instead of being typed out."""
+    assert phonad.apply_replacements("the foo here", {"foo": r"bar\1"}) == r"the bar\1 here"
+    assert phonad.apply_replacements("the path here", {"path": r"C:\temp"}) == r"the C:\temp here"
+    assert phonad.apply_replacements("the x here", {"x": r"a\g<9>"}) == r"the a\g<9> here"

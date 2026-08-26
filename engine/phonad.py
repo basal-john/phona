@@ -520,9 +520,15 @@ def apply_replacements(text, replacements):
     said "any a slope", the rewrite read the stray "a" as a stutter and dropped it, and
     "a slope" then matched nothing. The model should be given the corrected term rather than
     asked to make sense of the misheard one.
+
+    The replacement is applied through a function so that it stays literal. Passing the
+    string straight to `re.sub` makes it a regex replacement, where a value carrying a
+    backslash is read as a group reference: `bar\\1` raised "invalid group reference 1"
+    rather than being typed out, and these values come from a file the user edits by hand.
     """
     for wrong, right in (replacements or {}).items():
-        text = re.sub(rf"\b{re.escape(wrong)}\b", right, text, flags=re.IGNORECASE)
+        text = re.sub(rf"\b{re.escape(wrong)}\b", lambda _, value=right: value, text,
+                      flags=re.IGNORECASE)
     return text
 
 
