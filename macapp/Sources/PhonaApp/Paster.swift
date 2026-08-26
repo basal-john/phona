@@ -193,7 +193,7 @@ enum Settings {
 
 /// Correction mode, read from and written to the same config.json the daemon uses.
 enum Mode: String, CaseIterable {
-    case grammar, polish, raw
+    case grammar, polish, write, raw
 
     static var current: Mode {
         guard let data = try? Data(contentsOf: Paths.config),

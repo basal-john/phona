@@ -35,7 +35,7 @@ Usage:
   phona history [n]     show the last n dictations
   phona restart|stop-daemon|logs|config
 Options:
-  --mode grammar|polish|raw   override the configured correction mode
+  --mode grammar|polish|write|raw  override the configured correction mode
   --json                      print the raw daemon reply
   --quiet                     suppress stdout, useful with --paste
   --no-restore                leave the result on the clipboard after pasting
@@ -452,7 +452,7 @@ def load_history():
 
 
 def set_mode(name):
-    valid = ("grammar", "polish", "raw")
+    valid = ("grammar", "polish", "write", "raw")
     if name not in valid:
         print(f"phona: mode must be one of {', '.join(valid)}", file=sys.stderr)
         return 2
