@@ -42,6 +42,7 @@ Options:
 """
 
 import json
+import math
 import os
 import shutil
 import signal
@@ -255,6 +256,54 @@ def wait_for_pid(timeout=6.0):
             return recording_pid()
         time.sleep(0.05)
     return recording_pid()
+
+
+AUDIO = BASE / "audio"
+
+
+def retain_or_remove(take, keep_days):
+    """Keep the recording for a while, or delete it as usual.
+
+    Off by default, because a dictation recording is the most private thing this tool
+    touches and nothing needs it once the transcript exists. It is worth turning on to
+    compare speech models, which cannot be done from transcripts alone: the same words have
+    to go through both, and asking someone to say a sentence twice is neither the same audio
+    nor a fair test.
+
+    Old takes are pruned on every run, so turning this on cannot fill the disk and
+    forgetting to turn it off costs one rolling window rather than everything.
+
+    A value has to be finite as well as positive. `float("nan")` parses, and `nan <= 0` is
+    false, so nonsense in the config read as retention on. The cutoff was then nan, every
+    comparison against it false, and nothing was ever pruned: the one setting whose whole
+    safety argument is that it expires would have kept every recording forever.
+
+    Everything in the directory is pruned rather than only `take-*`, because a take whose
+    staging failed keeps the name `recording.wav` and would otherwise never expire.
+    """
+    try:
+        days = float(keep_days or 0)
+    except (TypeError, ValueError):
+        days = 0
+    if not math.isfinite(days) or days <= 0:
+        take.unlink(missing_ok=True)
+        return
+
+    try:
+        AUDIO.mkdir(parents=True, exist_ok=True)
+        take.replace(AUDIO / take.name)
+    except OSError as exc:
+        clog(f"could not keep the recording: {exc}")
+        take.unlink(missing_ok=True)
+        return
+
+    cutoff = time.time() - days * 86400
+    for old_take in AUDIO.glob("*.wav"):
+        try:
+            if old_take.stat().st_mtime < cutoff:
+                old_take.unlink()
+        except OSError:
+            pass
 
 
 def begin_recording(conf):
@@ -770,7 +819,7 @@ def main():
             print(f"phona: could not reach the daemon. {exc}", file=sys.stderr)
             return 1
         finally:
-            take.unlink(missing_ok=True)
+            retain_or_remove(take, conf.get("keep_audio_days", 0))
 
         if as_json:
             print(json.dumps(reply, indent=2))
