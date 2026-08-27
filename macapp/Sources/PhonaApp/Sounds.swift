@@ -58,8 +58,8 @@ enum Cue: String {
     ///
     /// A cue is inaudible on an idle Bluetooth speaker, and that is not a bug here. The
     /// cues run 120 to 260 ms, while an output device that has gone quiet takes 474 to 534 ms
-    /// to come back, so the sound finishes before the link is carrying audio. `play()` still
-    /// returns true, because queuing it succeeded. Chased once already: the file, the bundle
+    /// to come back, so the sound finishes before the link is carrying audio. `NSSound.play()`
+    /// still returns true, because queuing it succeeded. Chased once already: the file, the bundle
     /// lookup and the thread were all verified fine before the output device was checked.
     /// Wired and built-in output are unaffected, and the accepted answer is to live with it
     /// rather than pad every cue with silence or hold an audio stream open.
