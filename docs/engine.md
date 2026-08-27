@@ -126,7 +126,7 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | `stt_model` | `whisper-large-v3-turbo` | any mlx-community Whisper repo |
 | `llm_model` | `Qwen3-4B-Instruct-2507-4bit` | any mlx-lm chat model |
 | `language` | `en` | set to `auto` to detect, or `de` for German |
-| `mode` | `grammar` | `grammar`, `polish` or `raw` |
+| `mode` | `grammar` | `grammar`, `polish`, `write` or `raw` |
 | `input_device` | `:default` | avfoundation index, for example `:1` |
 | `silence_max_db` | `-42.0` | quieter than this counts as silence |
 | `max_words_per_second` | `6.0` | above this the transcript is treated as noise |
@@ -134,6 +134,8 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | `dictionary` | `["Phona"]` | vocabulary hint, only used when the flag above is on |
 | `replacements` | `{}` | literal fixes, applied before the layout pass, for example `{"jeera": "Jira"}` |
 | `spoken_layout` | `true` | act on `new paragraph`, `new line`, `bullet point` spoken as a sentence of their own |
+| `self_correction` | `true` | resolve a correction the speaker spoke aloud, "the iPhone app, sorry, the Mac app" |
+| `keep_audio_days` | `0` | keep each recording for this many days under `audio/`, pruned on every run. Off by default |
 | `pin_models` | `true` | load the cached snapshot instead of re-resolving the hub |
 | `min_seconds` | `0.4` | shorter recordings are discarded as a slip of the key |
 | `device_open_timeout` | `6.0` | seconds to wait for the input to start producing audio |
