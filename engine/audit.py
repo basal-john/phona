@@ -14,6 +14,11 @@ does not quietly start shipping every dictation to a cloud service.
 Nothing is applied. The output is a proposal, because a tool that edits its own
 configuration behind the user's back is the reason these features get distrusted.
 
+One exception to the local-only rule, and it is worth stating plainly rather than burying:
+the report ends with a check of whether the pinned model weights have fallen behind the
+hub, which is a single HTTPS GET per model carrying no dictation data. Turn it off with
+`model_update_check` in config.json. Nothing is downloaded either way.
+
     python audit.py                 last 7 days
     python audit.py --days 30
     python audit.py --json          machine readable, for the skill
@@ -230,6 +235,27 @@ def inference_findings(history, limit=40):
     return findings
 
 
+def model_update_check():
+    """Whether the pinned weights have fallen behind the hub.
+
+    Hung on the weekly audit rather than given a scheduler of its own, because the audit is
+    already the once-a-week moment you read, and a second notifier competing for the same
+    attention is how both end up ignored.
+
+    Returns an empty list when the check is switched off or unavailable, so the audit never
+    fails on account of it. This is the one part of the audit that touches the network, and
+    `model_update_check` in config.json turns it off.
+    """
+    try:
+        cfg = json.loads(CONFIG.read_text()) if CONFIG.exists() else {}
+        if not cfg.get("model_update_check", True):
+            return []
+        import model_updates
+        return model_updates.check([cfg.get("stt_model"), cfg.get("llm_model")])
+    except Exception:
+        return []
+
+
 def collect(days):
     """Gather findings and turn them into replacement proposals.
 
@@ -253,6 +279,7 @@ def collect(days):
         "flagged_by_you": len(corrections),
         "findings": findings,
         "proposed_replacements": proposals,
+        "model_updates": model_update_check(),
     }
 
 
@@ -268,6 +295,33 @@ def apply_proposals(proposals):
     return added
 
 
+def model_update_lines(report):
+    """The model section, or nothing at all.
+
+    A week where the weights have not moved gets one line rather than a heading and a table,
+    because the whole point of the check is that it is unremarkable almost every time it runs
+    and a report you learn to skim is a report that will hide the week it matters.
+    """
+    results = report.get("model_updates") or []
+    if not results:
+        return []
+    behind = [r for r in results if r["state"] == "behind"]
+    lines = [""]
+    if not behind:
+        states = ", ".join(sorted({r["state"] for r in results}))
+        return lines + [f"Models: {states}, nothing to update."]
+    lines.append("## Newer weights are available")
+    lines.append("")
+    for r in behind:
+        lines.append(f"  {r['repo']}")
+        lines.append(f"    pinned {(r['local'] or '')[:12]}, hub has {(r['remote'] or '')[:12]}"
+                     + (f", changed {r['last_modified'][:10]}" if r.get("last_modified") else ""))
+    lines.append("")
+    lines.append("Nothing was downloaded. New weights can change transcription and correction,")
+    lines.append("so updating stays a decision:  phona update-models")
+    return lines
+
+
 def human(report):
     lines = []
     lines.append(f"Phona audit, last {report['window_days']} days")
@@ -278,6 +332,7 @@ def human(report):
     if not report["findings"]:
         lines.append("Nothing worth reporting. No flags, no discarded takes, no "
                      "implausible transcripts.")
+        lines += model_update_lines(report)
         return "\n".join(lines)
 
     by_kind = collections.defaultdict(list)
@@ -314,6 +369,7 @@ def human(report):
             lines.append(f"  {wrong} = {right}")
         lines.append("")
         lines.append("Apply with:  python audit.py --apply")
+    lines += model_update_lines(report)
     return "\n".join(lines)
 
 

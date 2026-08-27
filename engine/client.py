@@ -27,7 +27,8 @@ Usage:
   phona start|stop|cancel|status|ping
   phona fix "text"      correct text without recording, reads stdin when given no text
   phona clip            correct whatever is on the clipboard, in place
-  phona models          show which models are loaded and at which revision
+  phona models          show which models are loaded, at which revision, and
+                        whether the hub has moved past them
   phona update-models   deliberately fetch newer weights, then restart
   phona wrong ["..."]   flag the last dictation as wrong, optionally with the truth
   phona history [n]     show the last n dictations
@@ -157,6 +158,24 @@ def send(payload, timeout=900):
     data = sock.makefile("r").readline()
     sock.close()
     return json.loads(data)
+
+
+def model_update_lines(conf):
+    """Whether the pinned weights have fallen behind the hub, as printable lines.
+
+    Wrapped rather than called directly so a client that predates the module, or an install
+    where the copy was missed, degrades to one honest line instead of a traceback on a
+    command whose real job is printing what is loaded.
+
+    Given a shorter timeout than the weekly audit gets, because this one is run by a person
+    waiting at a prompt and two unreachable repos would otherwise hold it for twice the wait.
+    """
+    try:
+        import model_updates
+    except Exception:
+        return ["the update check is unavailable, model_updates.py is not installed"]
+    return model_updates.summary(
+        model_updates.check([conf.get("stt_model"), conf.get("llm_model")], timeout=4))
 
 
 def daemon_alive():
@@ -614,6 +633,12 @@ def main():
             print("pinned    unknown, the engine is not running")
         else:
             print(f"pinned    speech {bool(stt_pin)}, grammar {bool(llm_pin)}")
+
+        if conf.get("model_update_check", True):
+            print()
+            print("against the hub:")
+            for line in model_update_lines(conf):
+                print(f"  {line}")
         print()
         print("Change a model by editing stt_model or llm_model in config.json, then")
         print("run 'phona restart'. Refresh the pinned weights with 'phona update-models'.")

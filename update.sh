@@ -23,7 +23,7 @@ else
 fi
 
 say "updating the engine"
-cp engine/phonad.py engine/client.py engine/audit.py "$TARGET/"
+cp engine/phonad.py engine/client.py engine/audit.py engine/model_updates.py "$TARGET/"
 
 # New dependencies land rarely, but a pull that adds one would otherwise fail at runtime.
 if command -v uv >/dev/null 2>&1; then

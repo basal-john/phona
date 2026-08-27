@@ -30,7 +30,7 @@ done
 mkdir -p "$TARGET"
 
 say "installing the engine into $TARGET"
-cp "$SRC/engine/phonad.py" "$SRC/engine/client.py" "$SRC/engine/audit.py" "$TARGET/"
+cp "$SRC/engine/phonad.py" "$SRC/engine/client.py" "$SRC/engine/audit.py" "$SRC/engine/model_updates.py" "$TARGET/"
 
 if [[ ! -x "$TARGET/venv/bin/python" ]]; then
   say "creating the virtual environment"

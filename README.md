@@ -123,6 +123,32 @@ with the side bits it saw.
 The waveform is your actual input level, not a decorative loop. If it stays flat while you
 talk, the microphone is not picking you up.
 
+### The sounds
+
+Four cues, and they are one family rather than four unrelated noises. They share two pitches,
+A and D, and let direction and register carry the meaning:
+
+| Cue | Notes | Means |
+| --- | --- | --- |
+| start | A4 -> D5 | recording, rising and open |
+| stop | D5 | the tap was heard |
+| done | D5 -> A5 | the same interval an octave up, resolved |
+| nothing | D5 -> A4 | start turned back on itself, no speech in the take |
+
+So a completed dictation is heard as a phrase that opens and closes, a cancelled one as that
+phrase reversed, and the stop is the pause in the middle. That is why the stop is a single
+note and 120 ms while the others are two notes and 215 to 260 ms.
+
+The stop was silent for a while, on the reasoning that three cues inside a second was more
+noise than information and that the done cue followed almost immediately. It does not. The
+log puts transcription and the correction pass at 1.7 to 7 seconds end to end, and through
+all of it the only confirmation that the second tap registered was the HUD, which is on
+screen and therefore not where you are looking while you talk. So the tap gets its own
+sound, kept short enough that the set still reads as one phrase.
+
+The cue fires on the tap, before any transcription work starts, so it is not waiting on the
+model. If it ever arrives late, see the Bluetooth note under [Accuracy](#accuracy).
+
 ### The correction pass
 
 There is one correction pass and nothing to choose. It fixes grammar, agreement, tense and
@@ -443,6 +469,47 @@ phona update-models           # fetch newer weights, then restart
 
 Set `pin_models` to `false` in `config.json` if you would rather always track the latest.
 
+### Knowing that an update exists
+
+Pinning has one cost: nothing tells you a newer revision was ever published. So the pin is
+checked against the hub, and only checked.
+
+```bash
+phona models
+
+speech    mlx-community/whisper-large-v3-turbo
+          revision a4aaeec0636e
+grammar   mlx-community/Qwen3-4B-Instruct-2507-4bit
+          revision 50d427756c6b
+pinned    speech True, grammar True
+
+against the hub:
+  mlx-community/whisper-large-v3-turbo is current at a4aaeec0636e
+  mlx-community/Qwen3-4B-Instruct-2507-4bit is current at 50d427756c6b
+```
+
+The same check ends the weekly audit, so a week where the weights moved says so in
+`audit-latest.md` and a week where they did not gets one line. It is hung on the audit
+rather than given a notifier of its own, because a second thing competing for the same
+attention is how both end up ignored.
+
+It is one HTTPS GET per model, carrying no dictation data and downloading no weights. That
+is the only outbound call Phona makes outside an install or an explicit update, which is
+why it is a setting rather than a certainty:
+
+```json
+{ "model_update_check": false }
+```
+
+Offline, the check says so and everything carries on. A model name that does not exist on
+the hub is reported as a name to fix rather than as a network problem, because `config.json`
+is edited by hand.
+
+What this cannot tell you is that a better model exists. A newer Whisper, a newer Qwen or a
+Parakeet worth reconsidering all live in repos this machine has never referenced, and no
+amount of watching the two in your config will surface one. That question is answered by
+running `tests/run_model_tests.py` against the candidates, not by a feed.
+
 The obvious approach, setting `HF_HUB_OFFLINE`, does not work. `huggingface_hub` freezes
 that flag into a module constant the first time it is imported, so setting it at runtime
 only takes effect by luck of import order. It also makes `mlx_whisper` refuse a snapshot
@@ -477,7 +544,7 @@ length of the recording. The correction scales with how much you said, 0.6 s und
 words and 2.5 s past forty, because it generates a token at a time. Run the app with
 `--trace-timing` to get that breakdown in the log for your own dictations.
 
-The cues are inaudible on an idle Bluetooth speaker. They run 215 to 260 ms and a Bluetooth
+The cues are inaudible on an idle Bluetooth speaker. They run 120 to 260 ms and a Bluetooth
 output that has gone quiet takes about half a second to start carrying audio again, so the
 sound is over before the link is up. Wired and built-in output are fine, and so is Bluetooth
 while something else is already playing. Left alone deliberately, since the alternatives are

@@ -11,17 +11,22 @@ import Foundation
 /// They share two pitches, A and D, and let direction and register carry the meaning:
 ///
 ///   start    A4 -> D5    rising, opening
+///   stop     D5          the note start landed on, held alone and briefly
 ///   done     D5 -> A5    the same interval an octave up, resolved
 ///   nothing  D5 -> A4    the mirror of start, falling, nothing landed
 ///
 /// So a completed dictation is heard as a phrase that opens and closes, and a cancelled
-/// one as the same phrase turned back on itself.
+/// one as the same phrase turned back on itself. The stop is the pause in the middle of
+/// that phrase, which is why it is one note rather than two and 120 ms rather than 215.
 enum Cue: String {
     case start = "start"
-    /// Deliberately silent. Start, stop and done fired three cues inside about a second,
-    /// which is more noise than information. The stop is the least useful of the three,
-    /// because releasing the key is something you just did and the done cue follows it
-    /// almost immediately.
+    /// The key was heard. Silent for a while, on the reasoning that start, stop and done
+    /// inside about a second was more noise than information and that the done cue follows
+    /// almost immediately. It does not: transcription and the correction pass run 1.7 to 7
+    /// seconds on the measured log, and through all of it the only confirmation that the
+    /// tap registered was the HUD, which is on screen and therefore not where the speaker
+    /// is looking. So it is back, kept short and single-noted so the three cues still read
+    /// as one phrase.
     case stop = "stop"
     case done = "done"
     /// Nothing usable was captured. Not a failure, so it must not sound like one.
@@ -45,17 +50,14 @@ enum Cue: String {
     /// long as it blocked, and the HUD is the thing the speaker is waiting for. A cue that
     /// arrives a few milliseconds late is not noticeable. A cue that gates every pixel is.
     func play() {
-        if self == .stop { return }
         Self.queue.async { self.playNow() }
     }
 
     /// Prefers the bundled file, falling back to the system set so the app still makes sense
     /// if a resource is missing from the bundle.
-    /// Prefers the bundled file, falling back to the system set so the app still makes sense
-    /// if a resource is missing from the bundle.
     ///
-    /// A cue is inaudible on an idle Bluetooth speaker, and that is not a bug here. The three
-    /// cues run 215 to 260 ms, while an output device that has gone quiet takes 474 to 534 ms
+    /// A cue is inaudible on an idle Bluetooth speaker, and that is not a bug here. The
+    /// cues run 120 to 260 ms, while an output device that has gone quiet takes 474 to 534 ms
     /// to come back, so the sound finishes before the link is carrying audio. `play()` still
     /// returns true, because queuing it succeeded. Chased once already: the file, the bundle
     /// lookup and the thread were all verified fine before the output device was checked.

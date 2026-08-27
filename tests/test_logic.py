@@ -1740,3 +1740,115 @@ def test_pruning_reaches_a_take_that_kept_the_staging_name(tmp_path, monkeypatch
     phonad.retain_or_remove(take, 7)
 
     assert not stale.exists()
+
+
+# --- noticing that the pinned weights fell behind -----------------------------------
+
+model_updates = load("model_updates")
+
+
+def check_with(monkeypatch, local, remote, error=None, modified=None):
+    monkeypatch.setattr(model_updates, "local_revision", lambda repo: local)
+    monkeypatch.setattr(model_updates, "remote_revision",
+                        lambda repo, timeout=None: (remote, modified, error))
+    return model_updates.check(["some/model"])[0]
+
+
+def test_matching_revisions_are_current(monkeypatch):
+    assert check_with(monkeypatch, "abc123", "abc123")["state"] == "current"
+
+
+def test_a_moved_repo_is_behind(monkeypatch):
+    assert check_with(monkeypatch, "abc123", "def456")["state"] == "behind"
+
+
+def test_an_unreachable_hub_is_not_reported_as_behind(monkeypatch):
+    """The whole check has to be safe to run on a plane. Reporting `behind` when the answer
+    is simply unknown would send someone to re-download weights that were never stale."""
+    assert check_with(monkeypatch, "abc123", None, error="unreachable")["state"] == "unreachable"
+
+
+def test_a_misspelled_model_is_told_apart_from_a_network_problem(monkeypatch):
+    """config.json is edited by hand, so a typo in a model name would otherwise be reported
+    every week as the hub being down."""
+    result = check_with(monkeypatch, "abc123", None, error="missing")
+    assert result["state"] == "missing"
+    assert "config.json" in " ".join(model_updates.summary([result]))
+
+
+def test_a_model_not_cached_yet_is_not_behind(monkeypatch):
+    assert check_with(monkeypatch, None, "def456")["state"] == "not cached"
+
+
+def test_a_hub_that_raises_is_swallowed(monkeypatch):
+    """Every caller treats this as advisory, so an exception here would take out `phona
+    models` and the weekly audit for a check neither of them needs to succeed. Faked rather
+    than dialled out, because these tests run without a network."""
+    class Exploding:
+        def model_info(self, *a, **k):
+            raise RuntimeError("hub on fire")
+
+    fake = types.ModuleType("huggingface_hub")
+    fake.HfApi = lambda: Exploding()
+    errors = types.ModuleType("huggingface_hub.errors")
+    errors.RepositoryNotFoundError = type("RepositoryNotFoundError", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.errors", errors)
+
+    assert model_updates.remote_revision("some/model") == (None, None, "unreachable")
+
+
+def test_a_repo_the_hub_does_not_have_is_missing(monkeypatch):
+    class NotFound(Exception):
+        pass
+
+    class Absent:
+        def model_info(self, *a, **k):
+            raise NotFound()
+
+    fake = types.ModuleType("huggingface_hub")
+    fake.HfApi = lambda: Absent()
+    errors = types.ModuleType("huggingface_hub.errors")
+    errors.RepositoryNotFoundError = NotFound
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.errors", errors)
+
+    assert model_updates.remote_revision("some/model") == (None, None, "missing")
+
+
+def test_the_audit_reports_newer_weights(monkeypatch):
+    report = {"window_days": 7, "dictations": 1, "flagged_by_you": 0, "findings": [],
+              "proposed_replacements": {},
+              "model_updates": [{"repo": "some/model", "local": "abc123", "remote": "def456",
+                                 "last_modified": "2026-09-01 10:00:00+00:00", "state": "behind"}]}
+    text = audit.human(report)
+    assert "Newer weights are available" in text
+    assert "phona update-models" in text
+    assert "Nothing was downloaded" in text
+
+
+def test_the_audit_stays_quiet_when_nothing_moved():
+    """A weekly report you learn to skim is a report that hides the week it matters, so an
+    unremarkable check gets one line rather than a heading."""
+    report = {"window_days": 7, "dictations": 1, "flagged_by_you": 0, "findings": [],
+              "proposed_replacements": {},
+              "model_updates": [{"repo": "some/model", "local": "abc", "remote": "abc",
+                                 "last_modified": None, "state": "current"}]}
+    text = audit.human(report)
+    assert "nothing to update" in text
+    assert "Newer weights" not in text
+
+
+def test_the_audit_survives_the_check_being_off():
+    report = {"window_days": 7, "dictations": 1, "flagged_by_you": 0, "findings": [],
+              "proposed_replacements": {}, "model_updates": []}
+    text = audit.human(report)
+    assert "Models:" not in text
+
+
+def test_the_check_never_downloads_weights():
+    """The pinning exists so weights change only when asked. A checker that fetched would
+    undo the whole point of it."""
+    source = (ROOT / "engine/model_updates.py").read_text()
+    assert "snapshot_download" not in source
+    assert "hf_hub_download" not in source
