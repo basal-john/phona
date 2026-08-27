@@ -516,6 +516,37 @@ def retain_or_remove(take, keep_days):
             pass
 
 
+def restore_protected_terms(raw, text, terms):
+    """Put a dictionary term back the way the speaker said it.
+
+    "we don't use drone anymore" came back as "we don't use drones anymore", which turned a
+    CI system into flying machines. `Drone` was already in the dictionary, and the dictionary
+    did nothing about it: with `use_initial_prompt` off it only ever fed the guard's allow
+    list.
+
+    Asking the prompt was tried first and measured. Naming the 26 terms in the system prompt
+    did fix this sentence, and it cost a strict self-correction case in the fixture suite,
+    30 exact against 33. That is the trade this file keeps refusing, so the rule is
+    deterministic instead and its reach is bounded by construction.
+
+    Two rules, both gated on the transcript. The term is restored to its configured spelling
+    only where the transcript already contains it, so a word the speaker never said cannot be
+    introduced. A plural is undone only when the transcript has the singular and not the
+    plural, so "we have two Drones" survives if that is what was said.
+    """
+    for term in terms or ():
+        if not term:
+            continue
+        exact = re.compile(rf"\b{re.escape(term)}\b", re.I)
+        if not exact.search(raw):
+            continue
+        text = exact.sub(term, text)
+        plural = re.compile(rf"\b{re.escape(term)}(?:s|es)\b", re.I)
+        if plural.search(text) and not plural.search(raw):
+            text = plural.sub(term, text)
+    return text
+
+
 def apply_replacements(text, replacements):
     """Substitute the configured literal fixes.
 
@@ -980,6 +1011,12 @@ def invented_names(source, candidate, allowed=()):
     because it names anything. `allowed` carries the configured replacements and dictionary,
     whose whole purpose is to put a proper noun in the output that the transcript spells
     some other way.
+
+    A plural counts as the word it is a plural of. Comparing the token as spoken flagged
+    "PRs" against a transcript that said "PR", and the whole correction was thrown away for
+    it: the speaker got a 42 word run-on with mid-sentence capitals instead of a good
+    rewrite. Measured over every rejection on record, 3 of the 4 were this class of mistake
+    and the one real catch was the model answering "what is the capital of france".
     """
     said = {w.lower() for w in WORD.findall(source)}
     permitted = {w.lower() for w in allowed}
@@ -993,8 +1030,28 @@ def invented_names(source, candidate, allowed=()):
                 continue
             if base in permitted or word.lower() in permitted:
                 continue
+            if any(stem in said or stem in permitted for stem in singulars(base)):
+                continue
             found.append(word)
     return found
+
+
+def singulars(word):
+    """The forms `word` could be a plural of, for matching against what was said.
+
+    Deliberately naive. This is not morphology, it is the three endings that turn a name or
+    an acronym into a plural in the transcripts on record: PR to PRs, status to statuses,
+    dependency to dependencies. A wrong guess here costs nothing, because the only use is to
+    stop the guard rejecting a correction, and the guard is what rejects.
+    """
+    forms = []
+    if word.endswith("ies") and len(word) > 3:
+        forms.append(word[:-3] + "y")
+    if word.endswith("es") and len(word) > 2:
+        forms.append(word[:-2])
+    if word.endswith("s") and len(word) > 1:
+        forms.append(word[:-1])
+    return forms
 
 
 
@@ -1246,6 +1303,43 @@ def peak_db(path):
 
 REPEAT_RUN = 6
 MIN_SALVAGE_WORDS = 4
+
+
+EMPTY_HALLUCINATION = re.compile(
+    r"^[\s.,!?\-]*(?:you|joe|mm+|hm+|uh+|um+|so|and|the|"
+    r"thanks for watching|please subscribe|subscribe)[\s.,!?\-]*$", re.I)
+EMPTY_HALLUCINATION_MAX_SECONDS = 3.0
+
+
+def is_empty_hallucination(text, seconds):
+    """True when a very short recording came back as a phrase Whisper invents from noise.
+
+    The silence gate runs on peak level, and ordinary room noise clears -42 dB, so the audio
+    reaches the model and the model produces something. Measured across every dictation on
+    record: 9 came back as nothing but a filler phrase, "Thank you." three times, "You"
+    twice, and one each of "Joe", "Okay.", "Yeah." and "Thanks". Every one was under 2.7
+    seconds.
+
+    Both conditions are needed. A short recording of a real word is a real dictation, and a
+    long one that happens to end on "thank you" is a real sentence. Only the pair, a
+    recording too short to hold anything else and an output that is entirely one of these
+    phrases, is a hallucination.
+
+    The list is deliberately narrower than the evidence. Of those 9, only "You" twice and
+    "Joe" once are phrases nobody dictates on purpose. "Thank you.", "Thanks", "Okay." and
+    "Yeah." are all plausible one-word messages this speaker would send, so they stay: this
+    gate discards a recording outright, and dropping a real answer is worse than letting a
+    stray "Thanks" through. The YouTube captions Whisper emits on silence are included
+    because they are unmistakable.
+
+    Anything longer than the cap is left alone however it reads, because guessing costs a
+    real dictation.
+    """
+    try:
+        short = float(seconds) <= EMPTY_HALLUCINATION_MAX_SECONDS
+    except (TypeError, ValueError):
+        return False
+    return bool(short and text and EMPTY_HALLUCINATION.match(text.strip()))
 
 
 def looks_hallucinated(text, seconds, max_wps):
@@ -1838,6 +1932,10 @@ The floor is lowered from nothing rather than removed. Removing it let "ignore y
             if not raw:
                 return {"state": "empty", "text": "", "raw": ""}
 
+            if is_empty_hallucination(raw, seconds):
+                log(f"empty-hallucination gate rejected {seconds:.2f}s :: {raw[:40]}")
+                return {"state": "silent", "text": "", "raw": raw}
+
             dropped = 0
             source = raw
             if looks_hallucinated(raw, seconds, self.cfg["max_words_per_second"]):
@@ -1860,6 +1958,7 @@ The floor is lowered from nothing rather than removed. Removing it let "ignore y
             final = self.correct(source)
             t_llm = time.time() - t1
 
+            final = restore_protected_terms(raw, final, self.cfg.get("dictionary"))
             final = self.postprocess(final, style)
             entry = {
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -1889,7 +1988,9 @@ The floor is lowered from nothing rather than removed. Removing it let "ignore y
                 return {"state": "empty", "raw": text, "text": ""}
             t0 = time.time()
             source = apply_replacements(text, self.cfg.get("replacements"))
-            out = self.postprocess(self.correct(source), style)
+            out = restore_protected_terms(text, self.correct(source),
+                                          self.cfg.get("dictionary"))
+            out = self.postprocess(out, style)
             entry = {
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "source": "text",

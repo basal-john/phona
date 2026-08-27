@@ -1538,6 +1538,113 @@ def test_a_replacement_value_is_typed_out_literally():
     assert phonad.apply_replacements("the x here", {"x": r"a\g<9>"}) == r"the a\g<9> here"
 
 
+# --- a dictionary term keeps the form the speaker used ------------------------------------
+
+def test_a_protected_term_is_not_pluralised():
+    """The defect. "we don't use drone anymore" came back as "drones", which turned a CI
+    system into flying machines. Drone was already in the dictionary and the dictionary did
+    nothing, because with use_initial_prompt off it only fed the guard's allow list."""
+    assert phonad.restore_protected_terms(
+        "we don't use drone anymore", "We don't use drones anymore.", ["Drone"]) \
+        == "We don't use Drone anymore."
+
+
+def test_a_protected_term_gets_its_configured_spelling():
+    assert phonad.restore_protected_terms(
+        "the drone pipeline is gone", "The drone pipeline is gone.", ["Drone"]) \
+        == "The Drone pipeline is gone."
+
+
+def test_a_plural_the_speaker_actually_said_survives():
+    """The pass is gated on the transcript in both directions. Undoing a plural the speaker
+    used would be the same class of error in the other direction."""
+    assert phonad.restore_protected_terms(
+        "we have two drones flying", "We have two drones flying.", ["Drone"]) \
+        == "We have two drones flying."
+
+
+def test_a_term_the_speaker_never_said_is_never_introduced():
+    """This runs on the model's output, so it must not be a second way to invent a name."""
+    assert phonad.restore_protected_terms(
+        "i like fauna a lot", "I like Fauna a lot.", ["Phona"]) == "I like Fauna a lot."
+
+
+def test_both_request_paths_restore_protected_terms():
+    """A dictation and `phona fix` must not disagree. The pass was hooked into process()
+    first and fix() kept returning "drones"."""
+    import inspect
+    for fn in (phonad.Engine.process, phonad.Engine.fix_text):
+        assert "restore_protected_terms" in inspect.getsource(fn), fn.__name__
+
+
+def test_the_pass_asks_the_prompt_for_nothing():
+    """Naming the terms in the system prompt was measured first: it fixed this sentence and
+    cost a strict self-correction case, 30 exact against 33. Keep it out of the prompt."""
+    assert "never pluralised" not in phonad.SYSTEM_PROMPT
+    assert "spelled exactly as given" not in phonad.SYSTEM_PROMPT
+
+
+# --- the guard must not reject a correct rewrite ------------------------------------------
+
+def test_a_plural_of_something_that_was_said_is_not_an_invented_name():
+    """The defect this fixes. The transcript said "other PR status", the model wrote "PRs",
+    and the whole correction was discarded for it: the speaker got a 42 word run-on with
+    mid-sentence capitals instead. 3 of the 4 invented-name rejections on record were this
+    class of mistake."""
+    assert phonad.invented_names("have a look into other PR status",
+                                 "Have a look at other PR statuses.") == []
+    assert phonad.invented_names("we fixed the dependency", "We fixed the dependencies.") == []
+    assert phonad.invented_names("check the status", "Check the statuses.") == []
+
+
+def test_the_one_real_catch_still_fires():
+    """The only correct rejection on record was the model answering "what is the capital of
+    france". Loosening the check must not cost that."""
+    assert phonad.invented_names("what is the capital of france",
+                                 "The capital of France is Paris.") == ["Paris"]
+
+
+def test_the_dictionary_stops_the_guard_fighting_a_corrected_term():
+    """Whisper mishears a technical term, the model puts the right one back, and the guard
+    called that an invention. Xcode, Jira and CI were all rejected this way."""
+    assert phonad.invented_names("use my ex code to find it", "Use my Xcode to find it.") \
+        == ["Xcode"]
+    assert phonad.invented_names("use my ex code to find it", "Use my Xcode to find it.",
+                                 ["Xcode"]) == []
+
+
+def test_singulars_only_guesses_the_three_endings_that_occur():
+    assert "pr" in phonad.singulars("prs")
+    assert "status" in phonad.singulars("statuses")
+    assert "dependency" in phonad.singulars("dependencies")
+    assert phonad.singulars("ci") == []
+
+
+# --- a very short recording that came back as a phrase Whisper invents -------------------
+
+def test_a_short_recording_of_a_filler_phrase_is_treated_as_silence():
+    """9 dictations on record came back as nothing but a filler, all under 2.7 seconds. The
+    peak-level silence gate misses them because room noise clears -42 dB."""
+    for text in ("You", "you.", "Joe", "Mm.", "Thanks for watching!"):
+        assert phonad.is_empty_hallucination(text, 1.8), text
+
+
+def test_a_real_one_word_message_survives():
+    """This gate discards the recording, so it is deliberately narrower than the evidence.
+    "Thank you.", "Thanks", "Okay." and "Yeah." are all plausible one-word messages, and
+    dropping a real answer is worse than letting a stray one through."""
+    for text in ("Thank you.", "Thanks", "Okay.", "Yeah.", "Yes.", "Done."):
+        assert not phonad.is_empty_hallucination(text, 1.8), text
+
+
+def test_both_conditions_are_needed():
+    """A long recording that ends on a filler is a real sentence, and a short recording of a
+    real word is a real dictation."""
+    assert not phonad.is_empty_hallucination("You", 9.0)
+    assert not phonad.is_empty_hallucination("You can delete it.", 1.8)
+    assert not phonad.is_empty_hallucination("", 1.0)
+
+
 # --- keeping a recording -----------------------------------------------------------------
 
 def test_a_recording_is_deleted_when_retention_is_off(tmp_path, monkeypatch):
