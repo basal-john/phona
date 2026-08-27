@@ -6,8 +6,6 @@ Behaviour worth knowing before changing anything here:
   sound and the on-screen state change on the same frame.
 - `warm` opens and immediately closes the input, so the first real dictation does not pay the
   cold device open, which is several seconds after boot.
-- `mode` restarts the daemon, because the prompt prefix is prefilled per mode and has to be
-  rebuilt before a change takes effect.
 - `update-models` is deliberate and never automatic. New weights can change behaviour, so it
   is a decision rather than a side effect of an ordinary restart.
 - `wrong` takes everything after the verb as what the user actually said, if they bothered.
@@ -35,14 +33,12 @@ Usage:
   phona history [n]     show the last n dictations
   phona restart|stop-daemon|logs|config
 Options:
-  --mode grammar|polish|write|raw  override the configured correction mode
   --json                      print the raw daemon reply
   --quiet                     suppress stdout, useful with --paste
   --no-restore                leave the result on the clipboard after pasting
 """
 
 import json
-import math
 import os
 import shutil
 import signal
@@ -258,54 +254,6 @@ def wait_for_pid(timeout=6.0):
     return recording_pid()
 
 
-AUDIO = BASE / "audio"
-
-
-def retain_or_remove(take, keep_days):
-    """Keep the recording for a while, or delete it as usual.
-
-    Off by default, because a dictation recording is the most private thing this tool
-    touches and nothing needs it once the transcript exists. It is worth turning on to
-    compare speech models, which cannot be done from transcripts alone: the same words have
-    to go through both, and asking someone to say a sentence twice is neither the same audio
-    nor a fair test.
-
-    Old takes are pruned on every run, so turning this on cannot fill the disk and
-    forgetting to turn it off costs one rolling window rather than everything.
-
-    A value has to be finite as well as positive. `float("nan")` parses, and `nan <= 0` is
-    false, so nonsense in the config read as retention on. The cutoff was then nan, every
-    comparison against it false, and nothing was ever pruned: the one setting whose whole
-    safety argument is that it expires would have kept every recording forever.
-
-    Everything in the directory is pruned rather than only `take-*`, because a take whose
-    staging failed keeps the name `recording.wav` and would otherwise never expire.
-    """
-    try:
-        days = float(keep_days or 0)
-    except (TypeError, ValueError):
-        days = 0
-    if not math.isfinite(days) or days <= 0:
-        take.unlink(missing_ok=True)
-        return
-
-    try:
-        AUDIO.mkdir(parents=True, exist_ok=True)
-        take.replace(AUDIO / take.name)
-    except OSError as exc:
-        clog(f"could not keep the recording: {exc}")
-        take.unlink(missing_ok=True)
-        return
-
-    cutoff = time.time() - days * 86400
-    for old_take in AUDIO.glob("*.wav"):
-        try:
-            if old_take.stat().st_mtime < cutoff:
-                old_take.unlink()
-        except OSError:
-            pass
-
-
 def begin_recording(conf):
     """Start capturing, and return once the device is producing audio.
 
@@ -500,21 +448,6 @@ def load_history():
     return entries
 
 
-def set_mode(name):
-    valid = ("grammar", "polish", "write", "raw")
-    if name not in valid:
-        print(f"phona: mode must be one of {', '.join(valid)}", file=sys.stderr)
-        return 2
-    data = json.loads(CONFIG.read_text()) if CONFIG.exists() else {}
-    data["mode"] = name
-    CONFIG.write_text(json.dumps(data, indent=2) + "\n")
-    subprocess.run(["/usr/bin/pkill", "-f", "phonad.py"], capture_output=True)
-    time.sleep(1)
-    ok = start_daemon()
-    print(f"mode set to {name}" if ok else f"mode set to {name}, daemon restart failed")
-    return 0 if ok else 1
-
-
 def show_history(count, search=None, since=None, export=None, plain=False, as_json=False):
     """Print the history.
 
@@ -606,7 +539,6 @@ def deliver(reply, do_paste, quiet, restore, cmd):
 
 def main():
     args = list(sys.argv[1:])
-    mode = None
     as_json = quiet = do_paste = False
     restore = True
     hist_search = hist_since = hist_export = None
@@ -616,9 +548,6 @@ def main():
     i = 0
     while i < len(args):
         a = args[i]
-        if a == "--mode" and i + 1 < len(args):
-            mode, i = args[i + 1], i + 2
-            continue
         if a in ("--search", "--grep") and i + 1 < len(args):
             hist_search, i = args[i + 1], i + 2
             continue
@@ -639,9 +568,7 @@ def main():
             hist_plain = True
             i += 1
             continue
-        if a.startswith("--mode="):
-            mode = a.split("=", 1)[1]
-        elif a == "--json":
+        if a == "--json":
             as_json = True
         elif a == "--quiet":
             quiet = True
@@ -726,11 +653,6 @@ def main():
         if reply.get("heard"):
             print(f"  heard: {reply['heard'][:100]}")
         return 0
-    if cmd == "mode":
-        if len(rest) < 2:
-            print(cfg().get("mode", "grammar"))
-            return 0
-        return set_mode(rest[1].lower())
     if cmd == "logs":
         print(LOG.read_text() if LOG.exists() else "no log yet", end="")
         return 0
@@ -812,14 +734,14 @@ def main():
             return 1
         try:
             reply = send({"cmd": "PROCESS", "path": str(take),
-                          "seconds": seconds, "mode": mode})
+                          "seconds": seconds})
         except Exception as exc:
             clog(f"daemon request failed: {exc!r}")
             play(SOUND_ERR, conf["sounds"])
             print(f"phona: could not reach the daemon. {exc}", file=sys.stderr)
             return 1
         finally:
-            retain_or_remove(take, conf.get("keep_audio_days", 0))
+            take.unlink(missing_ok=True)
 
         if as_json:
             print(json.dumps(reply, indent=2))
@@ -836,9 +758,9 @@ def main():
         return 0
     if cmd == "fix":
         text = " ".join(rest[1:]) if len(rest) > 1 else sys.stdin.read()
-        reply = send({"cmd": "FIX", "text": text, "mode": mode})
+        reply = send({"cmd": "FIX", "text": text})
     elif cmd == "clip":
-        reply = send({"cmd": "FIX", "text": get_clipboard(), "mode": mode})
+        reply = send({"cmd": "FIX", "text": get_clipboard()})
         if reply.get("text"):
             set_clipboard(reply["text"])
     else:

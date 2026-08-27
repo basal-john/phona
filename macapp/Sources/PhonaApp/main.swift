@@ -85,7 +85,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys.onBegin = { [weak self] in self?.beginDictation() }
         hotkeys.onEnd = { [weak self] in self?.endDictation() }
         hotkeys.onAbort = { [weak self] in self?.abortDictation() }
-        hotkeys.onToggleHandsFree = { [weak self] in self?.toggleHandsFree() }
 
         DispatchQueue.global().async { DaemonClient.startAndWait() }
 
@@ -231,9 +230,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// output setting: inserting is the default, and copy-only turns dictation into a
     /// scratchpad without changing how it is triggered. Text that had nowhere to land is
     /// reported rather than chimed for, and a recording that simply contained no speech is
-    /// treated as a cancel rather than a failure, so an idle Option hold stays quiet.
+    /// treated as a cancel rather than a failure, so a tap that caught no speech stays quiet.
     private func endDictation() {
-        hotkeys.handsFree = false
         levelTimer?.invalidate()
         levelTimer = nil
         OutputMute.release()
@@ -362,19 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Double tap Option to dictate without holding. Escape or a second double tap ends it.
-    private func toggleHandsFree() {
-        if hotkeys.handsFree {
-            hotkeys.handsFree = false
-            endDictation()
-        } else {
-            hotkeys.handsFree = true
-            beginDictation()
-        }
-    }
-
     private func abortDictation() {
-        hotkeys.handsFree = false
         session += 1
         levelTimer?.invalidate()
         levelTimer = nil
@@ -446,11 +432,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let text = sender.representedObject as? String else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-    }
-
-    @objc private func chooseMode(_ sender: NSMenuItem) {
-        guard let mode = Mode(rawValue: sender.title) else { return }
-        mode.apply()
     }
 
     @objc private func openSettings() {
@@ -627,21 +608,6 @@ extension AppDelegate: NSMenuDelegate {
                 menu.addItem(item)
             }
         }
-
-        menu.addItem(.separator())
-
-        let modeItem = NSMenuItem(title: "Correction mode", action: nil, keyEquivalent: "")
-        let modeMenu = NSMenu()
-        let current = Mode.current
-        for mode in Mode.allCases {
-            let item = NSMenuItem(title: mode.rawValue, action: #selector(chooseMode(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.state = mode == current ? .on : .off
-            modeMenu.addItem(item)
-        }
-        modeItem.submenu = modeMenu
-        menu.addItem(modeItem)
 
         menu.addItem(.separator())
         if let version = UpdateCheck.availableVersion {

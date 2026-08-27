@@ -5,8 +5,11 @@ import PhonaCore
 /// Watches the left Option key without remapping it.
 ///
 /// A listen-only event tap observes flag changes and key presses. Option keeps working
-/// normally for Option+click, Option+e and every other shortcut. A hold only counts once
-/// Option has been down alone for `holdDelay` with no other key pressed.
+/// normally for Option+click, Option+e and every other shortcut.
+///
+/// Tap Option to start dictating, tap it again to stop. `TapToggle` holds the decision and
+/// its tests hold the behaviour, because a live event tap and a real keyboard cannot be put
+/// in a unit test. This class only classifies events and forwards them.
 ///
 /// The left key only. `maskAlternate` is set by either one, so watching it meant the right
 /// key started dictations too, which is the one Option most often reached for as a modifier.
@@ -16,19 +19,6 @@ final class HotkeyMonitor {
     var onBegin: () -> Void = {}
     var onEnd: () -> Void = {}
     var onAbort: () -> Void = {}
-    /// Double-tapping Option starts hands-free dictation, which runs until the next
-    /// double tap or Escape. Holding a key down through a long dictation is tiring, and
-    /// this reuses the same key rather than asking the user to learn a second one.
-    var onToggleHandsFree: () -> Void = {}
-
-    /// The floor on how soon a hold can be acknowledged. Lowered from 250 ms because it is
-    /// the whole cost once the main thread stops being blocked, and 250 ms is perceptible.
-    /// The cost is arming slightly more readily on a hold that was reaching for a shortcut,
-    /// which the dirty flag still cancels the moment a second key lands.
-    var holdDelay: TimeInterval = 0.15
-    var doubleTapWindow: TimeInterval = 0.4
-    /// Set by the app while a hands-free dictation is running.
-    var handsFree = false
 
     /// `--probe-hotkey` logs every flag change with the side bits it saw.
     ///
@@ -37,13 +27,12 @@ final class HotkeyMonitor {
     /// a way to read them off a real keyboard.
     var probing = false
 
+    var isRecording: Bool { toggle.isRecording }
+
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
+    private var toggle = TapToggle()
     private var optionDown = false
-    private var dirty = false
-    private var armed = false
-    private var timer: Timer?
-    private var lastTapEnded: Date?
     /// Said once, not on every flag change, because it would otherwise fill the log.
     private var reportedSidelessOption = false
 
@@ -85,34 +74,36 @@ final class HotkeyMonitor {
         }
     }
 
-    /// Classify one event into hold, double tap, or an ordinary shortcut.
-    ///
-    /// A release too short to be a hold is remembered, so a second one inside
-    /// `doubleTapWindow` counts as a double tap and starts hands-free instead. Any other
-    /// modifier joining means the user is reaching for a real shortcut, not dictating.
+    private func perform(_ action: TapAction) {
+        switch action {
+        case .none:
+            return
+        case .start:
+            DispatchQueue.main.async { self.onBegin() }
+        case .stop:
+            DispatchQueue.main.async { self.onEnd() }
+        case .abort:
+            DispatchQueue.main.async { self.onAbort() }
+        }
+    }
+
     private func handle(type: CGEventType, event: CGEvent) {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             Paths.log("event tap disabled by \(type == .tapDisabledByTimeout ? "timeout" : "user input"), re-enabling")
             optionDown = false
-            dirty = false
-            armed = false
-            cancelTimer()
-            lastTapEnded = nil
+            perform(toggle.reset())
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return
         }
 
         if type == .keyDown {
             let escape: Int64 = 53
-            if handsFree, event.getIntegerValueField(.keyboardEventKeycode) == escape {
-                DispatchQueue.main.async { self.onAbort() }
+            if event.getIntegerValueField(.keyboardEventKeycode) == escape {
+                perform(toggle.escapePressed())
                 return
             }
             if optionDown {
-                dirty = true
-                cancelTimer()
-                lastTapEnded = nil
-                if armed { armed = false; DispatchQueue.main.async { self.onAbort() } }
+                perform(toggle.otherKeyPressed())
             }
             return
         }
@@ -135,7 +126,7 @@ final class HotkeyMonitor {
             reportedSidelessOption = true
             Paths.log(String(
                 format: "this keyboard reports Option with no side bit (flags %#010llx), so the "
-                    + "hold cannot be told from the right key and dictation will not arm",
+                    + "tap cannot be told from the right key and dictation will not start",
                 flags.rawValue))
         }
 
@@ -144,44 +135,13 @@ final class HotkeyMonitor {
 
         if altAlone && !optionDown {
             optionDown = true
-            dirty = false
-            cancelTimer()
-
-            if let last = lastTapEnded, Date().timeIntervalSince(last) < doubleTapWindow {
-                lastTapEnded = nil
-                DispatchQueue.main.async { self.onToggleHandsFree() }
-                return
-            }
-
-            let work = Timer(timeInterval: holdDelay, repeats: false) { [weak self] _ in
-                guard let self, self.optionDown, !self.dirty, !self.armed else { return }
-                self.armed = true
-                self.onBegin()
-            }
-            timer = work
-            RunLoop.main.add(work, forMode: .common)
+            perform(toggle.optionDown(at: Date()))
         } else if optionDown && !alt {
             optionDown = false
-            cancelTimer()
-            if armed {
-                armed = false
-                lastTapEnded = nil
-                DispatchQueue.main.async { self.onEnd() }
-            } else if !dirty {
-                lastTapEnded = Date()
-            }
+            perform(toggle.optionUp(at: Date()))
         } else if optionDown && !altAlone {
-            dirty = true
-            cancelTimer()
-            if armed {
-                armed = false
-                DispatchQueue.main.async { self.onAbort() }
-            }
+            // Another modifier joined, so this press is a shortcut rather than a tap.
+            perform(toggle.otherKeyPressed())
         }
-    }
-
-    private func cancelTimer() {
-        timer?.invalidate()
-        timer = nil
     }
 }

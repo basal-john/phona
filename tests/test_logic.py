@@ -427,10 +427,15 @@ def test_chat_style_drops_only_the_closing_full_stop(text, expected):
 
 
 def _postprocess(text, style):
-    """Run postprocess without loading a model. It reads nothing but `cfg` off the engine."""
+    """Run postprocess without loading a model. It reads nothing but `cfg` off the engine.
+
+    `resolve_self_correction` is stubbed rather than exercised. It is the one step that can
+    reach the model, and it now runs for every dictation instead of two modes out of four.
+    """
     engine = types.SimpleNamespace(
-        cfg={"replacements": {}, "mode": "grammar", "spoken_layout": True})
-    return phonad.Engine.postprocess(engine, text, "grammar", style)
+        cfg={"replacements": {}, "spoken_layout": True},
+        resolve_self_correction=lambda text: text)
+    return phonad.Engine.postprocess(engine, text, style)
 
 
 def test_the_chat_style_only_applies_when_the_caller_asks_for_it():
@@ -440,12 +445,15 @@ def test_the_chat_style_only_applies_when_the_caller_asks_for_it():
     assert _postprocess("The tests are green.", None) == "The tests are green."
 
 
-def test_transcribe_only_mode_ignores_the_chat_style():
-    """Raw mode promises exactly what was heard, which is what the Settings window says it
-    does, so no style may edit its punctuation."""
-    engine = types.SimpleNamespace(cfg={"replacements": {}, "mode": "raw"})
-    assert phonad.Engine.postprocess(
-        engine, "the tests are green.", "raw", "chat") == "the tests are green."
+def test_every_dictation_now_runs_the_self_correction_pass():
+    """It was gated on polish and write, two modes out of four. With one mode the gate is
+    gone, so the pass has to be reached unconditionally rather than by mode."""
+    seen = []
+    engine = types.SimpleNamespace(
+        cfg={"replacements": {}, "spoken_layout": True},
+        resolve_self_correction=lambda text: seen.append(text) or text)
+    phonad.Engine.postprocess(engine, "the tests are green.", None)
+    assert seen, "postprocess skipped the self-correction pass"
 
 
 # --- the mechanical fallback -------------------------------------------------------
@@ -497,7 +505,6 @@ def test_the_prompt_forbids_dashes_and_uses_none_itself(dash, name):
     dash in the instructions or the examples teaches the opposite."""
     assert name in phonad.SYSTEM_PROMPT
     assert dash not in phonad.SYSTEM_PROMPT
-    assert dash not in phonad.POLISH_EXTRA
     assert not [s for pair in phonad.SHOTS for s in pair if dash in s]
 
 
@@ -683,14 +690,14 @@ def test_the_style_reaches_the_engine_from_the_request():
     the request. Dropped anywhere along the way it fails silently, as an ordinary full stop."""
     calls = []
     engine = types.SimpleNamespace(
-        process=lambda path, seconds, mode, style: calls.append((mode, style))
+        process=lambda path, seconds, style: calls.append((style,))
         or {"state": "done", "text": "ok"})
 
     conn = _FakeConn({"cmd": "PROCESS", "path": "/tmp/take.wav", "seconds": 2.0,
                       "style": "chat"})
     phonad.handle(conn, engine)
 
-    assert calls == [(None, "chat")]
+    assert calls == [("chat",)]
 
 
 def test_a_request_without_a_style_still_works():
@@ -698,7 +705,7 @@ def test_a_request_without_a_style_still_works():
     build of the app, so the key is optional rather than expected."""
     calls = []
     engine = types.SimpleNamespace(
-        fix_text=lambda text, mode, style: calls.append((text, style))
+        fix_text=lambda text, style: calls.append((text, style))
         or {"state": "done", "text": "ok"})
 
     conn = _FakeConn({"cmd": "FIX", "text": "the tests is green"})
@@ -932,8 +939,8 @@ def test_the_reply_guard_keeps_its_tight_budget_for_three_content_lines():
 def test_the_paragraph_pass_runs_after_the_reply_guard_not_before():
     """The ordering is what makes the guard safe to leave alone, so it is worth pinning."""
     source = (ROOT / "engine" / "phonad.py").read_text()
-    body = source[source.index("            active = mode or self.cfg[\"mode\"]"):]
-    assert body.index("self.correct(source, active)") < body.index("self.postprocess("), \
+    body = source[source.index("    def process(self, path, seconds, style=None):"):]
+    assert body.index("self.correct(source)") < body.index("self.postprocess("), \
         "paragraphs must be inserted after the candidate has been judged"
 
 
@@ -1320,7 +1327,7 @@ def test_a_tidying_rewrite_drops_only_scattered_filler():
     written = ("I do have a Mac, and I usually use Xcode signing. The only issue is that I "
                "am too lazy to remember to re-sign it every seven days, which is what I "
                "hate the most.")
-    assert phonad.longest_dropped_run(said, written) < phonad.WRITE_MAX_DROPPED_RUN
+    assert phonad.longest_dropped_run(said, written) < phonad.MAX_DROPPED_RUN
 
 
 def test_a_rewrite_that_deletes_a_clause_is_caught():
@@ -1334,7 +1341,7 @@ def test_a_rewrite_that_deletes_a_clause_is_caught():
     written = ("I'm not sure if he followed all the technical terms and conventions that we "
                "as a quality engineering team use. So I would like you to review his PR and "
                "ensure that it is following our patterns.")
-    assert phonad.longest_dropped_run(said, written) >= phonad.WRITE_MAX_DROPPED_RUN
+    assert phonad.longest_dropped_run(said, written) >= phonad.MAX_DROPPED_RUN
 
 
 def test_the_dropped_run_ignores_ordinary_grammar_words():
@@ -1345,27 +1352,100 @@ def test_the_dropped_run_ignores_ordinary_grammar_words():
     assert phonad.longest_dropped_run(said, written) == 0
 
 
-def test_write_mode_uses_its_own_prompt_and_shots():
-    """Write mode is a different job, so it gets a different prompt rather than an extra
-    rule appended to the correcting one."""
-    assert "would have typed" in phonad.WRITE_SYSTEM_PROMPT
-    assert "not whether it is the smallest edit" in phonad.WRITE_SYSTEM_PROMPT
-    assert "Make the smallest edit" in phonad.SYSTEM_PROMPT
-    assert "Make the smallest edit" not in phonad.WRITE_SYSTEM_PROMPT
-    inputs = [user for user, _ in phonad.WRITE_SHOTS]
-    assert any("no actually" in text for text in inputs)
+def test_the_one_prompt_carries_both_the_grammar_rules_and_the_spoken_cleanup():
+    """The regression this replaced: the rewrite prompt had no grammar rules, so "everyone
+    who were involved" came back untouched while the correcting prompt fixed it. Measured on
+    the fixture suite, 5 of 6 wording failures were rules present in one prompt and absent
+    from the other."""
+    assert "would have typed" in phonad.SYSTEM_PROMPT
+    assert "Split a spoken run-on into sentences" in phonad.SYSTEM_PROMPT
+    assert "Keep the version they settled on" in phonad.SYSTEM_PROMPT
+    assert "subject-verb agreement" in phonad.SYSTEM_PROMPT
+    assert "'since' for a starting point" in phonad.SYSTEM_PROMPT
+    assert "A deadline takes 'by'" in phonad.SYSTEM_PROMPT
+    assert "present perfect" in phonad.SYSTEM_PROMPT
+
+
+def test_a_spoken_run_up_is_dropped_deterministically():
+    """The prompt asks for this and the model obeys inconsistently. Replaying 66 real
+    dictations through two prompts, one dropped "Yeah," and the other put it back in four of
+    them, so it goes where `strip_long_dashes` and the filler sounds already went. Measured
+    reach on every stored output: 36 of 475, all of them a run-up."""
+    assert phonad.drop_fillers("Yeah, let's go with the recommendation.") == \
+        "Let's go with the recommendation."
+    assert phonad.drop_fillers("Okay, I will take a look.") == "I will take a look."
+    assert phonad.drop_fillers("Well, that is fine. Yeah, please go ahead.") == \
+        "That is fine. Please go ahead."
+    assert phonad.drop_fillers("All right, thanks for letting me know.") == \
+        "Thanks for letting me know."
+
+
+def test_the_comma_is_what_bounds_the_run_up_rule():
+    """Without the comma the same words carry meaning. "So" is a connective the speaker
+    meant, "Well done" is not a run-up, and a bare "Yeah." is an answer."""
+    for kept in ("So I want you to use all the tools that you have.",
+                 "It is slow, so I switched to the other one.",
+                 "Well done on the migration.",
+                 "Yes, you can upload these.",
+                 "Yeah."):
+        assert phonad.drop_fillers(kept) == kept, kept
+
+
+def test_the_prompt_keeps_the_speakers_own_term():
+    """Regression measured on the fixture suite: "speak to text application" came back as
+    "speech-to-text application" once the prompt was told to use the ordinary term for a
+    thing. The rule is inverted and the example is pinned in a shot."""
+    assert "Keep the speaker's own term" in phonad.SYSTEM_PROMPT
+    assert "Use the ordinary term" not in phonad.SYSTEM_PROMPT
+    assert "speak to text application" in phonad.SYSTEM_PROMPT
+
+
+def test_self_corrections_are_taught_in_one_place_only():
+    """`resolve_self_correction` owns them, in its own pass with its own shots. Teaching one
+    in the main prompt as well was measured: it fixed the "speak to text" case and broke the
+    "iphone app sorry mac app" one, which the separate pass had been getting right."""
+    assert not any("sorry" in user for user, _ in phonad.SHOTS)
+    assert any("sorry" in user for user, _ in phonad.SELF_CORRECTION_SHOTS)
+
+
+def test_the_prompt_fixes_demonstrative_agreement():
+    """The phrase "this is the categories" survived all four old modes, because no prompt
+    mentioned demonstratives and no example taught one."""
+    assert "demonstrative agreement" in phonad.SYSTEM_PROMPT
+    assert any("this is the categories" in user for user, _ in phonad.SHOTS)
+
+
+def test_the_shots_teach_what_the_stated_rules_do_not_hold():
+    """The since/for contrast and the request-not-carried-out example are load-bearing on a
+    4B model, per the module docstring. Merging the shot sets must not drop either."""
+    inputs = [user for user, _ in phonad.SHOTS]
+    assert any("since monday" in text and "since two days" in text for text in inputs)
     assert any("what is the capital of france" in text for text in inputs)
+    assert any("no actually" in text for text in inputs)
+    assert any("the tests is passing" in text for text in inputs)
 
 
-def test_write_mode_still_refuses_to_answer_the_dictation():
-    """Loosening similarity is what lets a rewrite through. The size budget and the
-    preamble tells still have to hold, or "what is the capital of france" comes back as
-    "Paris"."""
+def test_the_guard_applies_to_every_correction_now():
+    """`_refuse` used to branch on the mode, so the dropped-run and invented-name checks ran
+    for one mode out of four. With one mode every correction gets all three, and the
+    similarity floor goes back to strict because the prompt keeps the speaker's words.
+    """
+    import inspect
+    src = inspect.getsource(phonad.Engine._refuse)
+    assert "effective" not in src
+    assert "longest_dropped_run" in src
+    assert "invented_names" in src
+    assert "loose" not in src
+
+
+def test_the_guard_still_refuses_to_answer_the_dictation():
+    """Letting the model reshape a sentence is what makes the similarity floor tolerant. The
+    size budget and the preamble tells still have to hold, or "what is the capital of france"
+    comes back as "Paris"."""
     assert phonad.Engine._looks_like_a_reply(
         "can you write me a short email to the team about the release",
         "Sure. Here is a short email to the team about the release: Hi team, the release "
-        "is out and everything looks green. Let me know if you spot anything.",
-        loose=True)
+        "is out and everything looks green. Let me know if you spot anything.")
 
 
 def test_a_rewrite_may_not_name_a_thing_that_was_never_said():
@@ -1458,24 +1538,131 @@ def test_a_replacement_value_is_typed_out_literally():
     assert phonad.apply_replacements("the x here", {"x": r"a\g<9>"}) == r"the a\g<9> here"
 
 
+# --- a dictionary term keeps the form the speaker used ------------------------------------
+
+def test_a_protected_term_is_not_pluralised():
+    """The defect. "we don't use drone anymore" came back as "drones", which turned a CI
+    system into flying machines. Drone was already in the dictionary and the dictionary did
+    nothing, because with use_initial_prompt off it only fed the guard's allow list."""
+    assert phonad.restore_protected_terms(
+        "we don't use drone anymore", "We don't use drones anymore.", ["Drone"]) \
+        == "We don't use Drone anymore."
+
+
+def test_a_protected_term_gets_its_configured_spelling():
+    assert phonad.restore_protected_terms(
+        "the drone pipeline is gone", "The drone pipeline is gone.", ["Drone"]) \
+        == "The Drone pipeline is gone."
+
+
+def test_a_plural_the_speaker_actually_said_survives():
+    """The pass is gated on the transcript in both directions. Undoing a plural the speaker
+    used would be the same class of error in the other direction."""
+    assert phonad.restore_protected_terms(
+        "we have two drones flying", "We have two drones flying.", ["Drone"]) \
+        == "We have two drones flying."
+
+
+def test_a_term_the_speaker_never_said_is_never_introduced():
+    """This runs on the model's output, so it must not be a second way to invent a name."""
+    assert phonad.restore_protected_terms(
+        "i like fauna a lot", "I like Fauna a lot.", ["Phona"]) == "I like Fauna a lot."
+
+
+def test_both_request_paths_restore_protected_terms():
+    """A dictation and `phona fix` must not disagree. The pass was hooked into process()
+    first and fix() kept returning "drones"."""
+    import inspect
+    for fn in (phonad.Engine.process, phonad.Engine.fix_text):
+        assert "restore_protected_terms" in inspect.getsource(fn), fn.__name__
+
+
+def test_the_pass_asks_the_prompt_for_nothing():
+    """Naming the terms in the system prompt was measured first: it fixed this sentence and
+    cost a strict self-correction case, 30 exact against 33. Keep it out of the prompt."""
+    assert "never pluralised" not in phonad.SYSTEM_PROMPT
+    assert "spelled exactly as given" not in phonad.SYSTEM_PROMPT
+
+
+# --- the guard must not reject a correct rewrite ------------------------------------------
+
+def test_a_plural_of_something_that_was_said_is_not_an_invented_name():
+    """The defect this fixes. The transcript said "other PR status", the model wrote "PRs",
+    and the whole correction was discarded for it: the speaker got a 42 word run-on with
+    mid-sentence capitals instead. 3 of the 4 invented-name rejections on record were this
+    class of mistake."""
+    assert phonad.invented_names("have a look into other PR status",
+                                 "Have a look at other PR statuses.") == []
+    assert phonad.invented_names("we fixed the dependency", "We fixed the dependencies.") == []
+    assert phonad.invented_names("check the status", "Check the statuses.") == []
+
+
+def test_the_one_real_catch_still_fires():
+    """The only correct rejection on record was the model answering "what is the capital of
+    france". Loosening the check must not cost that."""
+    assert phonad.invented_names("what is the capital of france",
+                                 "The capital of France is Paris.") == ["Paris"]
+
+
+def test_the_dictionary_stops_the_guard_fighting_a_corrected_term():
+    """Whisper mishears a technical term, the model puts the right one back, and the guard
+    called that an invention. Xcode, Jira and CI were all rejected this way."""
+    assert phonad.invented_names("use my ex code to find it", "Use my Xcode to find it.") \
+        == ["Xcode"]
+    assert phonad.invented_names("use my ex code to find it", "Use my Xcode to find it.",
+                                 ["Xcode"]) == []
+
+
+def test_singulars_only_guesses_the_three_endings_that_occur():
+    assert "pr" in phonad.singulars("prs")
+    assert "status" in phonad.singulars("statuses")
+    assert "dependency" in phonad.singulars("dependencies")
+    assert phonad.singulars("ci") == []
+
+
+# --- a very short recording that came back as a phrase Whisper invents -------------------
+
+def test_a_short_recording_of_a_filler_phrase_is_treated_as_silence():
+    """9 dictations on record came back as nothing but a filler, all under 2.7 seconds. The
+    peak-level silence gate misses them because room noise clears -42 dB."""
+    for text in ("You", "you.", "Joe", "Mm.", "Thanks for watching!"):
+        assert phonad.is_empty_hallucination(text, 1.8), text
+
+
+def test_a_real_one_word_message_survives():
+    """This gate discards the recording, so it is deliberately narrower than the evidence.
+    "Thank you.", "Thanks", "Okay." and "Yeah." are all plausible one-word messages, and
+    dropping a real answer is worse than letting a stray one through."""
+    for text in ("Thank you.", "Thanks", "Okay.", "Yeah.", "Yes.", "Done."):
+        assert not phonad.is_empty_hallucination(text, 1.8), text
+
+
+def test_both_conditions_are_needed():
+    """A long recording that ends on a filler is a real sentence, and a short recording of a
+    real word is a real dictation."""
+    assert not phonad.is_empty_hallucination("You", 9.0)
+    assert not phonad.is_empty_hallucination("You can delete it.", 1.8)
+    assert not phonad.is_empty_hallucination("", 1.0)
+
+
 # --- keeping a recording -----------------------------------------------------------------
 
 def test_a_recording_is_deleted_when_retention_is_off(tmp_path, monkeypatch):
     """Off is the default. A dictation recording is the most private thing this tool
     touches and nothing needs it once the transcript exists."""
-    monkeypatch.setattr(client, "AUDIO", tmp_path / "audio")
+    monkeypatch.setattr(phonad, "AUDIO", tmp_path / "audio")
     take = tmp_path / "take-1.wav"
     take.write_bytes(b"audio")
-    client.retain_or_remove(take, 0)
+    phonad.retain_or_remove(take, 0)
     assert not take.exists()
     assert not (tmp_path / "audio").exists()
 
 
 def test_a_recording_is_kept_when_retention_is_on(tmp_path, monkeypatch):
-    monkeypatch.setattr(client, "AUDIO", tmp_path / "audio")
+    monkeypatch.setattr(phonad, "AUDIO", tmp_path / "audio")
     take = tmp_path / "take-2.wav"
     take.write_bytes(b"audio")
-    client.retain_or_remove(take, 7)
+    phonad.retain_or_remove(take, 7)
     assert not take.exists()
     assert (tmp_path / "audio" / "take-2.wav").read_bytes() == b"audio"
 
@@ -1487,7 +1674,7 @@ def test_kept_recordings_are_pruned_past_the_window(tmp_path, monkeypatch):
     import time as _time
     audio = tmp_path / "audio"
     audio.mkdir()
-    monkeypatch.setattr(client, "AUDIO", audio)
+    monkeypatch.setattr(phonad, "AUDIO", audio)
     stale = audio / "take-old.wav"
     stale.write_bytes(b"old")
     old_enough = _time.time() - 9 * 86400
@@ -1495,10 +1682,28 @@ def test_kept_recordings_are_pruned_past_the_window(tmp_path, monkeypatch):
 
     take = tmp_path / "take-new.wav"
     take.write_bytes(b"new")
-    client.retain_or_remove(take, 7)
+    phonad.retain_or_remove(take, 7)
 
     assert not stale.exists()
     assert (audio / "take-new.wav").exists()
+
+
+def test_retention_ignores_a_take_that_is_already_gone():
+    """The app deletes its own take after the daemon returns, so by the time a stale call
+    lands the file may not be there. It must not raise on the way past."""
+    phonad.retain_or_remove(pathlib.Path("/nonexistent/take-gone.wav"), 7)
+    phonad.retain_or_remove(None, 7)
+
+
+def test_the_daemon_is_what_honours_the_retention_setting():
+    """Regression, and the reason this moved. `keep_audio_days` was read only in the client,
+    while the app deleted every take unconditionally, so the setting did nothing for every
+    dictation started from the key. 63 history entries named a wav that was not on disk.
+    """
+    import inspect
+    src = inspect.getsource(phonad.Engine.process)
+    assert "retain_or_remove" in src, "the daemon must own retention, both paths pass through it"
+    assert not hasattr(client, "retain_or_remove"), "two owners is what caused the defect"
 
 
 def test_a_bad_retention_value_is_treated_as_off(tmp_path, monkeypatch):
@@ -1509,11 +1714,11 @@ def test_a_bad_retention_value_is_treated_as_off(tmp_path, monkeypatch):
     cutoff was then nan or -inf, every comparison against it false, and nothing was ever
     pruned: the one setting whose safety argument is that it expires kept everything.
     """
-    monkeypatch.setattr(client, "AUDIO", tmp_path / "audio")
+    monkeypatch.setattr(phonad, "AUDIO", tmp_path / "audio")
     for bad in ("", None, "seven", "nan", "inf", "-inf", float("nan"), float("inf")):
         take = tmp_path / "take-bad.wav"
         take.write_bytes(b"audio")
-        client.retain_or_remove(take, bad)
+        phonad.retain_or_remove(take, bad)
         assert not take.exists()
 
 
@@ -1524,7 +1729,7 @@ def test_pruning_reaches_a_take_that_kept_the_staging_name(tmp_path, monkeypatch
     import time as _time
     audio = tmp_path / "audio"
     audio.mkdir()
-    monkeypatch.setattr(client, "AUDIO", audio)
+    monkeypatch.setattr(phonad, "AUDIO", audio)
     stale = audio / "recording.wav"
     stale.write_bytes(b"old")
     old_enough = _time.time() - 9 * 86400
@@ -1532,6 +1737,6 @@ def test_pruning_reaches_a_take_that_kept_the_staging_name(tmp_path, monkeypatch
 
     take = tmp_path / "take-new.wav"
     take.write_bytes(b"new")
-    client.retain_or_remove(take, 7)
+    phonad.retain_or_remove(take, 7)
 
     assert not stale.exists()

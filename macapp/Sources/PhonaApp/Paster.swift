@@ -191,36 +191,3 @@ enum Settings {
     }
 }
 
-/// Correction mode, read from and written to the same config.json the daemon uses.
-enum Mode: String, CaseIterable {
-    case grammar, polish, write, raw
-
-    static var current: Mode {
-        guard let data = try? Data(contentsOf: Paths.config),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let value = obj["mode"] as? String,
-              let mode = Mode(rawValue: value)
-        else { return .grammar }
-        return mode
-    }
-
-    /// Persist and restart the daemon, since the prompt prefix is prefilled per mode.
-    func apply() {
-        var obj: [String: Any] = [:]
-        if let data = try? Data(contentsOf: Paths.config),
-           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            obj = existing
-        }
-        obj["mode"] = rawValue
-        if let data = try? JSONSerialization.data(withJSONObject: obj,
-                                                  options: [.prettyPrinted, .sortedKeys]) {
-            try? data.write(to: Paths.config)
-        }
-        let kill = Process()
-        kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        kill.arguments = ["-f", "phonad.py"]
-        try? kill.run()
-        kill.waitUntilExit()
-        DispatchQueue.global().async { DaemonClient.startAndWait() }
-    }
-}

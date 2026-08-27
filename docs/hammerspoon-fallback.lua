@@ -507,19 +507,6 @@ function buildMenu()
     end
 
     table.insert(items, {title = "-"})
-
-    local current = (phonaRead("mode"):gsub("%s+", ""))
-    local modeItems = {}
-    for _, name in ipairs({"grammar", "polish", "raw"}) do
-        table.insert(modeItems, {
-            title = name,
-            checked = (name == current),
-            fn = function() phona("mode", name) end,
-        })
-    end
-    table.insert(items, {title = "Correction mode", menu = modeItems})
-
-    table.insert(items, {title = "-"})
     table.insert(items, {
         title = "Export log as markdown",
         fn = function()

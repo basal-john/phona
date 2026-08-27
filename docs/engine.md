@@ -28,7 +28,7 @@ the correction stage exists to catch.
 | `~/.local/share/phona/history.jsonl` | every dictation, raw and corrected |
 | `~/.local/share/phona/phonad.log` | daemon log |
 | `~/Library/LaunchAgents/com.basalona.phonad.plist` | starts the daemon at login |
-| `~/.hammerspoon/init.lua` | hold-Option push to talk |
+| `~/.hammerspoon/init.lua` | the Hammerspoon fallback, still hold-Option push to talk |
 
 Recording lives in the client, not the daemon, on purpose. macOS grants microphone access
 per responsible process, and a launchd daemon can never prompt for it. The client inherits
@@ -39,8 +39,6 @@ the grant of whatever launches it, so Alfred or Terminal owns the permission.
 ```
 phona                    toggle recording, print corrected text
 phona --paste            toggle, paste the result at the cursor
-phona --mode raw         transcribe without the grammar pass
-phona --mode polish      also strip filler words and split run-on sentences
 phona fix "some text"    correct text without recording
 phona clip               correct the clipboard in place
 phona history 10         last 10 entries, raw next to corrected
@@ -49,9 +47,7 @@ phona history --today    just today
 phona history --search "jira"    entries mentioning a word
 phona history --plain    corrected text only, one per line, pipe friendly, newlines escaped as \n
 phona history --all --export ~/log.md    write the whole log as markdown
-phona mode               show the current correction mode
-phona mode polish        change it, restarting the daemon
-phona status             models, mode, cached prefix size
+phona status             models and cached prefix size
 phona restart            reload the daemon after a config change
 phona logs               daemon log
 tail ~/.local/share/phona/client.log    recording and paste side, the Hammerspoon path
@@ -60,10 +56,13 @@ tail ~/.local/share/phona/client.log    recording and paste side, the Hammerspoo
 Audio cues: Tink means recording, Pop means stopped, Glass means text ready, Basso means
 nothing usable was captured.
 
-## Hold Option to talk
+## Tap Option to talk
 
-Hold the Option key on its own, speak, release. The corrected text is pasted at the
-cursor.
+Tap the left Option key on its own, speak, tap it again. The corrected text is pasted at
+the cursor.
+
+The Hammerspoon fallback described at the end of this section is the exception. It is still
+hold to talk and was left that way.
 
 A small capsule rises near the bottom of whichever display you are working on and moves
 through three states:
@@ -90,18 +89,23 @@ Reduced Motion replaces the springs with a plain cross fade and drops the lift a
 Reduced Transparency makes the capsule solid. Both are read from your accessibility
 settings at load, so toggle one and then reload phona.
 
-Driven by Hammerspoon, config at `~/.hammerspoon/init.lua`. Option is only observed,
-never remapped, so Option+click, Option+e and every other Option shortcut keep working.
-A hold only counts once Option has been held alone for 250 ms with no other key pressed.
-Press any key during a hold and the recording is abandoned.
+The app watches the key itself. Option is only observed, never remapped, so Option+click,
+Option+e and every other Option shortcut keep working. The decision is taken on the release
+rather than the press, since a press is how a shortcut starts too, and a press lasting longer
+than 500 ms is a rest on the key rather than a tap. `TapToggle` in `PhonaCore` holds the whole
+decision and its tests hold the behaviour.
+
+An older Hammerspoon fallback lives at `~/.hammerspoon/init.lua`, kept as it was: hold to
+talk, a hold counting once Option has been down alone for 250 ms, and any key during the hold
+abandoning the recording.
 
 Hammerspoon needs two permissions, both under System Settings, Privacy & Security:
 
 - **Accessibility**, for the key watcher and for pasting
-- **Microphone**, prompted the first time you hold Option
+- **Microphone**, prompted the first time you start a dictation
 
-Tuning: `HOLD_DELAY` at the top of `init.lua` sets how long Option must be down before
-recording starts. Reload with Control+Option+Command+R, or from the Hammerspoon menu.
+Tuning the fallback: `HOLD_DELAY` at the top of `init.lua` sets how long Option must be down
+before recording starts. Reload with Control+Option+Command+R, or from the Hammerspoon menu.
 
 To use a different trigger instead, `phona --paste` is a plain command and can be bound
 from Shortcuts.app, Alfred with Powerpack, Raycast or Karabiner-Elements.
@@ -112,7 +116,6 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 
 - the last 12 dictations, newest first, click one to copy it back to the clipboard
 - hover any entry to see what Whisper actually heard before correction
-- correction mode, with the active one ticked, switching restarts the daemon
 - export the whole log as markdown and reveal it in Finder
 - open the history file, the settings file or this README
 - warm the microphone, restart the daemon, reload phona
@@ -126,7 +129,6 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | `stt_model` | `whisper-large-v3-turbo` | any mlx-community Whisper repo |
 | `llm_model` | `Qwen3-4B-Instruct-2507-4bit` | any mlx-lm chat model |
 | `language` | `en` | set to `auto` to detect, or `de` for German |
-| `mode` | `grammar` | `grammar`, `polish`, `write` or `raw` |
 | `input_device` | `:default` | avfoundation index, for example `:1` |
 | `silence_max_db` | `-42.0` | quieter than this counts as silence |
 | `max_words_per_second` | `6.0` | above this the transcript is treated as noise |
@@ -135,7 +137,7 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | `replacements` | `{}` | literal fixes, applied before the layout pass, for example `{"jeera": "Jira"}` |
 | `spoken_layout` | `true` | act on `new paragraph`, `new line`, `bullet point` spoken as a sentence of their own |
 | `self_correction` | `true` | resolve a correction the speaker spoke aloud, "the iPhone app, sorry, the Mac app" |
-| `keep_audio_days` | `0` | keep each recording for this many days under `audio/`, pruned on every run. Off by default |
+| `keep_audio_days` | `0` | keep each recording for this many days under `audio/`, pruned on every run. Off by default. Honoured by the daemon, so it covers both the app and the CLI |
 | `pin_models` | `true` | load the cached snapshot instead of re-resolving the hub |
 | `min_seconds` | `0.4` | shorter recordings are discarded as a slip of the key |
 | `device_open_timeout` | `6.0` | seconds to wait for the input to start producing audio |

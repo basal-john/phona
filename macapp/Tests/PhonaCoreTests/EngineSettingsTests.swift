@@ -59,10 +59,6 @@ final class EngineSettingsTests: XCTestCase {
     }
 
     func testEachFieldBreaksEquality() {
-        var mode = Self.sample()
-        mode.mode = "polish"
-        XCTAssertNotEqual(Self.sample(), mode)
-
         var dictionary = Self.sample()
         dictionary.dictionary = ["Phona", "Extra"]
         XCTAssertNotEqual(Self.sample(), dictionary)
@@ -81,8 +77,7 @@ final class EngineSettingsTests: XCTestCase {
     }
 
     private static func sample() -> EngineSettings {
-        EngineSettings(mode: "grammar",
-                       dictionary: ["Phona"],
+        EngineSettings(dictionary: ["Phona"],
                        biasVocabulary: false,
                        replacements: ["con job": "cron job"],
                        spokenLayout: true)
