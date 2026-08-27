@@ -139,6 +139,7 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | `self_correction` | `true` | resolve a correction the speaker spoke aloud, "the iPhone app, sorry, the Mac app" |
 | `keep_audio_days` | `0` | keep each recording for this many days under `audio/`, pruned on every run. Off by default. Honoured by the daemon, so it covers both the app and the CLI |
 | `pin_models` | `true` | load the cached snapshot instead of re-resolving the hub |
+| `model_update_check` | `true` | ask the hub whether the pinned weights are behind. Reports only, never downloads. The one outbound call outside an install or an explicit update |
 | `min_seconds` | `0.4` | shorter recordings are discarded as a slip of the key |
 | `device_open_timeout` | `6.0` | seconds to wait for the input to start producing audio |
 | `sounds` | `true` | audio cues |

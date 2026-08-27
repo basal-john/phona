@@ -87,7 +87,7 @@ def test_every_cue_is_bundled():
     """Only one cue was bundled once, so pressing Option fell back to the macOS Tink."""
     assert SOUNDS.is_dir(), "no bundled sounds, cues would fall back to system alerts"
     shipped = {p.stem for p in SOUNDS.glob("*.aiff")}
-    for cue in ("start", "done", "nothing"):
+    for cue in ("start", "stop", "done", "nothing"):
         assert cue in shipped, f"the {cue} cue is missing and would use a system alert"
 
 
@@ -347,3 +347,13 @@ def test_initial_prompt_is_off_by_default():
     """It improves rare names but makes Whisper invent words during silence."""
     source = (ROOT / "engine/phonad.py").read_text()
     assert '"use_initial_prompt": False' in source
+
+
+def test_the_installers_copy_every_engine_module():
+    """A module added to engine/ and left out of the copy lists is only missing on other
+    people's machines, and only on the command that imports it."""
+    modules = {p.name for p in (ROOT / "engine").glob("*.py")}
+    for script in ("install.sh", "update.sh"):
+        text = (ROOT / script).read_text()
+        for module in modules:
+            assert module in text, f"{script} does not copy engine/{module}"
