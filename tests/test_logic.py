@@ -1409,8 +1409,8 @@ def test_self_corrections_are_taught_in_one_place_only():
 
 
 def test_the_prompt_fixes_demonstrative_agreement():
-    """"this is the categories" survived all four old modes, because no prompt mentioned
-    demonstratives and no example taught one."""
+    """The phrase "this is the categories" survived all four old modes, because no prompt
+    mentioned demonstratives and no example taught one."""
     assert "demonstrative agreement" in phonad.SYSTEM_PROMPT
     assert any("this is the categories" in user for user, _ in phonad.SHOTS)
 
