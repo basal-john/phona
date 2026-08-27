@@ -85,7 +85,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys.onBegin = { [weak self] in self?.beginDictation() }
         hotkeys.onEnd = { [weak self] in self?.endDictation() }
         hotkeys.onAbort = { [weak self] in self?.abortDictation() }
-        hotkeys.onToggleHandsFree = { [weak self] in self?.toggleHandsFree() }
 
         DispatchQueue.global().async { DaemonClient.startAndWait() }
 
@@ -231,9 +230,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// output setting: inserting is the default, and copy-only turns dictation into a
     /// scratchpad without changing how it is triggered. Text that had nowhere to land is
     /// reported rather than chimed for, and a recording that simply contained no speech is
-    /// treated as a cancel rather than a failure, so an idle Option hold stays quiet.
+    /// treated as a cancel rather than a failure, so a tap that caught no speech stays quiet.
     private func endDictation() {
-        hotkeys.handsFree = false
         levelTimer?.invalidate()
         levelTimer = nil
         OutputMute.release()
@@ -362,19 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Double tap Option to dictate without holding. Escape or a second double tap ends it.
-    private func toggleHandsFree() {
-        if hotkeys.handsFree {
-            hotkeys.handsFree = false
-            endDictation()
-        } else {
-            hotkeys.handsFree = true
-            beginDictation()
-        }
-    }
-
     private func abortDictation() {
-        hotkeys.handsFree = false
         session += 1
         levelTimer?.invalidate()
         levelTimer = nil

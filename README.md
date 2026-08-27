@@ -4,7 +4,7 @@
 
 # Phona
 
-**Hold the left Option key, speak, let go. Your words arrive corrected, where the cursor is.**
+**Tap the left Option key, speak, tap it again. Your words arrive corrected, where the cursor is.**
 
 Local dictation with a grammar pass, for Apple Silicon Macs. No account, no API key,
 no audio leaving your machine.
@@ -17,7 +17,7 @@ no audio leaving your machine.
 
 ## What it does
 
-You hold the left Option key and talk. When you let go, phona transcribes what you said,
+You tap the left Option key and talk. Tap it again and phona transcribes what you said,
 fixes the grammar, and pastes the result into whatever app you were in.
 
 ```
@@ -87,17 +87,27 @@ a warning the first time. Right click the app, choose Open, then Open again. Onc
 
 ## Using it
 
-Hold the **left Option** key on its own, speak, release. That is the whole interface.
+Tap the **left Option** key on its own, speak, tap it again. That is the whole interface.
 
-Option is watched, never remapped, so Option+click, Option+e and every other Option
-shortcut keep working. A hold only counts after the key has been down alone for 150 ms with
-no other key pressed, and pressing any key mid-hold cancels the dictation.
+Nothing happens on the press itself, only on the release, because a press is also how every
+Option shortcut begins. By the time the key comes up, any second key has already arrived and
+the tap is discarded. So Option+click, Option+e and every other Option shortcut keep working,
+and Option is watched rather than remapped.
+
+Resting on the key does nothing. A press has to end within 500 ms to count as a tap, which is
+what stops a hand leaning on Option from opening a recording that then runs to the five minute
+cap. Stopping is deliberately easier than starting: once a dictation is running, any release of
+Option ends it however long the key was down, because a microphone left open is worse than a
+dictation that ends a moment early. A shortcut mid-dictation is ignored rather than treated as
+a cancel, since Option+Tab mid-sentence is someone changing window while they talk. Escape
+throws the recording away.
 
 The right Option key is not a hotkey and never arms one. It is the key people reach for as a
 modifier, and `maskAlternate` does not say which side was pressed, so watching that flag alone
 meant the right key started dictations too. The side comes out of the device-dependent flag
 bits instead, `0x20` for left and `0x40` for right, and the right key now counts as an ordinary
-modifier: holding it does nothing, and pressing it mid-hold cancels like any other key.
+modifier: tapping it does nothing, and pressing it mid-dictation is ignored like any other
+key.
 
 There is deliberately no fallback. A keyboard that reported Option with no side bit at all
 would not arm a dictation, rather than being treated as the left key, because treating it as
@@ -105,7 +115,7 @@ left is exactly how the right key would get back in. That case is logged the fir
 seen, so a hotkey that stops working is diagnosable. `--probe-hotkey` logs every flag change
 with the side bits it saw.
 
-| While you hold | After you release | When it lands |
+| While you talk | After the second tap | When it lands |
 | --- | --- | --- |
 | <img src="docs/images/hud-listening.png" width="200"> | <img src="docs/images/hud-working.png" width="200"> | <img src="docs/images/hud-done.png" width="200"> |
 | live waveform of your voice | transcribing and correcting | pasted at the cursor |
@@ -331,7 +341,7 @@ reaches the recording is already quiet.
 Muting the device rather than pausing players is what makes it work for every source. macOS
 has no way to duck other applications, and pausing means knowing every app that could be
 playing. Note that this includes call audio: dictate during a meeting and you stop hearing
-the room for as long as you hold Option.
+the room for as long as the dictation is running.
 
 Turn it off with **Mute other audio** in Settings. If Phona is killed mid-dictation the
 volume is put back at the next launch, so a crash cannot leave the Mac silent.
@@ -589,9 +599,10 @@ than papering over.
 
 ## Troubleshooting
 
-**Nothing happens when I hold Option.** Only the left Option key starts a dictation. If it is
-the left one, check Accessibility is granted, in the menu bar
-under Setup and permissions.
+**Nothing happens when I tap Option.** Only the left Option key starts a dictation. If it is
+the left one, check Accessibility is granted, in the menu bar under Setup and permissions. A
+press held longer than 500 ms is treated as a rest on the key rather than a tap, so tap it
+rather than leaning on it.
 
 **The waveform stays flat.** Wrong input device, or Microphone is not granted. Try Warm
 microphone from the menu.

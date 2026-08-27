@@ -28,7 +28,7 @@ the correction stage exists to catch.
 | `~/.local/share/phona/history.jsonl` | every dictation, raw and corrected |
 | `~/.local/share/phona/phonad.log` | daemon log |
 | `~/Library/LaunchAgents/com.basalona.phonad.plist` | starts the daemon at login |
-| `~/.hammerspoon/init.lua` | hold-Option push to talk |
+| `~/.hammerspoon/init.lua` | the Hammerspoon fallback, still hold-Option push to talk |
 
 Recording lives in the client, not the daemon, on purpose. macOS grants microphone access
 per responsible process, and a launchd daemon can never prompt for it. The client inherits
@@ -56,10 +56,13 @@ tail ~/.local/share/phona/client.log    recording and paste side, the Hammerspoo
 Audio cues: Tink means recording, Pop means stopped, Glass means text ready, Basso means
 nothing usable was captured.
 
-## Hold Option to talk
+## Tap Option to talk
 
-Hold the Option key on its own, speak, release. The corrected text is pasted at the
-cursor.
+Tap the left Option key on its own, speak, tap it again. The corrected text is pasted at
+the cursor.
+
+The Hammerspoon fallback described at the end of this section is the exception. It is still
+hold to talk and was left that way.
 
 A small capsule rises near the bottom of whichever display you are working on and moves
 through three states:
@@ -86,18 +89,23 @@ Reduced Motion replaces the springs with a plain cross fade and drops the lift a
 Reduced Transparency makes the capsule solid. Both are read from your accessibility
 settings at load, so toggle one and then reload phona.
 
-Driven by Hammerspoon, config at `~/.hammerspoon/init.lua`. Option is only observed,
-never remapped, so Option+click, Option+e and every other Option shortcut keep working.
-A hold only counts once Option has been held alone for 250 ms with no other key pressed.
-Press any key during a hold and the recording is abandoned.
+The app watches the key itself. Option is only observed, never remapped, so Option+click,
+Option+e and every other Option shortcut keep working. The decision is taken on the release
+rather than the press, since a press is how a shortcut starts too, and a press lasting longer
+than 500 ms is a rest on the key rather than a tap. `TapToggle` in `PhonaCore` holds the whole
+decision and its tests hold the behaviour.
+
+An older Hammerspoon fallback lives at `~/.hammerspoon/init.lua`, kept as it was: hold to
+talk, a hold counting once Option has been down alone for 250 ms, and any key during the hold
+abandoning the recording.
 
 Hammerspoon needs two permissions, both under System Settings, Privacy & Security:
 
 - **Accessibility**, for the key watcher and for pasting
-- **Microphone**, prompted the first time you hold Option
+- **Microphone**, prompted the first time you start a dictation
 
-Tuning: `HOLD_DELAY` at the top of `init.lua` sets how long Option must be down before
-recording starts. Reload with Control+Option+Command+R, or from the Hammerspoon menu.
+Tuning the fallback: `HOLD_DELAY` at the top of `init.lua` sets how long Option must be down
+before recording starts. Reload with Control+Option+Command+R, or from the Hammerspoon menu.
 
 To use a different trigger instead, `phona --paste` is a plain command and can be bound
 from Shortcuts.app, Alfred with Powerpack, Raycast or Karabiner-Elements.

@@ -48,7 +48,7 @@ struct OnboardingView: View {
                     .foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Welcome to Phona").font(.title2).fontWeight(.semibold)
-                    Text("Hold Option, speak, let go. Your words arrive corrected, where the cursor is.")
+                    Text("Tap Option, speak, tap again. Your words arrive corrected, where the cursor is.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -91,7 +91,7 @@ struct OnboardingView: View {
 
             HStack {
                 Text(state.allGranted
-                     ? "You are set. Hold Option anywhere and start talking."
+                     ? "You are set. Tap Option anywhere and start talking."
                      : "Phona stays in the menu bar. This window closes when you are done.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
