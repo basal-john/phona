@@ -6,8 +6,6 @@ Behaviour worth knowing before changing anything here:
   sound and the on-screen state change on the same frame.
 - `warm` opens and immediately closes the input, so the first real dictation does not pay the
   cold device open, which is several seconds after boot.
-- `mode` restarts the daemon, because the prompt prefix is prefilled per mode and has to be
-  rebuilt before a change takes effect.
 - `update-models` is deliberate and never automatic. New weights can change behaviour, so it
   is a decision rather than a side effect of an ordinary restart.
 - `wrong` takes everything after the verb as what the user actually said, if they bothered.
@@ -35,7 +33,6 @@ Usage:
   phona history [n]     show the last n dictations
   phona restart|stop-daemon|logs|config
 Options:
-  --mode grammar|polish|write|raw  override the configured correction mode
   --json                      print the raw daemon reply
   --quiet                     suppress stdout, useful with --paste
   --no-restore                leave the result on the clipboard after pasting
@@ -500,21 +497,6 @@ def load_history():
     return entries
 
 
-def set_mode(name):
-    valid = ("grammar", "polish", "write", "raw")
-    if name not in valid:
-        print(f"phona: mode must be one of {', '.join(valid)}", file=sys.stderr)
-        return 2
-    data = json.loads(CONFIG.read_text()) if CONFIG.exists() else {}
-    data["mode"] = name
-    CONFIG.write_text(json.dumps(data, indent=2) + "\n")
-    subprocess.run(["/usr/bin/pkill", "-f", "phonad.py"], capture_output=True)
-    time.sleep(1)
-    ok = start_daemon()
-    print(f"mode set to {name}" if ok else f"mode set to {name}, daemon restart failed")
-    return 0 if ok else 1
-
-
 def show_history(count, search=None, since=None, export=None, plain=False, as_json=False):
     """Print the history.
 
@@ -606,7 +588,6 @@ def deliver(reply, do_paste, quiet, restore, cmd):
 
 def main():
     args = list(sys.argv[1:])
-    mode = None
     as_json = quiet = do_paste = False
     restore = True
     hist_search = hist_since = hist_export = None
@@ -616,9 +597,6 @@ def main():
     i = 0
     while i < len(args):
         a = args[i]
-        if a == "--mode" and i + 1 < len(args):
-            mode, i = args[i + 1], i + 2
-            continue
         if a in ("--search", "--grep") and i + 1 < len(args):
             hist_search, i = args[i + 1], i + 2
             continue
@@ -639,9 +617,7 @@ def main():
             hist_plain = True
             i += 1
             continue
-        if a.startswith("--mode="):
-            mode = a.split("=", 1)[1]
-        elif a == "--json":
+        if a == "--json":
             as_json = True
         elif a == "--quiet":
             quiet = True
@@ -726,11 +702,6 @@ def main():
         if reply.get("heard"):
             print(f"  heard: {reply['heard'][:100]}")
         return 0
-    if cmd == "mode":
-        if len(rest) < 2:
-            print(cfg().get("mode", "grammar"))
-            return 0
-        return set_mode(rest[1].lower())
     if cmd == "logs":
         print(LOG.read_text() if LOG.exists() else "no log yet", end="")
         return 0
@@ -812,7 +783,7 @@ def main():
             return 1
         try:
             reply = send({"cmd": "PROCESS", "path": str(take),
-                          "seconds": seconds, "mode": mode})
+                          "seconds": seconds})
         except Exception as exc:
             clog(f"daemon request failed: {exc!r}")
             play(SOUND_ERR, conf["sounds"])
@@ -836,9 +807,9 @@ def main():
         return 0
     if cmd == "fix":
         text = " ".join(rest[1:]) if len(rest) > 1 else sys.stdin.read()
-        reply = send({"cmd": "FIX", "text": text, "mode": mode})
+        reply = send({"cmd": "FIX", "text": text})
     elif cmd == "clip":
-        reply = send({"cmd": "FIX", "text": get_clipboard(), "mode": mode})
+        reply = send({"cmd": "FIX", "text": get_clipboard()})
         if reply.get("text"):
             set_clipboard(reply["text"])
     else:

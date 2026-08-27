@@ -39,8 +39,6 @@ the grant of whatever launches it, so Alfred or Terminal owns the permission.
 ```
 phona                    toggle recording, print corrected text
 phona --paste            toggle, paste the result at the cursor
-phona --mode raw         transcribe without the grammar pass
-phona --mode polish      also strip filler words and split run-on sentences
 phona fix "some text"    correct text without recording
 phona clip               correct the clipboard in place
 phona history 10         last 10 entries, raw next to corrected
@@ -49,9 +47,7 @@ phona history --today    just today
 phona history --search "jira"    entries mentioning a word
 phona history --plain    corrected text only, one per line, pipe friendly, newlines escaped as \n
 phona history --all --export ~/log.md    write the whole log as markdown
-phona mode               show the current correction mode
-phona mode polish        change it, restarting the daemon
-phona status             models, mode, cached prefix size
+phona status             models and cached prefix size
 phona restart            reload the daemon after a config change
 phona logs               daemon log
 tail ~/.local/share/phona/client.log    recording and paste side, the Hammerspoon path
@@ -112,7 +108,6 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 
 - the last 12 dictations, newest first, click one to copy it back to the clipboard
 - hover any entry to see what Whisper actually heard before correction
-- correction mode, with the active one ticked, switching restarts the daemon
 - export the whole log as markdown and reveal it in Finder
 - open the history file, the settings file or this README
 - warm the microphone, restart the daemon, reload phona
@@ -126,7 +121,6 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | `stt_model` | `whisper-large-v3-turbo` | any mlx-community Whisper repo |
 | `llm_model` | `Qwen3-4B-Instruct-2507-4bit` | any mlx-lm chat model |
 | `language` | `en` | set to `auto` to detect, or `de` for German |
-| `mode` | `grammar` | `grammar`, `polish`, `write` or `raw` |
 | `input_device` | `:default` | avfoundation index, for example `:1` |
 | `silence_max_db` | `-42.0` | quieter than this counts as silence |
 | `max_words_per_second` | `6.0` | above this the transcript is treated as noise |

@@ -4,7 +4,6 @@ import SwiftUI
 
 /// Real fields for the settings that previously meant hand-editing config.json.
 struct SettingsView: View {
-    @State private var mode: Mode = .current
     @State private var dictionary: String = ""
     @State private var replacements: String = ""
     @State private var launchAtLogin: Bool = false
@@ -41,19 +40,6 @@ struct SettingsView: View {
 
     private var general: some View {
         Form {
-            Section {
-                Picker("Correction", selection: $mode) {
-                    Text("Grammar").tag(Mode.grammar)
-                    Text("Polish").tag(Mode.polish)
-                    Text("Write").tag(Mode.write)
-                    Text("Transcribe only").tag(Mode.raw)
-                }
-                .pickerStyle(.segmented)
-                Text(modeExplanation)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
             Section {
                 Picker("When done", selection: $outputAction) {
                     Text("Insert at cursor").tag(OutputAction.insert)
@@ -165,19 +151,9 @@ struct SettingsView: View {
         }
     }
 
-    private var modeExplanation: String {
-        switch mode {
-        case .grammar: return "Fixes grammar and punctuation, keeps your wording."
-        case .polish: return "Also removes filler words and splits run-on sentences."
-        case .write: return "Rewrites your speech into the text you would have typed."
-        case .raw: return "No correction. Inserts exactly what was heard."
-        }
-    }
-
     /// The restart-requiring settings as the form currently shows them.
     private var current: EngineSettings {
-        EngineSettings(mode: mode.rawValue,
-                       dictionary: EngineSettings.words(fromText: dictionary),
+        EngineSettings(dictionary: EngineSettings.words(fromText: dictionary),
                        biasVocabulary: biasVocabulary,
                        replacements: EngineSettings.replacements(fromText: replacements),
                        spokenLayout: spokenLayout)
@@ -195,7 +171,6 @@ struct SettingsView: View {
         muteOthers = Settings.muteOthersWhileDictating
         casualInChat = Settings.casualInChat
         showInDock = Settings.showInDock
-        mode = .current
         guard let data = try? Data(contentsOf: Paths.config),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
@@ -217,7 +192,6 @@ struct SettingsView: View {
            let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             obj = existing
         }
-        obj["mode"] = mode.rawValue
         obj["use_initial_prompt"] = biasVocabulary
         obj["output_action"] = outputAction.rawValue
         obj["spoken_layout"] = spokenLayout

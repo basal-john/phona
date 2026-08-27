@@ -448,11 +448,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    @objc private func chooseMode(_ sender: NSMenuItem) {
-        guard let mode = Mode(rawValue: sender.title) else { return }
-        mode.apply()
-    }
-
     @objc private func openSettings() {
         if let window = settingsWindow {
             window.makeKeyAndOrderFront(nil)
@@ -627,21 +622,6 @@ extension AppDelegate: NSMenuDelegate {
                 menu.addItem(item)
             }
         }
-
-        menu.addItem(.separator())
-
-        let modeItem = NSMenuItem(title: "Correction mode", action: nil, keyEquivalent: "")
-        let modeMenu = NSMenu()
-        let current = Mode.current
-        for mode in Mode.allCases {
-            let item = NSMenuItem(title: mode.rawValue, action: #selector(chooseMode(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.state = mode == current ? .on : .off
-            modeMenu.addItem(item)
-        }
-        modeItem.submenu = modeMenu
-        menu.addItem(modeItem)
 
         menu.addItem(.separator())
         if let version = UpdateCheck.availableVersion {

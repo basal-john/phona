@@ -8,18 +8,15 @@ import Foundation
 /// they are toggled. Holding them in one comparable value is what lets the Settings window
 /// offer a restart only when one is genuinely needed.
 public struct EngineSettings: Equatable {
-    public var mode: String
     public var dictionary: [String]
     public var biasVocabulary: Bool
     public var replacements: [String: String]
     public var spokenLayout: Bool
 
-    public init(mode: String,
-                dictionary: [String],
+    public init(dictionary: [String],
                 biasVocabulary: Bool,
                 replacements: [String: String],
                 spokenLayout: Bool) {
-        self.mode = mode
         self.dictionary = dictionary
         self.biasVocabulary = biasVocabulary
         self.replacements = replacements
