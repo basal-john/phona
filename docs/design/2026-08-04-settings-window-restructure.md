@@ -1,6 +1,6 @@
 # Settings Window Restructure Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Steps below use checkbox (`- [ ]`) syntax, so the plan can be worked through task by task.
 
 **Goal:** Turn Phona's Settings window from eight stacked `Form` sections into three tabs with an honest Save button, without changing what any control writes to `config.json`.
 
