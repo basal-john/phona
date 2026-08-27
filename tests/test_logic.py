@@ -1543,19 +1543,19 @@ def test_a_replacement_value_is_typed_out_literally():
 def test_a_recording_is_deleted_when_retention_is_off(tmp_path, monkeypatch):
     """Off is the default. A dictation recording is the most private thing this tool
     touches and nothing needs it once the transcript exists."""
-    monkeypatch.setattr(client, "AUDIO", tmp_path / "audio")
+    monkeypatch.setattr(phonad, "AUDIO", tmp_path / "audio")
     take = tmp_path / "take-1.wav"
     take.write_bytes(b"audio")
-    client.retain_or_remove(take, 0)
+    phonad.retain_or_remove(take, 0)
     assert not take.exists()
     assert not (tmp_path / "audio").exists()
 
 
 def test_a_recording_is_kept_when_retention_is_on(tmp_path, monkeypatch):
-    monkeypatch.setattr(client, "AUDIO", tmp_path / "audio")
+    monkeypatch.setattr(phonad, "AUDIO", tmp_path / "audio")
     take = tmp_path / "take-2.wav"
     take.write_bytes(b"audio")
-    client.retain_or_remove(take, 7)
+    phonad.retain_or_remove(take, 7)
     assert not take.exists()
     assert (tmp_path / "audio" / "take-2.wav").read_bytes() == b"audio"
 
@@ -1567,7 +1567,7 @@ def test_kept_recordings_are_pruned_past_the_window(tmp_path, monkeypatch):
     import time as _time
     audio = tmp_path / "audio"
     audio.mkdir()
-    monkeypatch.setattr(client, "AUDIO", audio)
+    monkeypatch.setattr(phonad, "AUDIO", audio)
     stale = audio / "take-old.wav"
     stale.write_bytes(b"old")
     old_enough = _time.time() - 9 * 86400
@@ -1575,10 +1575,28 @@ def test_kept_recordings_are_pruned_past_the_window(tmp_path, monkeypatch):
 
     take = tmp_path / "take-new.wav"
     take.write_bytes(b"new")
-    client.retain_or_remove(take, 7)
+    phonad.retain_or_remove(take, 7)
 
     assert not stale.exists()
     assert (audio / "take-new.wav").exists()
+
+
+def test_retention_ignores_a_take_that_is_already_gone():
+    """The app deletes its own take after the daemon returns, so by the time a stale call
+    lands the file may not be there. It must not raise on the way past."""
+    phonad.retain_or_remove(pathlib.Path("/nonexistent/take-gone.wav"), 7)
+    phonad.retain_or_remove(None, 7)
+
+
+def test_the_daemon_is_what_honours_the_retention_setting():
+    """Regression, and the reason this moved. `keep_audio_days` was read only in the client,
+    while the app deleted every take unconditionally, so the setting did nothing for every
+    dictation started from the key. 63 history entries named a wav that was not on disk.
+    """
+    import inspect
+    src = inspect.getsource(phonad.Engine.process)
+    assert "retain_or_remove" in src, "the daemon must own retention, both paths pass through it"
+    assert not hasattr(client, "retain_or_remove"), "two owners is what caused the defect"
 
 
 def test_a_bad_retention_value_is_treated_as_off(tmp_path, monkeypatch):
@@ -1589,11 +1607,11 @@ def test_a_bad_retention_value_is_treated_as_off(tmp_path, monkeypatch):
     cutoff was then nan or -inf, every comparison against it false, and nothing was ever
     pruned: the one setting whose safety argument is that it expires kept everything.
     """
-    monkeypatch.setattr(client, "AUDIO", tmp_path / "audio")
+    monkeypatch.setattr(phonad, "AUDIO", tmp_path / "audio")
     for bad in ("", None, "seven", "nan", "inf", "-inf", float("nan"), float("inf")):
         take = tmp_path / "take-bad.wav"
         take.write_bytes(b"audio")
-        client.retain_or_remove(take, bad)
+        phonad.retain_or_remove(take, bad)
         assert not take.exists()
 
 
@@ -1604,7 +1622,7 @@ def test_pruning_reaches_a_take_that_kept_the_staging_name(tmp_path, monkeypatch
     import time as _time
     audio = tmp_path / "audio"
     audio.mkdir()
-    monkeypatch.setattr(client, "AUDIO", audio)
+    monkeypatch.setattr(phonad, "AUDIO", audio)
     stale = audio / "recording.wav"
     stale.write_bytes(b"old")
     old_enough = _time.time() - 9 * 86400
@@ -1612,6 +1630,6 @@ def test_pruning_reaches_a_take_that_kept_the_staging_name(tmp_path, monkeypatch
 
     take = tmp_path / "take-new.wav"
     take.write_bytes(b"new")
-    client.retain_or_remove(take, 7)
+    phonad.retain_or_remove(take, 7)
 
     assert not stale.exists()

@@ -210,9 +210,14 @@ Every recording is deleted the moment its transcript exists. Nothing needs it af
 a dictation recording is the most private thing this tool touches.
 
 Set `keep_audio_days` and each take is kept under `~/.local/share/phona/audio/` for that many
-days instead. There is one reason to want it: comparing two speech models honestly. That
-cannot be done from transcripts, because the same words have to go through both, and saying
-a sentence twice gives you two recordings rather than one comparison.
+days instead. Two reasons to want it. Comparing two speech models honestly, which cannot be
+done from transcripts because the same words have to go through both, and saying a sentence
+twice gives you two recordings rather than one comparison. And triaging a misheard word, for
+the same reason: the transcript records what was heard, not what was said.
+
+The daemon is what honours the setting, because both ways of starting a dictation pass through
+it. It was read in the client alone at first, while the app deleted every take unconditionally,
+so the setting silently did nothing for every dictation started from the key.
 
 Old takes are pruned on every run, so turning it on cannot fill the disk and forgetting to
 turn it off costs one rolling window rather than every recording ever made. Set it back to

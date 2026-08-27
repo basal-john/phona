@@ -137,7 +137,7 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | `replacements` | `{}` | literal fixes, applied before the layout pass, for example `{"jeera": "Jira"}` |
 | `spoken_layout` | `true` | act on `new paragraph`, `new line`, `bullet point` spoken as a sentence of their own |
 | `self_correction` | `true` | resolve a correction the speaker spoke aloud, "the iPhone app, sorry, the Mac app" |
-| `keep_audio_days` | `0` | keep each recording for this many days under `audio/`, pruned on every run. Off by default |
+| `keep_audio_days` | `0` | keep each recording for this many days under `audio/`, pruned on every run. Off by default. Honoured by the daemon, so it covers both the app and the CLI |
 | `pin_models` | `true` | load the cached snapshot instead of re-resolving the hub |
 | `min_seconds` | `0.4` | shorter recordings are discarded as a slip of the key |
 | `device_open_timeout` | `6.0` | seconds to wait for the input to start producing audio |

@@ -35,6 +35,7 @@ said.
 import contextlib
 import difflib
 import json
+import math
 import os
 import re
 import shutil
@@ -458,6 +459,61 @@ REPEAT_KEEP = {"no", "very", "really", "so", "had", "that", "yes", "yeah", "ha",
                "why", "what", "who", "come", "run", "go", "long", "far", "well"}
 REPEAT_MAX_PHRASE = 4
 BOUNDARY_END = re.compile(r"[.!?,;:]$")
+
+
+AUDIO = BASE / "audio"
+
+
+def retain_or_remove(take, keep_days):
+    """Keep the recording for a while, or delete it as usual.
+
+    Off by default, because a dictation recording is the most private thing this tool
+    touches and nothing needs it once the transcript exists. It is worth turning on to
+    compare speech models, which cannot be done from transcripts alone: the same words have
+    to go through both, and asking someone to say a sentence twice is neither the same audio
+    nor a fair test. Triaging a misheard word needs it for the same reason.
+
+    This lives in the daemon rather than the client because the app records too, and the app
+    deleted every take unconditionally. `keep_audio_days` was therefore honoured only for
+    dictations started from the `phona` command line, and silently did nothing for every
+    dictation started from the key. The daemon is the one place both paths pass through.
+
+    Old takes are pruned on every run, so turning this on cannot fill the disk and
+    forgetting to turn it off costs one rolling window rather than everything.
+
+    A value has to be finite as well as positive. `float("nan")` parses, and `nan <= 0` is
+    false, so nonsense in the config read as retention on. The cutoff was then nan, every
+    comparison against it false, and nothing was ever pruned: the one setting whose whole
+    safety argument is that it expires would have kept every recording forever.
+
+    Everything in the directory is pruned rather than only `take-*`, because a take whose
+    staging failed keeps the name `recording.wav` and would otherwise never expire.
+    """
+    if not take or not take.exists():
+        return
+    try:
+        days = float(keep_days or 0)
+    except (TypeError, ValueError):
+        days = 0
+    if not math.isfinite(days) or days <= 0:
+        take.unlink(missing_ok=True)
+        return
+
+    try:
+        AUDIO.mkdir(parents=True, exist_ok=True)
+        take.replace(AUDIO / take.name)
+    except OSError as exc:
+        log(f"could not keep the recording: {exc}")
+        take.unlink(missing_ok=True)
+        return
+
+    cutoff = time.time() - days * 86400
+    for old_take in AUDIO.glob("*.wav"):
+        try:
+            if old_take.stat().st_mtime < cutoff:
+                old_take.unlink()
+        except OSError:
+            pass
 
 
 def apply_replacements(text, replacements):
@@ -1822,6 +1878,8 @@ The floor is lowered from nothing rather than removed. Removing it let "ignore y
                 "trimmed": dropped,
             }
             write_history(entry)
+            retain_or_remove(Path(path) if path else None,
+                             self.cfg.get("keep_audio_days", 0))
             log(f"done stt={t_stt:.2f}s llm={t_llm:.2f}s :: {final[:80]}")
             return {"state": "done", **entry}
 
