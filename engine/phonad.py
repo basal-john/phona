@@ -37,6 +37,7 @@ import difflib
 import json
 import math
 import os
+import queue
 import re
 import shutil
 import signal
@@ -46,6 +47,8 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
+import wave
 from pathlib import Path
 
 HOME = Path.home()
@@ -1301,6 +1304,63 @@ def peak_db(path):
         return None
 
 
+PARAKEET_CHUNK_SECONDS = 120.0
+
+
+class SingleThread:
+    """Run every call on one dedicated thread, and let that thread die with the process.
+
+    MLX registers its streams per OS thread, so parakeet-mlx has to be loaded and driven
+    from one thread for its whole life. A ThreadPoolExecutor does that too, but
+    concurrent.futures joins its workers from an atexit hook, which would hold a
+    terminating daemon open until an in-flight transcription finished. Since shutdown()
+    releases the single-instance lock before the interpreter finalises, and the client
+    waits one second before starting the replacement, that join would let a second daemon
+    load a full set of weights beside the first, for up to max_seconds. A daemon thread is
+    abandoned at exit instead, which is already what the whisper path does.
+    """
+
+    def __init__(self, name):
+        self.calls = queue.Queue()
+        threading.Thread(target=self._serve, name=name, daemon=True).start()
+
+    def _serve(self):
+        while True:
+            call, args, kwargs, result = self.calls.get()
+            try:
+                result.put((True, call(*args, **kwargs)))
+            except BaseException as exc:
+                result.put((False, exc))
+
+    def call(self, fn, *args, **kwargs):
+        result = queue.Queue(maxsize=1)
+        self.calls.put((fn, args, kwargs, result))
+        ok, value = result.get()
+        if ok:
+            return value
+        raise value
+
+
+def wav_seconds(path):
+    """Duration of a wav file in seconds, or None when the header cannot be read."""
+    try:
+        with wave.open(str(path)) as handle:
+            rate = handle.getframerate()
+            return handle.getnframes() / rate if rate else None
+    except Exception as exc:
+        log(f"wav_seconds failed: {exc}")
+        return None
+
+
+def stt_backend_for(model):
+    """Which loader owns a configured speech model.
+
+    Keyed off the repo id rather than a separate setting, so an existing config that names
+    a Whisper repo keeps working untouched and switching model switches backend with it.
+    """
+    return "parakeet" if "parakeet" in (model or "").lower() else "whisper"
+
+
 REPEAT_RUN = 6
 MIN_SALVAGE_WORDS = 4
 
@@ -1431,11 +1491,30 @@ class Engine:
 
         self.mlx_whisper = mlx_whisper
         self.stt_target = pinned_target(cfg, "stt_model")
+        self.stt_backend = stt_backend_for(cfg["stt_model"])
+        self.parakeet = None
         self.llm_target = pinned_target(cfg, "llm_model")
         log(f"loading llm {cfg['llm_model']}")
         self.model, self.tokenizer = load(self.llm_target)
         self._build_prefix()
         self._build_fix_prefix()
+
+        if self.stt_backend == "parakeet":
+            from parakeet_mlx import from_pretrained
+
+            log(f"loading stt {cfg['stt_model']}")
+            self.parakeet_thread = SingleThread("parakeet")
+            try:
+                self.parakeet = self.parakeet_thread.call(from_pretrained, self.stt_target)
+            except Exception:
+                # The whisper path defers every load into _warm_stt, which catches and logs.
+                # This one loads eagerly, and the client starts the daemon with stderr sent
+                # to /dev/null, so without this the traceback is lost and the log simply
+                # stops after "loading stt" with nothing to distinguish a crash from a hang.
+                log(f"loading stt {cfg['stt_model']} failed:\n{traceback.format_exc()}")
+                raise
+            if cfg.get("dictionary") and cfg.get("use_initial_prompt"):
+                log("dictionary hint ignored, parakeet has no initial prompt")
 
         log(f"warming stt {cfg['stt_model']}")
         self._warm_stt()
@@ -1508,6 +1587,8 @@ class Engine:
     # -- inference ---------------------------------------------------------
 
     def transcribe(self, path):
+        if self.stt_backend == "parakeet":
+            return self._transcribe_parakeet(path)
         kwargs = {
             "path_or_hf_repo": self.stt_target,
             "verbose": False,
@@ -1521,6 +1602,30 @@ class Engine:
         result = self.mlx_whisper.transcribe(str(path), **kwargs)
         self.last_gaps = segment_gaps(result.get("segments") or [])
         return result["text"].strip()
+
+    def _transcribe_parakeet(self, path):
+        """Transcribe through parakeet-mlx, which reads a wav and returns aligned sentences.
+
+        Parakeet takes neither a language nor an initial prompt, so the configured language
+        and the dictionary hint do not reach it. Long audio is chunked because parakeet-mlx
+        holds the whole encoder output in memory otherwise, where mlx_whisper windows
+        internally.
+
+        Every call is handed to the one thread that loaded the weights, see SingleThread. MLX registers its
+        streams per thread and parakeet-mlx's greedy decoder evaluates on the cpu stream, so
+        running it on a fresh per-connection thread raises "There is no Stream(cpu, 0) in
+        current thread" on the first token. mlx_whisper never hits this, which is why the
+        Whisper path needs no such pinning. The lock in guard() already serialises requests,
+        so a single worker costs no throughput.
+        """
+        kwargs = {}
+        seconds = wav_seconds(path)
+        if seconds is not None and seconds > PARAKEET_CHUNK_SECONDS:
+            kwargs["chunk_duration"] = PARAKEET_CHUNK_SECONDS
+        result = self.parakeet_thread.call(self.parakeet.transcribe, str(path), **kwargs)
+        self.last_gaps = segment_gaps(
+            [{"start": s.start, "end": s.end} for s in (result.sentences or [])])
+        return result.text.strip()
 
     def _fix_messages(self):
         return ([{"role": "system", "content": SELF_CORRECTION_SYSTEM}]
@@ -1910,7 +2015,7 @@ class Engine:
 
     # -- requests ----------------------------------------------------------
 
-    def process(self, path, seconds, style=None):
+    def process(self, path, seconds, style=None, history=True, retain=True):
         """Transcribe a recorded wav, correct it and record the result in history.
 
         The style names the kind of app the text is going into, sent by the caller because
@@ -1977,13 +2082,14 @@ class Engine:
                 "gaps": getattr(self, "last_gaps", []),
                 "trimmed": dropped,
             }
-            write_history(entry)
+            if history:
+                write_history(entry)
             retain_or_remove(Path(path) if path else None,
-                             self.cfg.get("keep_audio_days", 0))
+                             self.cfg.get("keep_audio_days", 0) if retain else 0)
             log(f"done stt={t_stt:.2f}s llm={t_llm:.2f}s :: {final[:80]}")
             return {"state": "done", **entry}
 
-    def fix_text(self, text, style=None):
+    def fix_text(self, text, style=None, history=True):
         with self.guard():
             if not text.strip():
                 return {"state": "empty", "raw": text, "text": ""}
@@ -2005,7 +2111,8 @@ class Engine:
                 "guarded": bool(getattr(self, "last_guarded", False)),
                 "guard_reason": getattr(self, "last_guard_reason", None),
             }
-            write_history(entry)
+            if history:
+                write_history(entry)
             return {"state": "done", **entry}
 
     def ask(self, prompt):
@@ -2054,11 +2161,12 @@ def handle(conn, engine):
             reply = {"state": "ready"}
         elif cmd == "PROCESS":
             reply = engine.process(req.get("path", ""), float(req.get("seconds") or 0),
-                                   style)
+                                   style, req.get("history", True),
+                                   req.get("retain", True))
         elif cmd == "FLAG":
             reply = flag_last(req.get("actual"))
         elif cmd == "FIX":
-            reply = engine.fix_text(req.get("text", ""), style)
+            reply = engine.fix_text(req.get("text", ""), style, req.get("history", True))
         elif cmd == "ASK":
             reply = engine.ask(req.get("text", ""))
         elif cmd == "CONFIG":

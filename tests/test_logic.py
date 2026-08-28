@@ -690,7 +690,7 @@ def test_the_style_reaches_the_engine_from_the_request():
     the request. Dropped anywhere along the way it fails silently, as an ordinary full stop."""
     calls = []
     engine = types.SimpleNamespace(
-        process=lambda path, seconds, style: calls.append((style,))
+        process=lambda path, seconds, style, history, retain: calls.append((style,))
         or {"state": "done", "text": "ok"})
 
     conn = _FakeConn({"cmd": "PROCESS", "path": "/tmp/take.wav", "seconds": 2.0,
@@ -705,7 +705,7 @@ def test_a_request_without_a_style_still_works():
     build of the app, so the key is optional rather than expected."""
     calls = []
     engine = types.SimpleNamespace(
-        fix_text=lambda text, style: calls.append((text, style))
+        fix_text=lambda text, style, history: calls.append((text, style))
         or {"state": "done", "text": "ok"})
 
     conn = _FakeConn({"cmd": "FIX", "text": "the tests is green"})
@@ -939,7 +939,7 @@ def test_the_reply_guard_keeps_its_tight_budget_for_three_content_lines():
 def test_the_paragraph_pass_runs_after_the_reply_guard_not_before():
     """The ordering is what makes the guard safe to leave alone, so it is worth pinning."""
     source = (ROOT / "engine" / "phonad.py").read_text()
-    body = source[source.index("    def process(self, path, seconds, style=None):"):]
+    body = source[source.index("    def process(self, path, seconds"):]
     assert body.index("self.correct(source)") < body.index("self.postprocess("), \
         "paragraphs must be inserted after the candidate has been judged"
 
@@ -1852,3 +1852,74 @@ def test_the_check_never_downloads_weights():
     source = (ROOT / "engine/model_updates.py").read_text()
     assert "snapshot_download" not in source
     assert "hf_hub_download" not in source
+
+
+def test_the_speech_backend_follows_the_configured_model():
+    """The backend is derived from the repo id rather than a second setting, so an existing
+    config that names a Whisper repo keeps loading Whisper without being migrated."""
+    assert phonad.stt_backend_for("mlx-community/whisper-large-v3-turbo") == "whisper"
+    assert phonad.stt_backend_for("mlx-community/parakeet-tdt-0.6b-v3") == "parakeet"
+    assert phonad.stt_backend_for("/some/snapshot/models--mlx-community--parakeet-tdt") == "parakeet"
+    assert phonad.stt_backend_for("MLX-Community/Parakeet-TDT") == "parakeet"
+
+
+def test_the_speech_backend_survives_a_missing_model():
+    """A config with the key blanked crashed Engine.__init__ with an AttributeError before
+    anything reached the log, which reads as a hang rather than a bad setting."""
+    assert phonad.stt_backend_for(None) == "whisper"
+    assert phonad.stt_backend_for("") == "whisper"
+
+
+def test_wav_seconds_reads_a_duration_and_shrugs_at_anything_else(tmp_path):
+    """Parakeet decides whether to chunk on this number. Returning None on an unreadable
+    file has to mean do not chunk, never crash the request."""
+    import wave
+
+    path = tmp_path / "tone.wav"
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 32000)
+    assert phonad.wav_seconds(path) == pytest.approx(2.0)
+
+    broken = tmp_path / "broken.wav"
+    broken.write_bytes(b"not a wav at all")
+    assert phonad.wav_seconds(broken) is None
+    assert phonad.wav_seconds(tmp_path / "missing.wav") is None
+
+
+def test_the_single_thread_runs_every_call_on_the_same_thread():
+    """MLX pins its streams to the creating thread, so parakeet has to be loaded and driven
+    from one thread. The whole point of the class is that this holds across calls."""
+    import threading
+
+    runner = phonad.SingleThread("test")
+    seen = {runner.call(threading.get_ident) for _ in range(5)}
+    assert len(seen) == 1
+    assert seen != {threading.get_ident()}
+
+
+def test_the_single_thread_reraises_and_keeps_serving():
+    """A failed transcription has to surface to the request handler, and must not leave the
+    one worker dead so every later dictation hangs on a queue nobody reads."""
+    runner = phonad.SingleThread("test")
+
+    def boom():
+        raise ValueError("nope")
+
+    with pytest.raises(ValueError, match="nope"):
+        runner.call(boom)
+    assert runner.call(lambda: "still alive") == "still alive"
+
+
+def test_the_single_thread_does_not_hold_the_process_open():
+    """A ThreadPoolExecutor is joined by an atexit hook, which would keep a terminating
+    daemon resident until an in-flight transcription finished and let phona restart load a
+    second copy of the weights beside it."""
+    import threading
+
+    runner = phonad.SingleThread("test")
+    runner.call(lambda: None)
+    worker = next(t for t in threading.enumerate() if t.name == "test")
+    assert worker.daemon
