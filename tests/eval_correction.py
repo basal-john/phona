@@ -247,6 +247,7 @@ def run(label):
                 "untouched": got_w == broken_w,
                 "similarity": difflib.SequenceMatcher(None, got_w, gold_w).ratio(),
                 "guarded": bool(reply.get("guarded")),
+                "guard_reason": reply.get("guard_reason"),
                 "secs": round(secs, 3),
             }
         )
@@ -277,6 +278,7 @@ def run(label):
                 "kept": difflib.SequenceMatcher(None, got_w, raw_w).ratio(),
                 "untouched": got_w == raw_w,
                 "guarded": bool(reply.get("guarded")),
+                "guard_reason": reply.get("guard_reason"),
                 "secs": round(secs, 3),
             }
         )
@@ -330,8 +332,25 @@ def score(data):
         "kept": round(sum(r["kept"] for r in live) / m, 3),
         "untouched_pct": round(100 * sum(r["untouched"] for r in live) / m, 1),
         "guarded": sum(r["guarded"] for r in planted) + sum(r["guarded"] for r in live),
+        "gave_up": sum(1 for r in live if r["guarded"] and r["untouched"])
+        + sum(1 for r in planted if r["guarded"] and r["untouched"]),
         "secs": round((sum(r["secs"] for r in planted) + sum(r["secs"] for r in live)) / (n + m), 3),
     }
+
+
+def reasons(data):
+    """Why the guard fired, most common first.
+
+    The reason is what the first refusal saw, so it names the shape of the failure rather
+    than the sentence. A count that concentrates on one reason is a prompt problem, and a
+    count spread evenly is a model problem.
+    """
+    counted = {}
+    for row in data["planted"] + data["live"]:
+        reason = row.get("guard_reason")
+        if reason:
+            counted[reason] = counted.get(reason, 0) + 1
+    return sorted(counted.items(), key=lambda kv: -kv[1])
 
 
 def summarise(data):
@@ -344,6 +363,10 @@ def summarise(data):
           + ("" if data["language_tool"] else "   (LanguageTool not installed)"))
     print(f"  live      wording kept {s['kept']}, {s['untouched_pct']}% left alone, "
           f"{s['guarded']} guarded")
+    print(f"  guard     {s['guarded']} needed a retry, {s['gave_up']} of those came back "
+          f"with no word changed")
+    for reason, count in reasons(data):
+        print(f"            {count:>3}  {reason}")
     print(f"  speed     {s['secs']}s mean per correction")
 
 
@@ -369,7 +392,8 @@ def report(left, right):
         ("typography", "typography findings"),
         ("kept", "wording kept"),
         ("untouched_pct", "live left alone %"),
-        ("guarded", "guard trips"),
+        ("guarded", "guard retries"),
+        ("gave_up", "guarded, no word changed"),
         ("secs", "mean seconds"),
     ):
         print(f"{name:22}{str(a[key]):>26}{str(b[key]):>26}")
