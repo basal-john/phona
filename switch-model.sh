@@ -4,6 +4,8 @@
 #   ./switch-model.sh 8bit     correction: the 8-bit 4B, 29 of 29 on the suite, slower on long dictation
 #   ./switch-model.sh 4bit     correction: the 4-bit 4B, 28 of 29, the fastest
 #   ./switch-model.sh 8b       correction: Qwen3-8B, 28 of 29, no better and larger
+#   ./switch-model.sh qwen35   correction: Qwen3.5-4B, the successor to the current model
+#   ./switch-model.sh gemma4   correction: Gemma 4 E4B, the size-matched rival
 #   ./switch-model.sh whisper  speech: Whisper large-v3-turbo, the default
 #   ./switch-model.sh parakeet speech: Parakeet TDT 0.6b v3, faster, no dictionary hint
 #   ./switch-model.sh          print what is running now
@@ -33,13 +35,15 @@ case "${1:-}" in
     8bit)     TARGET="mlx-community/Qwen3-4B-Instruct-2507-8bit" ;;
     4bit)     TARGET="mlx-community/Qwen3-4B-Instruct-2507-4bit" ;;
     8b)       TARGET="mlx-community/Qwen3-8B-4bit" ;;
+    qwen35)   TARGET="mlx-community/Qwen3.5-4B-8bit" ;;
+    gemma4)   TARGET="mlx-community/gemma-4-e4b-it-8bit" ;;
     whisper)  KEY="stt_model"; TARGET="mlx-community/whisper-large-v3-turbo" ;;
     parakeet) KEY="stt_model"; TARGET="mlx-community/parakeet-tdt-0.6b-v3" ;;
     "")       echo "correction: $(current)"
               KEY="stt_model"
               echo "speech:     $(current)"
               exit 0 ;;
-    *)        echo "unknown option '$1', expected 8bit, 4bit, 8b, whisper or parakeet" >&2
+    *)        echo "unknown option '$1', expected 8bit, 4bit, 8b, qwen35, gemma4, whisper or parakeet" >&2
               exit 1 ;;
 esac
 
