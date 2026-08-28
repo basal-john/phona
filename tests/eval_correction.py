@@ -97,7 +97,10 @@ CONTRACTIONS = [
     (r"\bthere's\b", "there is"),
     (r"\b(\w+)'ve\b", r"\1 have"),
     (r"\b(\w+)'ll\b", r"\1 will"),
-    (r"\b(can)not\b|\bcan't\b", "can not"),
+    (r"\bcannot\b|\bcan't\b", "can not"),
+    (r"\bwon't\b", "will not"),
+    (r"\bshan't\b", "shall not"),
+    (r"\bain't\b", "is not"),
     (r"\b(\w+)n't\b", r"\1 not"),
     (r"\bi'm\b", "i am"),
 ]
@@ -110,6 +113,10 @@ def words(text):
     contraction. A model that repairs "you is" to "you're" has fixed the agreement error as
     surely as one that writes "you are", and scoring the two differently measures the
     model's taste rather than its grammar.
+
+    The irregular forms are listed before the general rule because the general rule takes
+    the letters in front of "n't" as the word, which turns "won't" into "wo not" and would
+    then score a model that wrote it differently from one that wrote "will not".
     """
     text = (text or "").lower().replace("’", "'")
     for pattern, replacement in CONTRACTIONS:
@@ -131,11 +138,16 @@ def distance(left, right):
 
 
 def sentences():
-    """The corrected text of every replayed take, newest replay first, deduplicated.
+    """The corrected text of every replayed take, in filename order, deduplicated.
 
     The corrected text is used rather than the raw transcript because a planted case needs a
-    clean starting point. Anything the guard rejected is dropped, since its text is the raw
-    transcript rather than a correction.
+    clean starting point. A guarded take is dropped because the guard fired on it, so its
+    text came from a retry or from the mechanical tidy rather than from a clean first pass,
+    and a planted case wants a sentence the model was happy with.
+
+    Filename order rather than any notion of newest, because `PER_KIND` caps each injector
+    and the cap makes the order load bearing: the corpus has to be the same one every time
+    it is built, or two runs are not comparable.
     """
     seen, out = set(), []
     for path in sorted(REPLAYS.glob("*.json")):
@@ -398,10 +410,19 @@ def report(left, right):
     ):
         print(f"{name:22}{str(a[key]):>26}{str(b[key]):>26}")
 
+    def by_case(planted):
+        return {(r["kind"], r["broken"], r["gold"]): r for r in planted}
+
+    left_cases, right_cases = by_case(rows[0]["planted"]), by_case(rows[1]["planted"])
+    shared = [key for key in left_cases if key in right_cases]
+    missing = len(left_cases) + len(right_cases) - 2 * len(shared)
+    if missing:
+        print(f"\nwarning: the two runs do not share {missing} cases, so they were scored "
+              f"against different corpora. Rebuild with --plant and score both again.")
     disagreed = [
-        (x, y)
-        for x, y in zip(rows[0]["planted"], rows[1]["planted"])
-        if x["repaired"] != y["repaired"]
+        (left_cases[key], right_cases[key])
+        for key in shared
+        if left_cases[key]["repaired"] != right_cases[key]["repaired"]
     ]
     print(f"\n{len(disagreed)} planted cases where one repaired it and the other did not")
     for x, y in disagreed[:15]:
