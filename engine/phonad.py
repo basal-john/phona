@@ -1035,8 +1035,33 @@ def invented_names(source, candidate, allowed=()):
                 continue
             if any(stem in said or stem in permitted for stem in singulars(base)):
                 continue
+            if hyphen_joins_spoken_words(base, said, permitted):
+                continue
             found.append(word)
     return found
+
+
+def hyphen_joins_spoken_words(base, said, permitted):
+    """Whether a hyphenated token is only spoken words joined by a hyphen.
+
+    WORD keeps a hyphen inside a token, so "AI-assisted" is one word and matches neither
+    "ai" nor "assisted" in a transcript that said them apart. Hyphenating a compound is the
+    correction the speaker wanted, and the guard was throwing it away: across 403 scored
+    corrections this was 8 of the 22 rejections on the current model and 8 of 27 on the
+    4-bit, the single largest cause on both.
+
+    Joining words that were all said names nothing new, so the token passes only when every
+    part of it was said or is permitted.
+    """
+    parts = [part for part in base.split("-") if part]
+    if len(parts) < 2:
+        return False
+    return all(
+        part in said
+        or part in permitted
+        or any(stem in said or stem in permitted for stem in singulars(part))
+        for part in parts
+    )
 
 
 def singulars(word):
@@ -1310,8 +1335,10 @@ PARAKEET_CHUNK_SECONDS = 120.0
 class SingleThread:
     """Run every call on one dedicated thread, and let that thread die with the process.
 
-    MLX registers its streams per OS thread, so parakeet-mlx has to be loaded and driven
-    from one thread for its whole life. A ThreadPoolExecutor does that too, but
+    MLX registers its streams per OS thread, so a model that binds a stream has to be
+    loaded and driven from one thread for its whole life. parakeet-mlx evaluates its greedy
+    decoder on the cpu stream, and mlx_lm holds a thread-local generation stream that some
+    architectures shift the index of, which took Gemma 4 down on every request. A ThreadPoolExecutor does that too, but
     concurrent.futures joins its workers from an atexit hook, which would hold a
     terminating daemon open until an in-flight transcription finished. Since shutdown()
     releases the single-instance lock before the interpreter finalises, and the client
@@ -1495,7 +1522,8 @@ class Engine:
         self.parakeet = None
         self.llm_target = pinned_target(cfg, "llm_model")
         log(f"loading llm {cfg['llm_model']}")
-        self.model, self.tokenizer = load(self.llm_target)
+        self.llm_thread = SingleThread("llm")
+        self.model, self.tokenizer = self.llm_thread.call(load, self.llm_target)
         self._build_prefix()
         self._build_fix_prefix()
 
@@ -1558,9 +1586,6 @@ class Engine:
         template stitches turns together.
         """
         try:
-            import mlx.core as mx
-            from mlx_lm.models.cache import make_prompt_cache
-
             base = self._prefix_messages()
             ta = self._encode(self._render(base + [{"role": "user", "content": "alpha"}], True))
             tb = self._encode(self._render(base + [{"role": "user", "content": "bravo"}], True))
@@ -1574,9 +1599,7 @@ class Engine:
                 raise RuntimeError(f"shared token prefix too short ({n})")
 
             tokens = ta[:n]
-            self.cache = make_prompt_cache(self.model)
-            self.model(mx.array(tokens)[None], cache=self.cache)
-            mx.eval([c.state for c in self.cache])
+            self.cache = self.llm_thread.call(self._prefill, tokens)
             self.prefix_tokens = tokens
             log(f"prompt prefix cached, {len(tokens)} tokens")
         except Exception as exc:
@@ -1644,9 +1667,6 @@ class Engine:
             log("self-correction pass disabled by config")
             return
         try:
-            import mlx.core as mx
-            from mlx_lm.models.cache import make_prompt_cache
-
             base = self._fix_messages()
             ta = self._encode(self._render(base + [{"role": "user", "content": "alpha"}], True))
             tb = self._encode(self._render(base + [{"role": "user", "content": "bravo"}], True))
@@ -1659,9 +1679,7 @@ class Engine:
                 raise RuntimeError(f"shared token prefix too short ({n})")
 
             tokens = ta[:n]
-            self.fix_cache = make_prompt_cache(self.model)
-            self.model(mx.array(tokens)[None], cache=self.fix_cache)
-            mx.eval([c.state for c in self.fix_cache])
+            self.fix_cache = self.llm_thread.call(self._prefill, tokens)
             self.fix_prefix_tokens = tokens
             log(f"self-correction prefix cached, {len(tokens)} tokens")
         except Exception as exc:
@@ -1694,9 +1712,10 @@ class Engine:
                 return text
             before = self.fix_cache[0].offset
             try:
-                out = generate(self.model, self.tokenizer, prompt=tokens[cut:],
-                               max_tokens=400, sampler=make_sampler(temp=0.0),
-                               prompt_cache=self.fix_cache, verbose=False).strip()
+                out = self.llm_thread.call(
+                    generate, self.model, self.tokenizer, prompt=tokens[cut:],
+                    max_tokens=400, sampler=make_sampler(temp=0.0),
+                    prompt_cache=self.fix_cache, verbose=False).strip()
             finally:
                 grew = self.fix_cache[0].offset - before
                 if grew > 0:
@@ -1731,9 +1750,10 @@ class Engine:
             raise RuntimeError("prefix mismatch")
         before = self.cache[0].offset
         try:
-            return generate(self.model, self.tokenizer, prompt=tokens[cut:],
-                            max_tokens=400, sampler=make_sampler(temp=0.0),
-                            prompt_cache=self.cache, verbose=False).strip()
+            return self.llm_thread.call(
+                generate, self.model, self.tokenizer, prompt=tokens[cut:],
+                max_tokens=400, sampler=make_sampler(temp=0.0),
+                prompt_cache=self.cache, verbose=False).strip()
         finally:
             grew = self.cache[0].offset - before
             if grew > 0:
@@ -1742,12 +1762,27 @@ class Engine:
                     log("cache trim did not take, disabling the prefix cache")
                     self.cache = None
 
+    def _prefill(self, tokens):
+        """Build a KV cache for `tokens` and evaluate it, on the thread that owns the model.
+
+        Called through `llm_thread` rather than directly, because the cache has to be built
+        on the same thread that will later generate from it.
+        """
+        import mlx.core as mx
+        from mlx_lm.models.cache import make_prompt_cache
+
+        cache = make_prompt_cache(self.model)
+        self.model(mx.array(tokens)[None], cache=cache)
+        mx.eval([c.state for c in cache])
+        return cache
+
     def _generate_plain(self, msgs):
         from mlx_lm import generate
         from mlx_lm.sample_utils import make_sampler
-        return generate(self.model, self.tokenizer, prompt=self._render(msgs, True),
-                        max_tokens=400, sampler=make_sampler(temp=0.0),
-                        verbose=False).strip()
+        return self.llm_thread.call(
+            generate, self.model, self.tokenizer, prompt=self._render(msgs, True),
+            max_tokens=400, sampler=make_sampler(temp=0.0),
+            verbose=False).strip()
 
     @staticmethod
     def _tidy(text):

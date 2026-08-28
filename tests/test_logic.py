@@ -1597,6 +1597,28 @@ def test_a_plural_of_something_that_was_said_is_not_an_invented_name():
     assert phonad.invented_names("check the status", "Check the statuses.") == []
 
 
+def test_hyphenating_two_spoken_words_is_not_an_invented_name():
+    """The defect this fixes. The transcript said "AI assisted development guidelines", the
+    model wrote "AI-assisted", and the correction was discarded because WORD keeps the
+    hyphen inside the token, so it matched neither word. Measured over 403 corrections this
+    was the largest single cause of rejection on both the 8-bit and the 4-bit model."""
+    assert phonad.invented_names("comments on the AI assisted development guidelines",
+                                 "Comments on the AI-assisted development guidelines.") == []
+    assert phonad.invented_names("we need end to end tests",
+                                 "We need end-to-end tests.") == []
+    assert phonad.invented_names("check the pull request status",
+                                 "Check the pull-request statuses.") == []
+
+
+def test_a_hyphenated_name_that_was_never_said_still_fires():
+    """Loosening the hyphen check must not let a name through. Only a compound whose every
+    part was spoken passes, so a hyphen cannot be used to smuggle one in."""
+    assert phonad.invented_names("we fixed the pipeline",
+                                 "We fixed the Jenkins-Actions pipeline.") == ["Jenkins-Actions"]
+    assert phonad.invented_names("we need end to end tests",
+                                 "We need Cypress-to-end tests.") == ["Cypress-to-end"]
+
+
 def test_the_one_real_catch_still_fires():
     """The only correct rejection on record was the model answering "what is the capital of
     france". Loosening the check must not cost that."""
