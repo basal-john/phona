@@ -2015,7 +2015,7 @@ class Engine:
 
     # -- requests ----------------------------------------------------------
 
-    def process(self, path, seconds, style=None):
+    def process(self, path, seconds, style=None, history=True, retain=True):
         """Transcribe a recorded wav, correct it and record the result in history.
 
         The style names the kind of app the text is going into, sent by the caller because
@@ -2082,13 +2082,14 @@ class Engine:
                 "gaps": getattr(self, "last_gaps", []),
                 "trimmed": dropped,
             }
-            write_history(entry)
+            if history:
+                write_history(entry)
             retain_or_remove(Path(path) if path else None,
-                             self.cfg.get("keep_audio_days", 0))
+                             self.cfg.get("keep_audio_days", 0) if retain else 0)
             log(f"done stt={t_stt:.2f}s llm={t_llm:.2f}s :: {final[:80]}")
             return {"state": "done", **entry}
 
-    def fix_text(self, text, style=None):
+    def fix_text(self, text, style=None, history=True):
         with self.guard():
             if not text.strip():
                 return {"state": "empty", "raw": text, "text": ""}
@@ -2110,7 +2111,8 @@ class Engine:
                 "guarded": bool(getattr(self, "last_guarded", False)),
                 "guard_reason": getattr(self, "last_guard_reason", None),
             }
-            write_history(entry)
+            if history:
+                write_history(entry)
             return {"state": "done", **entry}
 
     def ask(self, prompt):
@@ -2159,11 +2161,12 @@ def handle(conn, engine):
             reply = {"state": "ready"}
         elif cmd == "PROCESS":
             reply = engine.process(req.get("path", ""), float(req.get("seconds") or 0),
-                                   style)
+                                   style, req.get("history", True),
+                                   req.get("retain", True))
         elif cmd == "FLAG":
             reply = flag_last(req.get("actual"))
         elif cmd == "FIX":
-            reply = engine.fix_text(req.get("text", ""), style)
+            reply = engine.fix_text(req.get("text", ""), style, req.get("history", True))
         elif cmd == "ASK":
             reply = engine.ask(req.get("text", ""))
         elif cmd == "CONFIG":

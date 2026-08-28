@@ -690,7 +690,7 @@ def test_the_style_reaches_the_engine_from_the_request():
     the request. Dropped anywhere along the way it fails silently, as an ordinary full stop."""
     calls = []
     engine = types.SimpleNamespace(
-        process=lambda path, seconds, style: calls.append((style,))
+        process=lambda path, seconds, style, history, retain: calls.append((style,))
         or {"state": "done", "text": "ok"})
 
     conn = _FakeConn({"cmd": "PROCESS", "path": "/tmp/take.wav", "seconds": 2.0,
@@ -705,7 +705,7 @@ def test_a_request_without_a_style_still_works():
     build of the app, so the key is optional rather than expected."""
     calls = []
     engine = types.SimpleNamespace(
-        fix_text=lambda text, style: calls.append((text, style))
+        fix_text=lambda text, style, history: calls.append((text, style))
         or {"state": "done", "text": "ok"})
 
     conn = _FakeConn({"cmd": "FIX", "text": "the tests is green"})
@@ -939,7 +939,7 @@ def test_the_reply_guard_keeps_its_tight_budget_for_three_content_lines():
 def test_the_paragraph_pass_runs_after_the_reply_guard_not_before():
     """The ordering is what makes the guard safe to leave alone, so it is worth pinning."""
     source = (ROOT / "engine" / "phonad.py").read_text()
-    body = source[source.index("    def process(self, path, seconds, style=None):"):]
+    body = source[source.index("    def process(self, path, seconds"):]
     assert body.index("self.correct(source)") < body.index("self.postprocess("), \
         "paragraphs must be inserted after the candidate has been judged"
 
