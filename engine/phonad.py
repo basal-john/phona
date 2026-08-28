@@ -37,6 +37,7 @@ import difflib
 import json
 import math
 import os
+import queue
 import re
 import shutil
 import signal
@@ -1306,6 +1307,40 @@ def peak_db(path):
 PARAKEET_CHUNK_SECONDS = 120.0
 
 
+class SingleThread:
+    """Run every call on one dedicated thread, and let that thread die with the process.
+
+    MLX registers its streams per OS thread, so parakeet-mlx has to be loaded and driven
+    from one thread for its whole life. A ThreadPoolExecutor does that too, but
+    concurrent.futures joins its workers from an atexit hook, which would hold a
+    terminating daemon open until an in-flight transcription finished. Since shutdown()
+    releases the single-instance lock before the interpreter finalises, and the client
+    waits one second before starting the replacement, that join would let a second daemon
+    load a full set of weights beside the first, for up to max_seconds. A daemon thread is
+    abandoned at exit instead, which is already what the whisper path does.
+    """
+
+    def __init__(self, name):
+        self.calls = queue.Queue()
+        threading.Thread(target=self._serve, name=name, daemon=True).start()
+
+    def _serve(self):
+        while True:
+            call, args, kwargs, result = self.calls.get()
+            try:
+                result.put((True, call(*args, **kwargs)))
+            except BaseException as exc:
+                result.put((False, exc))
+
+    def call(self, fn, *args, **kwargs):
+        result = queue.Queue(maxsize=1)
+        self.calls.put((fn, args, kwargs, result))
+        ok, value = result.get()
+        if ok:
+            return value
+        raise value
+
+
 def wav_seconds(path):
     """Duration of a wav file in seconds, or None when the header cannot be read."""
     try:
@@ -1465,15 +1500,12 @@ class Engine:
         self._build_fix_prefix()
 
         if self.stt_backend == "parakeet":
-            import concurrent.futures
             from parakeet_mlx import from_pretrained
 
             log(f"loading stt {cfg['stt_model']}")
-            self.parakeet_pool = concurrent.futures.ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="parakeet")
+            self.parakeet_thread = SingleThread("parakeet")
             try:
-                self.parakeet = self.parakeet_pool.submit(
-                    from_pretrained, self.stt_target).result()
+                self.parakeet = self.parakeet_thread.call(from_pretrained, self.stt_target)
             except Exception:
                 # The whisper path defers every load into _warm_stt, which catches and logs.
                 # This one loads eagerly, and the client starts the daemon with stderr sent
@@ -1579,7 +1611,7 @@ class Engine:
         holds the whole encoder output in memory otherwise, where mlx_whisper windows
         internally.
 
-        Every call is handed to the one thread that loaded the weights. MLX registers its
+        Every call is handed to the one thread that loaded the weights, see SingleThread. MLX registers its
         streams per thread and parakeet-mlx's greedy decoder evaluates on the cpu stream, so
         running it on a fresh per-connection thread raises "There is no Stream(cpu, 0) in
         current thread" on the first token. mlx_whisper never hits this, which is why the
@@ -1590,8 +1622,7 @@ class Engine:
         seconds = wav_seconds(path)
         if seconds is not None and seconds > PARAKEET_CHUNK_SECONDS:
             kwargs["chunk_duration"] = PARAKEET_CHUNK_SECONDS
-        result = self.parakeet_pool.submit(
-            self.parakeet.transcribe, str(path), **kwargs).result()
+        result = self.parakeet_thread.call(self.parakeet.transcribe, str(path), **kwargs)
         self.last_gaps = segment_gaps(
             [{"start": s.start, "end": s.end} for s in (result.sentences or [])])
         return result.text.strip()

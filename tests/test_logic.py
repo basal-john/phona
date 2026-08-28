@@ -1887,3 +1887,39 @@ def test_wav_seconds_reads_a_duration_and_shrugs_at_anything_else(tmp_path):
     broken.write_bytes(b"not a wav at all")
     assert phonad.wav_seconds(broken) is None
     assert phonad.wav_seconds(tmp_path / "missing.wav") is None
+
+
+def test_the_single_thread_runs_every_call_on_the_same_thread():
+    """MLX pins its streams to the creating thread, so parakeet has to be loaded and driven
+    from one thread. The whole point of the class is that this holds across calls."""
+    import threading
+
+    runner = phonad.SingleThread("test")
+    seen = {runner.call(threading.get_ident) for _ in range(5)}
+    assert len(seen) == 1
+    assert seen != {threading.get_ident()}
+
+
+def test_the_single_thread_reraises_and_keeps_serving():
+    """A failed transcription has to surface to the request handler, and must not leave the
+    one worker dead so every later dictation hangs on a queue nobody reads."""
+    runner = phonad.SingleThread("test")
+
+    def boom():
+        raise ValueError("nope")
+
+    with pytest.raises(ValueError, match="nope"):
+        runner.call(boom)
+    assert runner.call(lambda: "still alive") == "still alive"
+
+
+def test_the_single_thread_does_not_hold_the_process_open():
+    """A ThreadPoolExecutor is joined by an atexit hook, which would keep a terminating
+    daemon resident until an in-flight transcription finished and let phona restart load a
+    second copy of the weights beside it."""
+    import threading
+
+    runner = phonad.SingleThread("test")
+    runner.call(lambda: None)
+    worker = next(t for t in threading.enumerate() if t.name == "test")
+    assert worker.daemon
