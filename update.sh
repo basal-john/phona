@@ -27,9 +27,9 @@ cp engine/phonad.py engine/client.py engine/audit.py engine/model_updates.py "$T
 
 # New dependencies land rarely, but a pull that adds one would otherwise fail at runtime.
 if command -v uv >/dev/null 2>&1; then
-  uv pip install --python "$TARGET/venv/bin/python" -q mlx-whisper mlx-lm
+  uv pip install --python "$TARGET/venv/bin/python" -q mlx-whisper mlx-lm parakeet-mlx
 else
-  "$TARGET/venv/bin/python" -m pip install -q mlx-whisper mlx-lm
+  "$TARGET/venv/bin/python" -m pip install -q mlx-whisper mlx-lm parakeet-mlx
 fi
 
 say "rebuilding the app"

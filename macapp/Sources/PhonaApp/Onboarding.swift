@@ -82,7 +82,7 @@ struct OnboardingView: View {
                 granted: state.engine,
                 title: "Speech engine",
                 detail: state.engine
-                    ? "Running. Whisper and the grammar model are warm."
+                    ? "Running. The speech and grammar models are warm."
                     : "Loading the models. The first start takes about a minute.",
                 action: "Start",
                 perform: { DispatchQueue.global().async { DaemonClient.startAndWait() } })

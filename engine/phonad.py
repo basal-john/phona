@@ -46,6 +46,8 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
+import wave
 from pathlib import Path
 
 HOME = Path.home()
@@ -1301,6 +1303,29 @@ def peak_db(path):
         return None
 
 
+PARAKEET_CHUNK_SECONDS = 120.0
+
+
+def wav_seconds(path):
+    """Duration of a wav file in seconds, or None when the header cannot be read."""
+    try:
+        with wave.open(str(path)) as handle:
+            rate = handle.getframerate()
+            return handle.getnframes() / rate if rate else None
+    except Exception as exc:
+        log(f"wav_seconds failed: {exc}")
+        return None
+
+
+def stt_backend_for(model):
+    """Which loader owns a configured speech model.
+
+    Keyed off the repo id rather than a separate setting, so an existing config that names
+    a Whisper repo keeps working untouched and switching model switches backend with it.
+    """
+    return "parakeet" if "parakeet" in (model or "").lower() else "whisper"
+
+
 REPEAT_RUN = 6
 MIN_SALVAGE_WORDS = 4
 
@@ -1431,11 +1456,33 @@ class Engine:
 
         self.mlx_whisper = mlx_whisper
         self.stt_target = pinned_target(cfg, "stt_model")
+        self.stt_backend = stt_backend_for(cfg["stt_model"])
+        self.parakeet = None
         self.llm_target = pinned_target(cfg, "llm_model")
         log(f"loading llm {cfg['llm_model']}")
         self.model, self.tokenizer = load(self.llm_target)
         self._build_prefix()
         self._build_fix_prefix()
+
+        if self.stt_backend == "parakeet":
+            import concurrent.futures
+            from parakeet_mlx import from_pretrained
+
+            log(f"loading stt {cfg['stt_model']}")
+            self.parakeet_pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="parakeet")
+            try:
+                self.parakeet = self.parakeet_pool.submit(
+                    from_pretrained, self.stt_target).result()
+            except Exception:
+                # The whisper path defers every load into _warm_stt, which catches and logs.
+                # This one loads eagerly, and the client starts the daemon with stderr sent
+                # to /dev/null, so without this the traceback is lost and the log simply
+                # stops after "loading stt" with nothing to distinguish a crash from a hang.
+                log(f"loading stt {cfg['stt_model']} failed:\n{traceback.format_exc()}")
+                raise
+            if cfg.get("dictionary") and cfg.get("use_initial_prompt"):
+                log("dictionary hint ignored, parakeet has no initial prompt")
 
         log(f"warming stt {cfg['stt_model']}")
         self._warm_stt()
@@ -1508,6 +1555,8 @@ class Engine:
     # -- inference ---------------------------------------------------------
 
     def transcribe(self, path):
+        if self.stt_backend == "parakeet":
+            return self._transcribe_parakeet(path)
         kwargs = {
             "path_or_hf_repo": self.stt_target,
             "verbose": False,
@@ -1521,6 +1570,31 @@ class Engine:
         result = self.mlx_whisper.transcribe(str(path), **kwargs)
         self.last_gaps = segment_gaps(result.get("segments") or [])
         return result["text"].strip()
+
+    def _transcribe_parakeet(self, path):
+        """Transcribe through parakeet-mlx, which reads a wav and returns aligned sentences.
+
+        Parakeet takes neither a language nor an initial prompt, so the configured language
+        and the dictionary hint do not reach it. Long audio is chunked because parakeet-mlx
+        holds the whole encoder output in memory otherwise, where mlx_whisper windows
+        internally.
+
+        Every call is handed to the one thread that loaded the weights. MLX registers its
+        streams per thread and parakeet-mlx's greedy decoder evaluates on the cpu stream, so
+        running it on a fresh per-connection thread raises "There is no Stream(cpu, 0) in
+        current thread" on the first token. mlx_whisper never hits this, which is why the
+        Whisper path needs no such pinning. The lock in guard() already serialises requests,
+        so a single worker costs no throughput.
+        """
+        kwargs = {}
+        seconds = wav_seconds(path)
+        if seconds is not None and seconds > PARAKEET_CHUNK_SECONDS:
+            kwargs["chunk_duration"] = PARAKEET_CHUNK_SECONDS
+        result = self.parakeet_pool.submit(
+            self.parakeet.transcribe, str(path), **kwargs).result()
+        self.last_gaps = segment_gaps(
+            [{"start": s.start, "end": s.end} for s in (result.sentences or [])])
+        return result.text.strip()
 
     def _fix_messages(self):
         return ([{"role": "system", "content": SELF_CORRECTION_SYSTEM}]

@@ -41,12 +41,12 @@ if [[ ! -x "$TARGET/venv/bin/python" ]]; then
   fi
 fi
 
-say "installing mlx-whisper and mlx-lm, this takes a few minutes"
+say "installing mlx-whisper, mlx-lm and parakeet-mlx, this takes a few minutes"
 if command -v uv >/dev/null 2>&1; then
-  uv pip install --python "$TARGET/venv/bin/python" -q mlx-whisper mlx-lm
+  uv pip install --python "$TARGET/venv/bin/python" -q mlx-whisper mlx-lm parakeet-mlx
 else
   "$TARGET/venv/bin/python" -m pip install -q --upgrade pip
-  "$TARGET/venv/bin/python" -m pip install -q mlx-whisper mlx-lm
+  "$TARGET/venv/bin/python" -m pip install -q mlx-whisper mlx-lm parakeet-mlx
 fi
 
 # Settings are not written here. The daemon writes its defaults on first run,

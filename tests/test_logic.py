@@ -1852,3 +1852,38 @@ def test_the_check_never_downloads_weights():
     source = (ROOT / "engine/model_updates.py").read_text()
     assert "snapshot_download" not in source
     assert "hf_hub_download" not in source
+
+
+def test_the_speech_backend_follows_the_configured_model():
+    """The backend is derived from the repo id rather than a second setting, so an existing
+    config that names a Whisper repo keeps loading Whisper without being migrated."""
+    assert phonad.stt_backend_for("mlx-community/whisper-large-v3-turbo") == "whisper"
+    assert phonad.stt_backend_for("mlx-community/parakeet-tdt-0.6b-v3") == "parakeet"
+    assert phonad.stt_backend_for("/some/snapshot/models--mlx-community--parakeet-tdt") == "parakeet"
+    assert phonad.stt_backend_for("MLX-Community/Parakeet-TDT") == "parakeet"
+
+
+def test_the_speech_backend_survives_a_missing_model():
+    """A config with the key blanked crashed Engine.__init__ with an AttributeError before
+    anything reached the log, which reads as a hang rather than a bad setting."""
+    assert phonad.stt_backend_for(None) == "whisper"
+    assert phonad.stt_backend_for("") == "whisper"
+
+
+def test_wav_seconds_reads_a_duration_and_shrugs_at_anything_else(tmp_path):
+    """Parakeet decides whether to chunk on this number. Returning None on an unreadable
+    file has to mean do not chunk, never crash the request."""
+    import wave
+
+    path = tmp_path / "tone.wav"
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 32000)
+    assert phonad.wav_seconds(path) == pytest.approx(2.0)
+
+    broken = tmp_path / "broken.wav"
+    broken.write_bytes(b"not a wav at all")
+    assert phonad.wav_seconds(broken) is None
+    assert phonad.wav_seconds(tmp_path / "missing.wav") is None
