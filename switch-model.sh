@@ -26,7 +26,7 @@ KEY="llm_model"
 
 current() {
     "$HOME/.local/share/phona/venv/bin/python" -c \
-        "import json,sys;print(json.load(open('$CONFIG'))[sys.argv[1]])" "$KEY"
+        "import json,sys;print(json.load(open('$CONFIG')).get(sys.argv[1]) or 'not set')" "$KEY"
 }
 
 case "${1:-}" in
