@@ -260,9 +260,14 @@ def test_pinning_does_not_rely_on_the_offline_environment_flag():
 
 
 def test_the_loader_is_given_the_resolved_target():
-    """Both loaders must receive the pinned target rather than the raw repo id."""
+    """Both loaders must receive the pinned target rather than the raw repo id.
+
+    Matched on the argument rather than the whole call, because the loader is now handed to
+    a worker thread and pinning the exact call text failed this for a change that kept the
+    behaviour it is here to protect.
+    """
     source = (ROOT / "engine/phonad.py").read_text()
-    assert "load(self.llm_target)" in source
+    assert re.search(r"\bload[(,] *self\.llm_target\b", source)
     assert '"path_or_hf_repo": self.stt_target' in source
 
 
