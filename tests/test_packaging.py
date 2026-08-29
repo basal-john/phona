@@ -115,17 +115,30 @@ def test_version_is_a_sane_semver():
     assert re.fullmatch(r"\d+\.\d+\.\d+", version), f"unusable version {version}"
 
 
-def test_bundle_version_matches_the_latest_git_tag():
+def test_bundle_version_is_never_behind_the_latest_git_tag():
     """Regression: the app reported 1.0.0 while the release tag said v1.1.0, which makes
-    any update comparison wrong."""
+    any update comparison wrong.
+
+    The bundle is allowed to lead the tag, and demanding equality made a release
+    unshippable. Bumping the version has to be reviewed and merged before the tag can be
+    cut against the merged commit, so the bump PR always sees a tag one release behind
+    itself, and equality failed it every time. That deadlock is why the bundle sat at
+    1.4.0 for fifteen merged changes. Only the bundle falling behind is the defect the
+    original regression describes, so only that fails here.
+    """
     info = plistlib.loads(INFO.read_bytes())
     try:
         tag = subprocess.run(["git", "describe", "--tags", "--abbrev=0"],
                              cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
     except subprocess.CalledProcessError:
         pytest.skip("no tags in this checkout")
-    assert tag.lstrip("v") == info["CFBundleShortVersionString"], (
-        f"tag {tag} disagrees with bundle {info['CFBundleShortVersionString']}")
+
+    def parts(text):
+        return tuple(int(n) for n in text.lstrip("v").split("."))
+
+    bundle = info["CFBundleShortVersionString"]
+    assert parts(bundle) >= parts(tag), (
+        f"bundle {bundle} is behind tag {tag}, so the app cannot see its own release")
 
 
 # --- documentation assets ----------------------------------------------------------
