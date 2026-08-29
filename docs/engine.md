@@ -8,14 +8,21 @@ Nothing leaves the machine.
 ## Pipeline
 
 ```
-mic -> ffmpeg (16 kHz mono) -> silence gate -> Whisper large-v3-turbo
+mic -> ffmpeg (16 kHz mono) -> silence gate -> Parakeet TDT 0.6b v3
     -> repetition guard -> Qwen3-4B grammar pass -> clipboard -> paste at cursor
 ```
 
-Whisper was chosen over Parakeet on measured evidence. On 12 sentences with deliberate
-grammar errors, Whisper large-v3-turbo preserved 12 of 12 errors for the LLM to fix.
-Parakeet TDT silently repaired 2 of them during transcription, which destroys the signal
-the correction stage exists to catch.
+Speech runs on Parakeet, which reversed an earlier choice. Whisper won the first
+comparison, 12 of 12 planted errors preserved against Parakeet's 10, on the reasoning that a
+transcriber that quietly fixes grammar destroys the signal the correction stage exists to
+catch. A larger measurement overturned it: the two tie at 2.45% word error rate on the
+LibriSpeech test-clean sample, they tie again at 12 of 14 on planted errors while failing on
+different ones, and Parakeet runs at RTF 0.030 against 0.107. Parakeet also returns an empty
+string on silence and noise where Whisper invents "thanks for watching".
+
+Parakeet takes neither a language nor an initial prompt, so `use_initial_prompt` and the
+dictionary hint do not reach it, and the daemon logs that at startup. The backend is chosen
+from the configured repo id, so naming a Whisper repo loads Whisper and needs no migration.
 
 ## Layout
 
@@ -115,7 +122,7 @@ from Shortcuts.app, Alfred with Powerpack, Raycast or Karabiner-Elements.
 A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 
 - the last 12 dictations, newest first, click one to copy it back to the clipboard
-- hover any entry to see what Whisper actually heard before correction
+- hover any entry to see what the speech model actually heard before correction
 - export the whole log as markdown and reveal it in Finder
 - open the history file, the settings file or this README
 - warm the microphone, restart the daemon, reload phona
@@ -126,13 +133,13 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `stt_model` | `whisper-large-v3-turbo` | any mlx-community Whisper repo |
-| `llm_model` | `Qwen3-4B-Instruct-2507-4bit` | any mlx-lm chat model |
+| `stt_model` | `parakeet-tdt-0.6b-v3` | any mlx-community Parakeet or Whisper repo |
+| `llm_model` | `Qwen3-4B-Instruct-2507-8bit` | any mlx-lm chat model |
 | `language` | `en` | set to `auto` to detect, or `de` for German |
 | `input_device` | `:default` | avfoundation index, for example `:1` |
 | `silence_max_db` | `-42.0` | quieter than this counts as silence |
 | `max_words_per_second` | `6.0` | above this the transcript is treated as noise |
-| `use_initial_prompt` | `false` | bias Whisper with the dictionary, raises hallucination risk |
+| `use_initial_prompt` | `false` | bias Whisper with the dictionary, raises hallucination risk, ignored by Parakeet |
 | `dictionary` | `["Phona"]` | vocabulary hint, only used when the flag above is on |
 | `replacements` | `{}` | literal fixes, applied before the layout pass, for example `{"jeera": "Jira"}` |
 | `spoken_layout` | `true` | act on `new paragraph`, `new line`, `bullet point` spoken as a sentence of their own |
@@ -150,7 +157,7 @@ On this machine, after the daemon is warm:
 
 | Stage | Time |
 | --- | --- |
-| Whisper, short utterance | about 0.75 s |
+| Speech, short utterance | about 0.75 s measured on Whisper, roughly a third of that on Parakeet from its RTF |
 | Grammar pass, prefix cache warm | about 0.44 s |
 | End to end after you stop speaking | about 1.2 s |
 

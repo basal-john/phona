@@ -196,9 +196,17 @@ def build_planted():
 def checker():
     """A LanguageTool handle, or None when it is not installed.
 
-    The tool is a 259 MB Java download and only this script wants it, so it stays out of the
-    engine's own environment and out of CI. Without it the run still produces every other
-    number.
+    The tool is a Java download, 399 MB in `~/.cache/language_tool_python` as measured, and
+    only this script wants it, so it stays out of the engine's own environment and out of CI.
+    Without it the run still produces every other number, and a run that quietly lost it
+    reports `grammar 0 -> 0` rather than failing, which is easy to read past.
+
+    Nothing else here leaves the standard library, so the way to have it without touching the
+    daemon's environment is a venv of its own:
+
+        python3 -m venv ~/.cache/phona-eval-venv
+        ~/.cache/phona-eval-venv/bin/pip install language_tool_python
+        ~/.cache/phona-eval-venv/bin/python tests/eval_correction.py --run <label>
     """
     try:
         import language_tool_python
