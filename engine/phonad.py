@@ -50,8 +50,10 @@ prompt-level setting of it that is worth having. Both were reverted.
 What the ten cost is a second generation rather than a wrong result, because every one of
 them recovered on the retry. The frame did not even buy that back: the slowest case ran 16.3
 seconds before and 16.2 after. Nothing here is worth a rerun without a new idea, and the
-harness to test one is `tests/eval_correction.py`, which is deterministic to the byte across
-a daemon restart, so any delta it reports is causal.
+harness to test one is `tests/eval_correction.py`. Decoding is greedy, and rerunning the
+unchanged engine after a daemon restart returned all 402 corrections byte for byte, so a
+difference in what the model wrote is caused by the change under test rather than by noise.
+The run also records wall clock timings, and those do move between runs.
 """
 
 import contextlib
