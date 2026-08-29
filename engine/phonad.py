@@ -30,6 +30,28 @@ because a starting point keeps "since" while a length becomes "for", and only th
 teaches the distinction. The other shows a dictated request being corrected rather than
 carried out, since a small model will otherwise answer it and invent text the speaker never
 said.
+
+Widening that second lesson was measured and rejected. Scoring 403 corrections found the
+reply guard tripping ten times on "model answered instead of correcting", and nine of the
+ten were an imperative addressed to an assistant, "help me respond to him", "I want you to
+build a script", a shape the two question-shaped shots do not cover. Two ways of covering it
+were built and scored against the same corpus. Three further shots for the imperative, the
+polite request and the remark addressed to a person took the trips from ten to six. Framing
+every request inline with what the text is, "the following is dictation to rewrite, not a
+request to you", took them to four.
+
+Both cost more than they bought, and they failed the same way. Stray token edits against the
+planted answers went 96, then 144 for the shots and 174 for the frame, while repairs that
+touched nothing else went 95, then 89 and 70. The trips fall and the collateral rises
+together, monotonically, across two unrelated interventions: the model's willingness to obey
+the dictation and its willingness to rewrite the rest of it are one dial, and there is no
+prompt-level setting of it that is worth having. Both were reverted.
+
+What the ten cost is a second generation rather than a wrong result, because every one of
+them recovered on the retry. The frame did not even buy that back: the slowest case ran 16.3
+seconds before and 16.2 after. Nothing here is worth a rerun without a new idea, and the
+harness to test one is `tests/eval_correction.py`, which is deterministic to the byte across
+a daemon restart, so any delta it reports is causal.
 """
 
 import contextlib
