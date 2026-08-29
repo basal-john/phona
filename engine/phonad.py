@@ -31,7 +31,7 @@ teaches the distinction. The other shows a dictated request being corrected rath
 carried out, since a small model will otherwise answer it and invent text the speaker never
 said.
 
-Widening that second lesson was measured and rejected. Scoring 403 corrections found the
+Widening that second lesson was measured and rejected. Scoring 402 corrections found the
 reply guard tripping ten times on "model answered instead of correcting", and nine of the
 ten were an imperative addressed to an assistant, "help me respond to him", "I want you to
 build a script", a shape the two question-shaped shots do not cover. Two ways of covering it
@@ -1070,7 +1070,7 @@ def hyphen_joins_spoken_words(base, said, permitted):
 
     WORD keeps a hyphen inside a token, so "AI-assisted" is one word and matches neither
     "ai" nor "assisted" in a transcript that said them apart. Hyphenating a compound is the
-    correction the speaker wanted, and the guard was throwing it away: across 403 scored
+    correction the speaker wanted, and the guard was throwing it away: across 402 scored
     corrections this was 8 of the 22 rejections on the current model and 8 of 27 on the
     4-bit, the single largest cause on both.
 

@@ -34,7 +34,7 @@ pull request comment.
 
 ## Why local
 
-Everything runs on your Mac. Whisper for speech, a 4B language model for the grammar
+Everything runs on your Mac. Parakeet for speech, a 4B language model for the grammar
 pass, both on Apple's MLX. Your voice never reaches a server, so it is safe for work you
 would not paste into a web form.
 
@@ -397,7 +397,7 @@ in chat apps, muting other audio, the Dock icon, and open at login.
 Option held
   -> AVAudioEngine captures 16 kHz mono, and publishes a live level for the waveform
   -> silence gate rejects a near-silent take before it reaches the model
-  -> Whisper large-v3-turbo transcribes
+  -> Parakeet TDT 0.6b v3 transcribes
   -> repetition guard discards degenerate output
   -> Qwen3-4B rewrites it as correct English
   -> layout settles, and a chat app loses the closing full stop
@@ -408,11 +408,6 @@ The Swift app owns the interface and the audio. A small Python daemon holds the 
 warm in memory and answers over a unix socket, which is what keeps a dictation at about a
 second instead of reloading several gigabytes each time.
 
-**Why Whisper and not Parakeet**, which is faster: on 12 sentences with deliberate grammar
-errors, Whisper preserved them for the correction stage to fix, while Parakeet silently
-repaired two during transcription. A transcriber that quietly fixes your grammar destroys
-the signal the correction stage exists to catch. Speed lost that argument to fidelity.
-
 The daemon prefills a KV cache with the fixed prompt prefix, which cut the grammar pass
 from 1.35 s to 0.40 s.
 
@@ -420,30 +415,58 @@ from 1.35 s to 0.40 s.
 
 | Job | Model | Size | Why |
 | --- | --- | --- | --- |
-| speech | `mlx-community/whisper-large-v3-turbo` | 1.5 GB | chosen over Parakeet on a measured comparison, see below |
-| grammar | `mlx-community/Qwen3-4B-Instruct-2507-4bit` | 2.1 GB | picked as a sensible default and never benchmarked against alternatives |
+| speech | `mlx-community/parakeet-tdt-0.6b-v3` | 2.4 GB | matches Whisper's accuracy at a third of the cost, see below |
+| grammar | `mlx-community/Qwen3-4B-Instruct-2507-8bit` | 4.1 GB | won a four-model comparison on precision, see below |
 
-The speech choice was earned. Parakeet TDT is roughly five times faster, and it lost
-anyway: on twelve sentences with planted grammar errors it silently repaired two during
-transcription, which destroys the signal the correction stage exists to catch. Whisper
-preserved all twelve. Fidelity beat speed because the correction stage cannot fix an error
-it never sees.
+**Speech went to Parakeet, reversing an earlier call.** The first comparison used twelve
+sentences with planted grammar errors, Parakeet silently repaired two of them during
+transcription, and fidelity beat speed. A larger measurement overturned that. On the
+LibriSpeech test-clean sample the two tie at 2.45% word error rate, and Parakeet runs at
+RTF 0.030 against 0.107, so the speech stage costs a third of what it did. On fourteen
+planted-error cases they tie again at twelve preserved verbatim and fail on different ones,
+Parakeet repairing "the informations" where Whisper repairs "there any way". The original
+finding was real and the sample was too small to carry it.
 
-The grammar choice was not earned in the same way. Qwen3-4B was picked because it follows
-instructions well at 4-bit, fits comfortably in memory, and answers in well under a second.
-Those are reasonable criteria, and no alternative was ever measured against it. Treat it as
-a default that works rather than a winner, and see `tests/run_model_tests.py` for the suite
-that would settle it.
+Parakeet also wins on silence. On quiet noise, loud noise and a pure tone it returns an
+empty string where Whisper invents "thanks for watching", so the hallucination filters
+never fire.
 
-Both are swappable. Any mlx-community Whisper or mlx-lm chat model will load:
+It costs one thing: Parakeet takes neither a language nor an initial prompt, so the
+dictionary hint does not reach it. The daemon says so at startup rather than pretending
+otherwise. Switch back with `./switch-model.sh whisper` if you need that hint.
+
+**Grammar stayed with Qwen3-4B, and is now earned.** It was picked as a sensible default
+and went unmeasured for a month. Four models were then scored over 402 corrections drawn
+from real dictation, 180 with a planted error and a known answer, 222 raw transcripts:
+
+| | Qwen3-4B 8-bit | Qwen3-4B 4-bit | Qwen3.5-4B | Gemma 4 E4B |
+| --- | --- | --- | --- | --- |
+| planted errors repaired | 127 | 127 | 129 | **133** |
+| repaired with nothing else touched | **95** | 89 | 73 | 68 |
+| stray token edits | **96** | 112 | 210 | 231 |
+| mean seconds | 1.57 | **1.18** | 6.08 | 4.32 |
+
+Gemma repairs the most and is the better grammar model on that axis alone. It was not
+chosen, because it pays with 2.4 times the stray edits against known-correct answers and
+half its repairs disturb the rest of the sentence. For dictation an unwanted edit is worse
+than a missed one: a missed comma is survivable, a quietly reworded sentence goes out under
+your name. Qwen3.5 loses outright, slower than both alternatives with more collateral than
+the model it would replace.
+
+Reproduce any of it with `tests/eval_correction.py`. Decoding is greedy, so a rerun of an
+unchanged engine returns all 402 corrections byte for byte and a difference between two runs
+is caused by the change under test.
+
+Both are swappable. Any mlx-community Whisper or Parakeet repo, and any mlx-lm chat model,
+will load:
 
 ```bash
 phona models                  # what is loaded, and at which revision
 ```
 
-Edit `stt_model` or `llm_model` in `config.json`, then `phona restart`. A larger grammar
-model raises quality and roughly doubles latency. A smaller Whisper is faster and mishears
-more, which matters more here than it would elsewhere.
+Edit `stt_model` or `llm_model` in `config.json`, then `phona restart`. The backend is
+picked from the repo id, so naming a Whisper repo loads Whisper and needs no other change.
+A larger grammar model raises quality and roughly doubles latency.
 
 ### Model updates are pinned deliberately
 
@@ -457,8 +480,8 @@ the loader that path instead of the repo name. No hub lookup happens at all, and
 states exactly what was loaded:
 
 ```
-pinned mlx-community/whisper-large-v3-turbo @ a4aaeec0636e
-pinned mlx-community/Qwen3-4B-Instruct-2507-4bit @ 50d427756c6b
+pinned mlx-community/parakeet-tdt-0.6b-v3 @ ed2b7e8c15f9
+pinned mlx-community/Qwen3-4B-Instruct-2507-8bit @ 0e42af584497
 ```
 
 Updating is a decision, not a side effect:
@@ -477,15 +500,15 @@ checked against the hub, and only checked.
 ```bash
 phona models
 
-speech    mlx-community/whisper-large-v3-turbo
-          revision a4aaeec0636e
-grammar   mlx-community/Qwen3-4B-Instruct-2507-4bit
-          revision 50d427756c6b
+speech    mlx-community/parakeet-tdt-0.6b-v3
+          revision ed2b7e8c15f9
+grammar   mlx-community/Qwen3-4B-Instruct-2507-8bit
+          revision 0e42af584497
 pinned    speech True, grammar True
 
 against the hub:
-  mlx-community/whisper-large-v3-turbo is current at a4aaeec0636e
-  mlx-community/Qwen3-4B-Instruct-2507-4bit is current at 50d427756c6b
+  mlx-community/parakeet-tdt-0.6b-v3 is current at ed2b7e8c15f9
+  mlx-community/Qwen3-4B-Instruct-2507-8bit is current at 0e42af584497
 ```
 
 The same check ends the weekly audit, so a week where the weights moved says so in
@@ -505,10 +528,10 @@ Offline, the check says so and everything carries on. A model name that does not
 the hub is reported as a name to fix rather than as a network problem, because `config.json`
 is edited by hand.
 
-What this cannot tell you is that a better model exists. A newer Whisper, a newer Qwen or a
-Parakeet worth reconsidering all live in repos this machine has never referenced, and no
+What this cannot tell you is that a better model exists. A newer Parakeet, a newer Qwen or
+a model nobody here has heard of all live in repos this machine has never referenced, and no
 amount of watching the two in your config will surface one. That question is answered by
-running `tests/run_model_tests.py` against the candidates, not by a feed.
+scoring the candidates with `tests/eval_correction.py`, not by a feed.
 
 The obvious approach, setting `HF_HUB_OFFLINE`, does not work. `huggingface_hub` freezes
 that flag into a module constant the first time it is imported, so setting it at runtime
@@ -539,8 +562,8 @@ words are always safer than invented ones.
 
 The waiting is the two models and almost nothing else. Measured from releasing Option to the
 text landing: 31 ms to close the device and hand off, 95 ms of daemon overhead, **1670 ms of
-Whisper and Qwen**, 21 ms to paste. Whisper is near constant at about 0.8 s whatever the
-length of the recording. The correction scales with how much you said, 0.6 s under fifteen
+speech and grammar**, 21 ms to paste. The figure predates the move to Parakeet, which cut
+the speech stage to roughly a third, so the total is now lower than it says. The correction scales with how much you said, 0.6 s under fifteen
 words and 2.5 s past forty, because it generates a token at a time. Run the app with
 `--trace-timing` to get that breakdown in the log for your own dictations.
 
@@ -634,12 +657,31 @@ quietly start uploading your dictations.
 python -m pytest tests/ -q          # logic and packaging, no model needed
 cd macapp && swift test             # version comparison
 python tests/run_model_tests.py     # the grammar suite, needs the engine running
+python tests/eval_correction.py --run <label>   # score a model, needs the engine running
 ```
 
 The split is deliberate. The first two run in CI on every push, on an Apple Silicon
-runner, in a couple of minutes. The third needs the warm daemon and several gigabytes of
-models, so it stays local and is run before touching the prompt, the few-shot examples or
+runner, in a couple of minutes. The last two need the warm daemon and several gigabytes of
+models, so they stay local and are run before touching the prompt, the few-shot examples or
 the guard.
+
+The grammar suite is a pass or fail gate and the current model passes 29 of 29, so it
+cannot rank anything. `eval_correction.py` can. It plants a known error into a sentence you
+actually dictated and checks whether the model removes exactly that one, which gives ground
+truth for free, and it replays your raw transcripts to count what the model did to them.
+`--report <a> <b>` puts two runs side by side.
+
+Its LanguageTool axis is optional and wants a 399 MB Java download. Nothing else in the
+script leaves the standard library, so keep it out of the daemon's environment:
+
+```bash
+python3 -m venv ~/.cache/phona-eval-venv
+~/.cache/phona-eval-venv/bin/pip install language_tool_python
+~/.cache/phona-eval-venv/bin/python tests/eval_correction.py --run <label>
+```
+
+Without it the run still reports every other number, as `grammar 0 -> 0` rather than a
+failure, which is easy to read past.
 
 Every case corresponds to a defect that actually happened. The suite is not there for
 coverage, it is there so the same mistake cannot ship twice:
@@ -793,7 +835,7 @@ take: no account, no cloud models, and the grammar pass treated as the main feat
 than an add-on.
 
 Speech and correction both run on [MLX](https://ml-explore.github.io/mlx/), using
-mlx-whisper and mlx-lm with Qwen3-4B.
+parakeet-mlx and mlx-lm with Qwen3-4B. mlx-whisper is still there for the Whisper backend.
 
 ## License
 

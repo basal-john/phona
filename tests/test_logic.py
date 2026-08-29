@@ -1600,7 +1600,7 @@ def test_a_plural_of_something_that_was_said_is_not_an_invented_name():
 def test_hyphenating_two_spoken_words_is_not_an_invented_name():
     """The defect this fixes. The transcript said "AI assisted development guidelines", the
     model wrote "AI-assisted", and the correction was discarded because WORD keeps the
-    hyphen inside the token, so it matched neither word. Measured over 403 corrections this
+    hyphen inside the token, so it matched neither word. Measured over 402 corrections this
     was the largest single cause of rejection on both the 8-bit and the 4-bit model."""
     assert phonad.invented_names("comments on the AI assisted development guidelines",
                                  "Comments on the AI-assisted development guidelines.") == []
