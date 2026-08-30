@@ -89,6 +89,23 @@ def ask_model(text, timeout=180):
         return None
 
 
+INVENTED_NAME_LIST = re.compile(r"named something never said: \[(.*?)\]")
+
+
+def invented_names_in_reason(guard_reason):
+    """The literal names an invented-name guard rejection names, or none.
+
+    `phonad.invented_names` already writes the exact words it rejected into the reason, as a
+    Python list repr, so this reads them back rather than re-deriving them from the
+    transcript. Reading the same fact twice by two different routes is how the two would
+    drift.
+    """
+    match = INVENTED_NAME_LIST.search(guard_reason or "")
+    if not match:
+        return []
+    return [piece.strip(" '\"") for piece in match.group(1).split(",") if piece.strip(" '\"")]
+
+
 def deterministic_findings(history, corrections):
     """Facts, not guesses. Everything here was recorded by the daemon or the user.
 
@@ -137,6 +154,28 @@ def deterministic_findings(history, corrections):
                 by_reason.items(), key=lambda kv: -len(kv[1]))},
             "examples": [" ".join(g.get("text", "").split())[:90] for g in guarded[:3]],
         })
+
+        by_name = collections.defaultdict(list)
+        for entry in guarded:
+            for name in invented_names_in_reason(entry.get("guard_reason")):
+                by_name[name].append(entry)
+        repeats = {name: hits for name, hits in by_name.items() if len(hits) >= 2}
+        if repeats:
+            findings.append({
+                "kind": "invented_name_repeats",
+                "confidence": "certain",
+                "names": {name: len(hits) for name, hits in sorted(
+                    repeats.items(), key=lambda kv: -len(kv[1]))},
+                "note": "The guard threw away a correction for naming this more than once. "
+                        "A name that keeps recurring is more likely a real word you say than "
+                        "a fresh invention each time, and belongs in `dictionary` in "
+                        "config.json so the guard stops fighting it. Not applied "
+                        "automatically: the same guard exists to catch a genuinely invented "
+                        "name, and a repeat could still be the model making the same wrong "
+                        "guess twice rather than the same true one.",
+                "examples": {name: " ".join(hits[0].get("text", "").split())[:90]
+                             for name, hits in repeats.items()},
+            })
 
     long_ones = [h for h in history
                  if len(h.get("raw", "").split()) >= 80 and "\n\n" not in h.get("text", "")]
@@ -343,13 +382,19 @@ def human(report):
         "flagged_by_you": "You flagged these",
         "takes_discarded": "Recordings that produced nothing",
         "corrections_refused": "Corrections the guard refused",
+        "invented_name_repeats": "Names the guard keeps rejecting",
         "unbroken_long_dictations": "Long dictations that came back as one block",
         "likely_mishearing": "Possible mishearings, inferred so treat with suspicion",
     }
     for kind, items in by_kind.items():
         lines.append(f"## {titles.get(kind, kind)}")
         for f in items:
-            if f.get("count") is not None:
+            if f.get("names") is not None:
+                lines.append(f"  {f.get('note', '')}")
+                for name, n in f["names"].items():
+                    example = f.get("examples", {}).get(name, "")
+                    lines.append(f"    {n} x {name}    e.g. \"{example}\"")
+            elif f.get("count") is not None:
                 lines.append(f"  {f['count']} of them. {f.get('note', '')}")
                 for reason, n in (f.get("reasons") or {}).items():
                     lines.append(f"    {n} x {reason}")

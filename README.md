@@ -644,9 +644,13 @@ tool gets, and it is what makes the audit useful rather than guesswork.
 
 The audit separates what it knows from what it guessed: entries you flagged, takes the
 silence gate discarded and corrections the guard refused are facts the daemon recorded,
-while suspected mishearings come from the local model and are labelled as inferences. It
-proposes replacements and applies none of them until you say so. A weekly run lands in
-`~/.local/share/phona/audit-latest.md` on Monday mornings.
+while suspected mishearings come from the local model and are labelled as inferences. A
+name the guard has rejected more than once gets its own section, since a repeat argues for
+adding it to `dictionary` rather than for a fresh coincidence each time, but that call is
+left to you: the same guard exists to catch a name that really was invented, so nothing
+here is added on your behalf. The audit proposes replacements and applies none of them
+until you say so. A weekly run lands in `~/.local/share/phona/audit-latest.md` on Monday
+mornings.
 
 Analysis uses the same local model as everything else, so a scheduled audit does not
 quietly start uploading your dictations.
