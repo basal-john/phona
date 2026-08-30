@@ -586,6 +586,53 @@ def test_flagged_entries_become_findings():
     assert any(f["kind"] == "flagged_by_you" for f in findings)
 
 
+def test_a_name_the_guard_rejects_once_is_not_flagged_as_a_repeat():
+    """One rejection could be a genuine invented name. Only a repeat is worth surfacing,
+    since the guard's whole job is catching a plausible name the speaker never said."""
+    history = [
+        {"raw": "use my ex code to find it", "text": "Use my Xcode to find it.",
+         "guarded": True,
+         "guard_reason": "correction named something never said: ['Xcode']"},
+    ]
+    findings = audit.deterministic_findings(history, [])
+    assert not any(f["kind"] == "invented_name_repeats" for f in findings)
+
+
+def test_a_name_the_guard_keeps_rejecting_is_surfaced_for_the_dictionary():
+    """Regression: this exact pattern, a mishearing the model fixed correctly and the guard
+    threw away anyway, sat unread in the reasons tally. `corrections_refused` counts how many
+    times the guard fired, never which word it fought, so 8 rejections of the same real term
+    looked identical to 8 rejections of 8 different ones."""
+    history = [
+        {"raw": "use my ex code to find it", "text": "Use my Xcode to find it.",
+         "guarded": True,
+         "guard_reason": "correction named something never said: ['Xcode']"},
+        {"raw": "check ex code for the crash", "text": "Check Xcode for the crash.",
+         "guarded": True,
+         "guard_reason": "rewrite named something never said: ['Xcode']"},
+    ]
+    findings = audit.deterministic_findings(history, [])
+    repeats = [f for f in findings if f["kind"] == "invented_name_repeats"]
+    assert len(repeats) == 1
+    assert repeats[0]["names"] == {"Xcode": 2}
+    assert "suggestion" not in repeats[0], \
+        "a repeat is a judgment call, not something --apply may act on"
+
+
+def test_repeated_invented_names_appear_in_the_human_report():
+    report = {"window_days": 7, "dictations": 2, "flagged_by_you": 0,
+              "findings": [{
+                  "kind": "invented_name_repeats", "confidence": "certain",
+                  "names": {"PR": 2},
+                  "note": "belongs in the dictionary",
+                  "examples": {"PR": "merge this PR"},
+              }],
+              "proposed_replacements": {}, "model_updates": []}
+    text = audit.human(report)
+    assert "2 x PR" in text
+    assert "merge this PR" in text
+
+
 # --- the audit needs the model, not the corrector ----------------------------------
 
 class _FakeSocket:
