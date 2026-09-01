@@ -110,10 +110,18 @@ final class Recorder {
         receivedAnyAudio = false
         meterLock.unlock()
 
+        /// A stale node graph from a route change since the last `start()` (input device
+        /// switched, Bluetooth mic connected/disconnected, sleep/wake) is exactly what makes
+        /// `installTap` below throw an uncatchable Objective-C exception rather than a Swift
+        /// error: the format read from `outputFormat` no longer matches what the engine's
+        /// graph considers current. `reset()` invalidates that stale graph so the format read
+        /// right after it is fresh.
+        engine.reset()
+
         let input = engine.inputNode
         let hardware = input.outputFormat(forBus: 0)
-        guard hardware.sampleRate > 0 else {
-            throw Failure.engine("the input device reported no sample rate")
+        guard hardware.sampleRate > 0, hardware.channelCount > 0 else {
+            throw Failure.engine("the input device reported no usable format")
         }
 
         let url = Paths.base.appendingPathComponent("take-\(UUID().uuidString).wav")

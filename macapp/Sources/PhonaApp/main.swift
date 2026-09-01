@@ -299,16 +299,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             if !DaemonClient.isAlive() { DaemonClient.startAndWait() }
             if let released = self.releasedAt { self.trace("daemon request sent", since: released) }
+
+            /// A normal reply lands in 1-5s. Past that, a HUD stuck on "working" with no other
+            /// signal reads as broken rather than slow, which is what "the output never came"
+            /// turned out to mean on 2026-09-01: the daemon was still alive, just tens of
+            /// seconds slower than usual under memory pressure from an unrelated process. This
+            /// does not change when or whether the result arrives, only whether the wait during
+            /// it is legible, so a still-slow request after this one keeps working the same way,
+            /// just with something to check.
+            let stillWorkingNotice = "Still working. This dictation is taking longer than usual."
+            let slowNotice = DispatchWorkItem { [weak self] in
+                self?.statusItem?.button?.toolTip = stillWorkingNotice
+                Paths.log("dictation still running past 8s, longer than the usual 1-5s")
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: slowNotice)
+
             let outcome = Result { try DaemonClient.process(url: take.url,
                                                             seconds: take.seconds,
                                                             mode: nil,
                                                             style: self.style(forSession: mine)) }
+            slowNotice.cancel()
             if let released = self.releasedAt, case .success(let r) = outcome {
                 self.trace(String(format: "daemon replied, its own stt %.2fs llm %.2fs",
                                   r.sttSeconds, r.llmSeconds), since: released)
             }
             DispatchQueue.main.async {
                 guard mine == self.session else { return }
+                /// Only clear a tooltip this dictation set. A warning from an earlier one
+                /// (the clipboard-restore notice `notify` leaves behind) is meant to survive
+                /// until read, per `clearFailureMark`'s own comment on the sibling mark.
+                if self.statusItem?.button?.toolTip == stillWorkingNotice {
+                    self.statusItem?.button?.toolTip = nil
+                }
                 switch outcome {
                 case .success(let result) where result.state == "done" && !result.text.isEmpty:
                     /// Anything that delivers text clears the mark, not only a clean result.
