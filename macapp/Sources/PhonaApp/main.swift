@@ -309,7 +309,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             /// just with something to check.
             let stillWorkingNotice = "Still working. This dictation is taking longer than usual."
             let slowNotice = DispatchWorkItem { [weak self] in
-                self?.statusItem?.button?.toolTip = stillWorkingNotice
+                guard let self, mine == self.session else { return }
+                /// Never clobber a tooltip already there, ours or a warning from an earlier
+                /// dictation waiting to be read (see the matching guard below on clear).
+                guard self.statusItem?.button?.toolTip == nil else { return }
+                self.statusItem?.button?.toolTip = stillWorkingNotice
                 Paths.log("dictation still running past 8s, longer than the usual 1-5s")
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: slowNotice)
