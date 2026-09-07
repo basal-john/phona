@@ -118,16 +118,19 @@ FFMPEG = resolve_ffmpeg() or "ffmpeg"
 MODE_NAME = "correct"
 
 DEFAULTS = {
-    "stt_model": "mlx-community/whisper-large-v3-turbo",
-    "llm_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+    "stt_model": "mlx-community/parakeet-tdt-0.6b-v3",
+    "llm_model": "mlx-community/Qwen3-4B-Instruct-2507-8bit",
     "language": "en",
     "input_device": ":default",
     "max_seconds": 300,
     "min_seconds": 0.4,
+    "device_open_timeout": 6.0,
     "sounds": True,
     "pin_models": True,
+    "model_update_check": True,
     "use_initial_prompt": False,
     "spoken_layout": True,
+    "self_correction": True,
     "silence_max_db": -42.0,
     "max_words_per_second": 6.0,
     "dictionary": ["Phona"],

@@ -6,8 +6,8 @@
 #   ./switch-model.sh 8b       correction: Qwen3-8B, 28 of 29, no better and larger
 #   ./switch-model.sh qwen35   correction: Qwen3.5-4B, the successor to the current model
 #   ./switch-model.sh gemma4   correction: Gemma 4 E4B, the size-matched rival
-#   ./switch-model.sh whisper  speech: Whisper large-v3-turbo, the default
-#   ./switch-model.sh parakeet speech: Parakeet TDT 0.6b v3, faster, no dictionary hint
+#   ./switch-model.sh whisper  speech: Whisper large-v3-turbo, slower, takes the dictionary hint
+#   ./switch-model.sh parakeet speech: Parakeet TDT 0.6b v3, the default, no dictionary hint
 #   ./switch-model.sh          print what is running now
 #
 # Measured on this machine, whole suite through the real daemon:

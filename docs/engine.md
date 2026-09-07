@@ -5,12 +5,20 @@ Voice to grammar-corrected text, fully local, on Apple Silicon.
 Press a hotkey, speak, press it again. The corrected text is pasted where your cursor is.
 Nothing leaves the machine.
 
+This file documents the Python engine and the `phona` CLI. The Mac app is a second front end
+onto the same daemon and differs in the parts it owns: it captures with `AVAudioEngine` rather
+than ffmpeg, plays its own four-cue set rather than the system sounds below, and serves its own
+menu bar. Everything from the silence gate onwards is shared.
+
 ## Pipeline
 
 ```
 mic -> ffmpeg (16 kHz mono) -> silence gate -> Parakeet TDT 0.6b v3
     -> repetition guard -> Qwen3-4B grammar pass -> clipboard -> paste at cursor
 ```
+
+ffmpeg is the CLI's capture path. The app captures with `AVAudioEngine` and hands the daemon
+the same 16 kHz mono wav.
 
 Speech runs on Parakeet, which reversed an earlier choice. Whisper won the first
 comparison, 12 of 12 planted errors preserved against Parakeet's 10, on the reasoning that a
@@ -55,13 +63,21 @@ phona history --search "jira"    entries mentioning a word
 phona history --plain    corrected text only, one per line, pipe friendly, newlines escaped as \n
 phona history --all --export ~/log.md    write the whole log as markdown
 phona status             models and cached prefix size
+phona models             what is loaded, at which revision, and whether the hub has moved
+phona update-models      fetch newer weights, then restart
+phona wrong "what I said"    flag the last dictation as wrong, the text is optional
+phona warm               open the input device once so the next dictation is not cold
+phona cancel             throw away a recording in progress
+phona config             print config.json
 phona restart            reload the daemon after a config change
+phona stop-daemon        unload the launch agent and kill the daemon
 phona logs               daemon log
 tail ~/.local/share/phona/client.log    recording and paste side, the Hammerspoon path
 ```
 
-Audio cues: Tink means recording, Pop means stopped, Glass means text ready, Basso means
-nothing usable was captured.
+Audio cues, the CLI's own, played with `afplay` from `/System/Library/Sounds`: Tink means
+recording, Pop means stopped, Glass means text ready, Basso means nothing usable was captured.
+The app does not use these. It ships four cues of its own, described in the README.
 
 ## Tap Option to talk
 
@@ -117,9 +133,11 @@ before recording starts. Reload with Control+Option+Command+R, or from the Hamme
 To use a different trigger instead, `phona --paste` is a plain command and can be bound
 from Shortcuts.app, Alfred with Powerpack, Raycast or Karabiner-Elements.
 
-## Menu bar
+## Menu bar, the Hammerspoon one
 
-A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
+The app has its own menu bar item and this is not it. This is the older Hammerspoon fallback,
+kept for anyone driving phona from the CLI without the app running. A microphone icon sits in
+the menu bar, served by Hammerspoon. It gives you:
 
 - the last 12 dictations, newest first, click one to copy it back to the clipboard
 - hover any entry to see what the speech model actually heard before correction
@@ -135,7 +153,7 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | --- | --- | --- |
 | `stt_model` | `parakeet-tdt-0.6b-v3` | any mlx-community Parakeet or Whisper repo |
 | `llm_model` | `Qwen3-4B-Instruct-2507-8bit` | any mlx-lm chat model |
-| `language` | `en` | set to `auto` to detect, or `de` for German |
+| `language` | `en` | set to `auto` to detect, or `de` for German. Whisper only, Parakeet takes no language |
 | `input_device` | `:default` | avfoundation index, for example `:1` |
 | `silence_max_db` | `-42.0` | quieter than this counts as silence |
 | `max_words_per_second` | `6.0` | above this the transcript is treated as noise |
@@ -148,6 +166,7 @@ A microphone icon sits in the menu bar, served by Hammerspoon. It gives you:
 | `pin_models` | `true` | load the cached snapshot instead of re-resolving the hub |
 | `model_update_check` | `true` | ask the hub whether the pinned weights are behind. Reports only, never downloads. The one outbound call outside an install or an explicit update |
 | `min_seconds` | `0.4` | shorter recordings are discarded as a slip of the key |
+| `max_seconds` | `300` | hard cap on one recording |
 | `device_open_timeout` | `6.0` | seconds to wait for the input to start producing audio |
 | `sounds` | `true` | audio cues |
 
