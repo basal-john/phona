@@ -355,9 +355,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             self.hud.finish(.clipboard)
                             return
                         }
-                    } else {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(result.text, forType: .string)
+                    } else if let warning = Paster.copyToClipboard(result.text) {
+                        self.notify("Phona", warning)
                     }
                     if let released = self.releasedAt { self.trace("pasted", since: released) }
                     if result.trimmedWords > 0 {
