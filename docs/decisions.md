@@ -392,6 +392,10 @@ could not confirm a target and the dictation is being left there on purpose. Tho
 still say when something other than text was displaced, from the types the pasteboard
 advertises rather than a copy of its contents, so nothing is read at all.
 
+Every path that replaces the clipboard goes through `Paster` for exactly this reason. Copy to
+clipboard did not, and was the one output mode that destroyed a copied image without saying
+so, for as long as it existed.
+
 ## Accuracy, and the known weak spots
 
 Measured, not asserted. The suite covers three groups: sentences with planted errors,
