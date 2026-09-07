@@ -55,7 +55,7 @@ fi
 if [[ -n "${PHONA_SKIP_MODELS:-}" ]]; then
   say "skipping the model warmup"
 else
-  say "warming the models, this downloads about 3.5 GB the first time"
+  say "warming the models, this fetches about 6.5 GB the first time and keeps it on disk"
 "$TARGET/venv/bin/python" "$TARGET/phonad.py" &
 DAEMON_PID=$!
 for _ in $(seq 1 600); do
