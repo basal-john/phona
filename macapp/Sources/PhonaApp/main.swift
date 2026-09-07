@@ -347,8 +347,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         switch Paster.paste(result.text, restore: !action.keepsOnClipboard) {
                         case .pasted(let warning):
                             if let warning { self.notify("Phona", warning) }
-                        case .leftOnClipboard(let reason):
+                        case .leftOnClipboard(let reason, let warning):
                             Paths.log("nowhere to paste, left on clipboard: \(reason)")
+                            /// The clipboard was replaced before this path was taken, so
+                            /// whatever it displaced is gone whether or not the paste landed.
+                            if let warning { self.notify("Phona", warning) }
                             self.statusItem?.button?.toolTip =
                                 "Your last dictation is on the clipboard. Press Cmd+V to place it."
                             Cue.nothing.play()

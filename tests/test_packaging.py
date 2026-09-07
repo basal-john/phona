@@ -241,6 +241,35 @@ def test_every_clipboard_replacement_goes_through_paster():
         "copyToClipboard must read the warning before it clears the board"
 
 
+def test_a_displaced_clipboard_is_reported_even_when_the_paste_does_not_land():
+    """Regression: `paste` replaces the clipboard before it decides whether to send Cmd+V, so
+    on both `leftOnClipboard` paths the previous clipboard is already gone. The warning was
+    computed and then dropped by those two returns, which made a displaced image silent on
+    exactly the paths that leave the dictation on the clipboard.
+
+    Same defect as issue #6 in a different place, found reviewing the fix for it.
+    """
+    paster = (ROOT / "macapp/Sources/PhonaApp/Paster.swift").read_text()
+    assert "case leftOnClipboard(reason: String, warning: String?)" in paster, \
+        "leftOnClipboard must carry the warning, the clipboard is already replaced by then"
+
+    body = swift_function(paster, "static func paste")
+    calls = re.findall(r"\.leftOnClipboard\((?:[^()]|\([^()]*\))*\)", body, re.S)
+    assert len(calls) == 2, f"expected two leftOnClipboard returns, found {len(calls)}"
+    for call in calls:
+        assert "warning: warning" in call, (
+            "this leftOnClipboard return does not pass the computed warning through, so "
+            f"what the clipboard displaced goes unreported: {' '.join(call.split())}")
+
+    app = (ROOT / "macapp/Sources/PhonaApp/main.swift").read_text()
+    deliver = swift_function(app, "private func deliver")
+    assert "case .leftOnClipboard(let reason, let warning):" in deliver, \
+        "delivery must destructure the warning"
+    clipboard_branch = deliver[deliver.index("case .leftOnClipboard"):]
+    assert "notify" in clipboard_branch.split("return")[0], \
+        "the warning must reach the user on this path, not just the log"
+
+
 def test_paste_decisions_are_testable_without_a_pasteboard():
     """Regression, issue #7: `Paster` had no tests, because every decision was an expression
     inline in `paste`, mixed in with NSPasteboard, a CGEvent and a dispatch delay.

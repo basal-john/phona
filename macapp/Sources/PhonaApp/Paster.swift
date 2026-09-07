@@ -34,7 +34,11 @@ enum Paster {
         case pasted(warning: String?)
         /// Nothing editable was focused, so the text was left on the clipboard for the
         /// user to place themselves. Never silently discarded.
-        case leftOnClipboard(reason: String)
+        ///
+        /// This carries the warning too. The clipboard has already been replaced by the time
+        /// either of these paths is taken, so dropping the warning here made the displaced
+        /// image silent on exactly the paths that keep the dictation on the clipboard.
+        case leftOnClipboard(reason: String, warning: String?)
     }
 
     /// Deliver the text, and never lose it.
@@ -80,11 +84,12 @@ enum Paster {
         board.setString(text, forType: .string)
 
         guard plan.sendsKeystroke else {
-            return .leftOnClipboard(reason: FocusProbe.describe())
+            return .leftOnClipboard(reason: FocusProbe.describe(), warning: warning)
         }
 
         guard sendCommandV() else {
-            return .leftOnClipboard(reason: "the paste keystroke could not be sent")
+            return .leftOnClipboard(reason: "the paste keystroke could not be sent",
+                                    warning: warning)
         }
 
         if plan.restoresClipboard, snapshot.canRestore {
