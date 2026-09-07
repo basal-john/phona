@@ -246,6 +246,51 @@ def test_defaults_carry_no_personal_vocabulary():
     assert entries == ["Phona"], f"unexpected default vocabulary {entries}"
 
 
+def defaults_dict():
+    """The literal `DEFAULTS` mapping from the engine, without importing it.
+
+    Importing `phonad` pulls in mlx, which CI does not install for the fast suite.
+    """
+    source = (ROOT / "engine/phonad.py").read_text()
+    block = re.search(r"^DEFAULTS = \{(.*?)^\}", source, re.S | re.M)
+    assert block, "no DEFAULTS mapping found"
+    keys = re.findall(r'"([a-z_]+)":\s*(.+?),\s*$', block.group(1), re.M)
+    return dict(keys)
+
+
+def test_shipped_defaults_are_the_models_the_readme_documents():
+    """Regression: `DEFAULTS` still named whisper-large-v3-turbo and the 4-bit Qwen months
+    after the docs, the release notes and every measurement moved to Parakeet and the 8-bit
+    Qwen. A fresh install therefore ran a different pair from the one described, and nothing
+    said so, because the only machine that mattered had been switched by hand.
+
+    The README's model table is the statement of intent, so it is what this compares against.
+    """
+    readme = (ROOT / "README.md").read_text()
+    documented = dict(
+        re.findall(r"^\| (speech|grammar) \| `([^`]+)`", readme, re.M))
+    assert set(documented) == {"speech", "grammar"}, (
+        f"could not read the README model table, found {documented}")
+
+    defaults = defaults_dict()
+    assert defaults["stt_model"].strip('"') == documented["speech"]
+    assert defaults["llm_model"].strip('"') == documented["grammar"]
+
+
+def test_every_documented_config_key_has_a_shipped_default():
+    """A key the daemon reads through `cfg.get(key, fallback)` works without being in
+    `DEFAULTS`, but then it is missing from the config.json a fresh install writes, so the
+    file does not show the reader that the setting exists. device_open_timeout,
+    model_update_check and self_correction were all documented and all absent.
+    """
+    readme = (ROOT / "README.md").read_text()
+    documented = set(re.findall(r"^\| `([a-z_]+)` \| ", readme, re.M))
+    assert len(documented) > 10, f"could not read the README config table, found {documented}"
+
+    missing = sorted(documented - set(defaults_dict()))
+    assert not missing, f"documented but not in DEFAULTS: {missing}"
+
+
 def test_models_are_pinned_by_default():
     """The loaders resolve the hub on every load with no revision pinned, so without this
     a restart could silently swap the weights and change behaviour.
