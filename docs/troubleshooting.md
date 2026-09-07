@@ -1,8 +1,13 @@
 # Troubleshooting
 
-Every symptom below has a cause worth knowing. Logs first, if you are in a hurry:
-`~/.local/share/phona/app.log` for the app, `phonad.log` for the engine, and `history.jsonl`
-for every dictation with what was heard next to what was corrected.
+Every symptom below has a cause worth knowing. Logs first, if you are in a hurry, all three
+under `~/.local/share/phona/`:
+
+| File | What is in it |
+| --- | --- |
+| `~/.local/share/phona/app.log` | the app |
+| `~/.local/share/phona/phonad.log` | the engine |
+| `~/.local/share/phona/history.jsonl` | every dictation, what was heard next to what was corrected |
 
 ## Nothing happens when I tap Option
 

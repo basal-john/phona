@@ -40,12 +40,14 @@ Everything runs on your Mac. Parakeet for speech, a 4B language model for the gr
 both on Apple's MLX. Your voice never reaches a server, so it is safe for work you would not
 paste into a web form. It is also fast, because there is no network round trip.
 
-| | |
+| Stage | Time |
 | --- | --- |
-| **Transcription**, short utterance | ~0.75 s |
-| **Grammar pass** | ~0.40 s |
+| Transcription, short utterance | ~0.75 s |
+| Grammar pass | ~0.40 s |
 | **Second tap to text on screen** | **~1.2 s** |
-| **Needs** | Apple Silicon (M1 or later), macOS 14 or later, ~6.5 GB disk for the models |
+
+Needs an Apple Silicon Mac (M1 or later), macOS 14 or later, and about 6.5 GB of disk for the
+models.
 
 ## Install
 
@@ -201,7 +203,7 @@ as the dictation is running. Turn it off with **Mute other audio** in Settings.
 ## How it works
 
 ```mermaid
-%%{init: {'flowchart': {'rankSpacing': 32, 'nodeSpacing': 30}}}%%
+%%{init: {"flowchart": {"rankSpacing": 32, "nodeSpacing": 30}}}%%
 flowchart TD
     A(["Tap left Option"]) --> B["AVAudioEngine, 16 kHz mono"]
     B --> C{"Silence gate, -42 dB"}
@@ -251,20 +253,29 @@ The comparisons, the numbers behind them and the reason for pinning are in
 
 <br>
 
-**Settings window**, applied on the next dictation:
+**Settings window:**
 
-| Setting | What it does |
-| --- | --- |
-| When done | insert at cursor, copy to clipboard, or both |
-| Act on spoken layout commands | `new paragraph`, `new line`, `bullet point` |
-| Drop the closing full stop | in chat apps only |
-| Mute other audio | while recording |
-| Vocabulary | words the transcriber mangles, one per line |
-| Replacements | literal fixes as `wrong = right`, applied before the layout pass |
-| Show Phona in the Dock, Open Phona at login | |
+| Setting | What it does | Takes effect |
+| --- | --- | --- |
+| When done | insert at cursor, copy to clipboard, or both | next dictation |
+| Drop the closing full stop | in chat apps only | next dictation |
+| Mute other audio | while recording | next dictation |
+| Show Phona in the Dock | keep a Dock icon as well as the menu bar item | at once |
+| Open Phona at login | register Phona as a login item | at once |
+| Act on spoken layout commands | `new paragraph`, `new line`, `bullet point` | engine restart |
+| Vocabulary | words the transcriber mangles, one per line | engine restart |
+| Replacements | literal fixes as `wrong = right`, applied before the layout pass | engine restart |
 
-**`~/.local/share/phona/config.json`**, read once at daemon startup, so run `phona restart`
-after editing:
+The last three are prefilled into the daemon's prompt at startup, so saving them restarts the
+engine for you. The window says when a restart is needed.
+
+**`~/.local/share/phona/config.json`** holds most of that. The app writes four of its own keys
+there, `output_action`, `casual_in_chat`, `mute_others` and `show_in_dock`, and reads them
+fresh every time it needs them, which is why those three settings apply without a restart.
+Open Phona at login is the exception, registered through `SMAppService` rather than the file.
+
+Every key in the table below belongs to the daemon, which reads them once at startup, so run
+`phona restart` after editing one by hand:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -391,7 +402,7 @@ failure, which is easy to read past.
 
 ## Documentation
 
-| | |
+| Document | What is in it |
 | --- | --- |
 | [docs/decisions.md](docs/decisions.md) | why every rule is the way it is, with the measurements |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | symptoms, causes and the commands that fix them |
