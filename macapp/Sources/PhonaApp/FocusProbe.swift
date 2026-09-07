@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import PhonaCore
 
 /// Works out whether there is somewhere for text to land.
 ///
@@ -8,16 +9,9 @@ import ApplicationServices
 /// used to vanish: the keystroke went nowhere and the clipboard restore then overwrote the
 /// text. The user got a success chime for text that existed only in the history file.
 enum FocusProbe {
-    enum Target {
-        /// An editable element is focused. Pasting will land, and the clipboard can safely
-        /// be put back afterwards.
-        case editable
-        /// Something is focused but it does not take text, or nothing is focused at all.
-        case notEditable
-        /// Accessibility could not tell us. Common in apps that expose little of their
-        /// hierarchy, so this must not be treated as a failure.
-        case unknown
-    }
+    /// The cases and their reasoning live in `PhonaCore.PasteTarget`, alongside the decisions
+    /// that read them, so both can be tested without an Accessibility grant.
+    typealias Target = PasteTarget
 
     /// Roles that accept typed text. Web areas and groups are included because browsers
     /// and Electron apps often report a container rather than the field itself.

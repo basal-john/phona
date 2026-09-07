@@ -64,11 +64,14 @@ paste landed is in [decisions.md](decisions.md#the-clipboard).
 
 ## My image did not come back after a dictation
 
-Check **When done** in Settings. **Insert and copy** never restores your clipboard, by
-definition: it is insert without the final restore, which is exactly what leaves the dictation
-there for Universal Clipboard to carry to another device. An image on the clipboard is
-therefore gone after a dictation on that setting, and always was. Choose **Insert at cursor**
-to keep what you had copied.
+Check **When done** in Settings. **Insert and copy** and **Copy to clipboard** never restore
+your clipboard, by definition: both leave the dictation there, which is exactly what lets
+Universal Clipboard carry it to another device. An image on the clipboard is therefore gone
+after a dictation on either setting, and always was. Choose **Insert at cursor** to keep what
+you had copied.
+
+All three settings now say so when it happens. **Copy to clipboard** used to be the silent
+one, because it replaced the clipboard without going through the code that notices.
 
 ## My output stayed muted
 

@@ -216,6 +216,85 @@ def test_a_trimmed_result_is_never_shown_as_a_clean_one():
     assert 'reply["trimmed"]' in client, "the trim count must survive the daemon reply"
 
 
+def test_every_clipboard_replacement_goes_through_paster():
+    """Regression, issue #6: `Copy to clipboard` wrote to NSPasteboard straight from
+    main.swift, skipping the check that notices a displaced image or file. Both insert modes
+    warned, because both went through `Paster.paste`, so this was the one output mode that
+    destroyed a screenshot silently.
+
+    It cannot be routed through `Paster.paste`, which would post a Cmd+V nobody asked for, so
+    the shared path is `Paster.copyToClipboard`. Delivery must not touch the pasteboard
+    directly again, which is what this asserts.
+    """
+    source = (ROOT / "macapp/Sources/PhonaApp/main.swift").read_text()
+    body = swift_function(source, "private func deliver")
+
+    assert "Paster.copyToClipboard" in body, \
+        "the clipboard-only output mode must go through Paster, where the warning lives"
+    assert "NSPasteboard.general.setString" not in body, \
+        ("delivery must not write to the pasteboard directly. That is how the warning was "
+         "skipped for Copy to clipboard")
+
+    paster = (ROOT / "macapp/Sources/PhonaApp/Paster.swift").read_text()
+    assert "ClipboardStore.replacementWarning" in \
+        swift_function(paster, "static func copyToClipboard"), \
+        "copyToClipboard must read the warning before it clears the board"
+
+
+def test_a_displaced_clipboard_is_reported_even_when_the_paste_does_not_land():
+    """Regression: `paste` replaces the clipboard before it decides whether to send Cmd+V, so
+    on both `leftOnClipboard` paths the previous clipboard is already gone. The warning was
+    computed and then dropped by those two returns, which made a displaced image silent on
+    exactly the paths that leave the dictation on the clipboard.
+
+    Same defect as issue #6 in a different place, found reviewing the fix for it.
+    """
+    paster = (ROOT / "macapp/Sources/PhonaApp/Paster.swift").read_text()
+    assert "case leftOnClipboard(reason: String, warning: String?)" in paster, \
+        "leftOnClipboard must carry the warning, the clipboard is already replaced by then"
+
+    body = swift_function(paster, "static func paste")
+    calls = re.findall(r"\.leftOnClipboard\((?:[^()]|\([^()]*\))*\)", body, re.S)
+    assert len(calls) == 2, f"expected two leftOnClipboard returns, found {len(calls)}"
+    for call in calls:
+        assert "warning: warning" in call, (
+            "this leftOnClipboard return does not pass the computed warning through, so "
+            f"what the clipboard displaced goes unreported: {' '.join(call.split())}")
+
+    app = (ROOT / "macapp/Sources/PhonaApp/main.swift").read_text()
+    deliver = swift_function(app, "private func deliver")
+    assert "case .leftOnClipboard(let reason, let warning):" in deliver, \
+        "delivery must destructure the warning"
+    clipboard_branch = deliver[deliver.index("case .leftOnClipboard"):]
+    assert "notify" in clipboard_branch.split("return")[0], \
+        "the warning must reach the user on this path, not just the log"
+
+
+def test_paste_decisions_are_testable_without_a_pasteboard():
+    """Regression, issue #7: `Paster` had no tests, because every decision was an expression
+    inline in `paste`, mixed in with NSPasteboard, a CGEvent and a dispatch delay.
+
+    The decisions are the part that can be wrong without crashing: a restore over a keystroke
+    that landed nowhere is how a dictation used to disappear twice over. They now live in
+    `PastePlan`, which needs no Accessibility grant and no real pasteboard.
+    """
+    plan = ROOT / "macapp/Sources/PhonaCore/PastePlan.swift"
+    assert plan.exists(), "the paste decisions must live in PhonaCore to be testable"
+    source = plan.read_text()
+    for member in ("takesSnapshot", "sendsKeystroke", "restoresClipboard"):
+        assert member in source, f"PastePlan must own {member}"
+
+    paster = (ROOT / "macapp/Sources/PhonaApp/Paster.swift").read_text()
+    body = swift_function(paster, "static func paste")
+    assert "PastePlan(" in body, "paste must take its decisions from PastePlan"
+    for gone in ("let willRestore = ", "target == .notEditable"):
+        assert gone not in body, \
+            f"{gone!r} is back inline in paste, so the decision is untestable again"
+
+    tests = ROOT / "macapp/Tests/PhonaCoreTests/PastePlanTests.swift"
+    assert tests.exists(), "PastePlan must be covered, that is the point of the seam"
+
+
 def test_abandoned_takes_are_swept_up():
     """Finished takes are deleted, failed ones were not, so an hour of a dead microphone
     left a pile of 4 kB wavs that nothing would ever collect."""
@@ -337,18 +416,33 @@ def test_there_is_a_deliberate_way_to_update_models():
 def test_the_clipboard_is_only_restored_when_a_target_is_confirmed():
     """Regression: pasting is unverifiable, so a dictation delivered with nothing focused
     vanished twice over. The keystroke went nowhere and the restore then overwrote the
-    text, while the user got a success chime."""
+    text, while the user got a success chime.
+
+    The rule moved into `PastePlan` when `Paster` was given a seam, so it is asserted in both
+    places: the plan still demands a confirmed target, and the paste path still asks.
+    """
     source = (ROOT / "macapp/Sources/PhonaApp/Paster.swift").read_text()
     assert "FocusProbe.current()" in source, "the paste path does not check for a target"
-    assert "target == .editable" in source, (
-        "the clipboard is restored without confirming the paste could land")
+    assert "plan.restoresClipboard" in source, "the restore is not gated on the plan"
     assert "leftOnClipboard" in source, "there is no path that keeps unplaceable text"
+
+    plan = (ROOT / "macapp/Sources/PhonaCore/PastePlan.swift").read_text()
+    assert "restoreRequested && target == .editable" in plan, (
+        "the clipboard is restored without confirming the paste could land")
 
 
 def test_no_editable_target_means_no_keystroke():
-    """Firing Cmd+V into Finder means paste a file, which is not what was asked for."""
+    """Firing Cmd+V into Finder means paste a file, which is not what was asked for.
+
+    An unknown target still gets the keystroke, since refusing on uncertainty would refuse to
+    type into every app that exposes little of its hierarchy, so the condition has to exclude
+    `.notEditable` specifically rather than require `.editable`.
+    """
     source = (ROOT / "macapp/Sources/PhonaApp/Paster.swift").read_text()
-    assert "if target == .notEditable" in source
+    assert "guard plan.sendsKeystroke" in source
+
+    plan = (ROOT / "macapp/Sources/PhonaCore/PastePlan.swift").read_text()
+    assert "sendsKeystroke = target != .notEditable" in plan
 
 
 def swift_function(source, signature):

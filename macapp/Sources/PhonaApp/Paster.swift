@@ -34,7 +34,11 @@ enum Paster {
         case pasted(warning: String?)
         /// Nothing editable was focused, so the text was left on the clipboard for the
         /// user to place themselves. Never silently discarded.
-        case leftOnClipboard(reason: String)
+        ///
+        /// This carries the warning too. The clipboard has already been replaced by the time
+        /// either of these paths is taken, so dropping the warning here made the displaced
+        /// image silent on exactly the paths that keep the dictation on the clipboard.
+        case leftOnClipboard(reason: String, warning: String?)
     }
 
     /// Deliver the text, and never lose it.
@@ -69,26 +73,26 @@ enum Paster {
     @discardableResult
     static func paste(_ text: String, restore: Bool = true) -> Outcome {
         let board = NSPasteboard.general
-        let target = FocusProbe.current()
+        let plan = PastePlan(restoreRequested: restore, target: FocusProbe.current())
 
-        let willRestore = restore && target == .editable
-        let snapshot = willRestore ? ClipboardStore.snapshot(of: board) : .notTaken
-        let warning = willRestore
+        let snapshot = plan.takesSnapshot ? ClipboardStore.snapshot(of: board) : .notTaken
+        let warning = plan.warningComesFromSnapshot
             ? snapshot.warning
             : ClipboardStore.replacementWarning(for: board)
 
         board.clearContents()
         board.setString(text, forType: .string)
 
-        if target == .notEditable {
-            return .leftOnClipboard(reason: FocusProbe.describe())
+        guard plan.sendsKeystroke else {
+            return .leftOnClipboard(reason: FocusProbe.describe(), warning: warning)
         }
 
         guard sendCommandV() else {
-            return .leftOnClipboard(reason: "the paste keystroke could not be sent")
+            return .leftOnClipboard(reason: "the paste keystroke could not be sent",
+                                    warning: warning)
         }
 
-        if willRestore, snapshot.canRestore {
+        if plan.restoresClipboard, snapshot.canRestore {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 /// Only when the dictation is still there. Anything else means the user
                 /// copied something in the meantime, and that is theirs, not ours to undo.
@@ -98,6 +102,23 @@ enum Paster {
             }
         }
         return .pasted(warning: warning)
+    }
+
+    /// Put the dictation on the clipboard and nowhere else, reporting what it displaced.
+    ///
+    /// The `Copy to clipboard` setting used to write to `NSPasteboard` directly from the
+    /// caller, which made it the one output mode that could destroy a copied image or file
+    /// without saying so. Both insert modes warned, because both went through `paste` above.
+    ///
+    /// Routing this through `paste` would have been wrong, since that posts a Cmd+V nobody
+    /// asked for. So the replacement warning is shared instead, and every path that replaces
+    /// the clipboard now comes through this file.
+    static func copyToClipboard(_ text: String) -> String? {
+        let board = NSPasteboard.general
+        let warning = ClipboardStore.replacementWarning(for: board)
+        board.clearContents()
+        board.setString(text, forType: .string)
+        return warning
     }
 
     private static func sendCommandV() -> Bool {
