@@ -73,15 +73,15 @@ def test_guard_rejects_model_acting_on_the_text(source, candidate):
                  "She doesn't want any help from anybody.", id="double-negative"),
     pytest.param('he said "ship it" in the standup',
                  'He said "ship it" in the standup.', id="quote-the-speaker-dictated"),
-    pytest.param("just make it as welcome to the alpha list boot camp",
-                 'Just make it "Welcome to the Alpha List Boot Camp."',
+    pytest.param("just make it as welcome to the team handbook",
+                 'Just make it "Welcome to the Team Handbook."',
                  id="quoted-title-inside-a-real-correction"),
-    pytest.param("replace the second slide with my information my information can be found "
-                 "in my home page and also um remove the CTO part from the slide just make "
-                 "it as welcome to the alpha list boot camp",
-                 "Replace the second slide with my information. My information can be found "
-                 "on my homepage. Also, remove the CTO part from the slide. Just make it "
-                 '"Welcome to the Alpha List Boot Camp."',
+    pytest.param("replace the second slide with my details my details can be found "
+                 "on the intro page and also um drop the pricing part from the slide just "
+                 "make it as welcome to the team handbook",
+                 "Replace the second slide with my details. My details can be found "
+                 "on the intro page. Also, drop the pricing part from the slide. Just make "
+                 'it "Welcome to the Team Handbook."',
                  id="a-dictated-instruction-correctly-punctuated"),
 ])
 def test_guard_accepts_real_corrections(source, candidate):

@@ -185,9 +185,9 @@ reason was the cloud model doing anything wrong.
 
 Any two quote marks against a transcript with none read as a fabricated quoted block. That is
 what a 4B model's `The summary is "the ticket is about a flaky test"` looks like, and a model
-that punctuates well trips it honestly: asked to correct "just make it as welcome to the alpha
-list boot camp" it returned `Just make it "Welcome to the Alpha List Boot Camp."`, a correct
-quoting of a title, and the whole correction was discarded for it. A share of the candidate
+that punctuates well trips it honestly: asked to correct "just make it as welcome to the team
+handbook" it returned `Just make it "Welcome to the Team Handbook."`, a correct quoting of a
+title, and the whole correction was discarded for it. A share of the candidate
 does not separate the two cases, because on a short dictation a quoted title is most of the
 answer as well, 0.76 against the block's 0.69. What separates them is whether the speaker said
 the quoted words: none of the block is in its transcript and every word of the title is in its

@@ -1181,9 +1181,9 @@ QUOTED_SPAN = re.compile(r'"[^"]*"')
 #
 # This started as a count, any two quote marks against a transcript with none, which is what
 # a 4B model's `The summary is "the ticket is about a flaky test"` looks like. A model that
-# punctuates well trips that honestly: asked to correct "just make it as welcome to the alpha
-# list boot camp", a frontier model returned `Just make it "Welcome to the Alpha List Boot
-# Camp."`, a correct quoting of a title, and the whole correction was thrown away for it.
+# punctuates well trips that honestly: asked to correct "just make it as welcome to the team
+# handbook", a frontier model returned `Just make it "Welcome to the Team Handbook."`, a
+# correct quoting of a title, and the whole correction was thrown away for it.
 #
 # A share of the candidate does not separate those two, because on a short dictation a
 # quoted title is most of the answer as well, 0.76 against the block's 0.69. What separates
