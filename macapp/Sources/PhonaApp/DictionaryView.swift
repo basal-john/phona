@@ -7,9 +7,10 @@ import SwiftUI
 /// writes config.json and restarts the engine, and a second editor over the same file would
 /// be a way to lose a list rather than a convenience.
 ///
-/// The pane leads with what these words do not do, because the obvious reading of a
-/// dictionary is that it changes what the transcriber hears, and on the default speech model
-/// it cannot.
+/// The pane leads with whether these words reach the transcriber, because the obvious
+/// reading of a dictionary is that it changes what is heard, and on the default speech model
+/// it cannot. Which of the three answers applies is read off the live config rather than
+/// assumed, because two settings decide it and both are changeable.
 struct DictionaryView: View {
     @ObservedObject var store: HistoryStore
 
@@ -53,12 +54,9 @@ struct DictionaryView: View {
             Image(systemName: "info.circle")
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 4) {
-                Text("On \(speechModelName) these words never reach the transcriber.")
+                Text(headline)
                     .fontWeight(.semibold)
-                Text("The default speech model accepts no vocabulary hint, so your words are "
-                    + "used to keep a term intact once it has been heard, and to stop the "
-                    + "guard rejecting a name it does not recognise. To bias what is heard "
-                    + "in the first place, switch speech to Whisper in Models.")
+                Text(explanation)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -68,6 +66,44 @@ struct DictionaryView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+    }
+
+    /// Which of the three answers this Mac is actually in, from the loaded speech model and
+    /// the `use_initial_prompt` flag together.
+    private var reach: DictionaryReach {
+        DictionaryReach.resolve(sttModel: store.snapshot.sttModel,
+                                useInitialPrompt: store.snapshot.useInitialPrompt)
+    }
+
+    private var headline: String {
+        switch reach {
+        case .modelTakesNoHint, .hintAvailableButOff:
+            return "On \(speechModelName) these words never reach the transcriber."
+        case .hintInUse:
+            return "On \(speechModelName) these words are fed to the transcriber."
+        }
+    }
+
+    /// Each answer names what would change it, because the previous version of this note
+    /// offered a remedy that does nothing on its own.
+    private var explanation: String {
+        let uses = "Your words keep a term intact once it has been heard, and stop the guard "
+            + "rejecting a name it does not recognise."
+        switch reach {
+        case .modelTakesNoHint:
+            return "This speech model accepts no vocabulary hint at all. " + uses
+                + " To bias what is heard in the first place, switch speech to a Whisper "
+                + "model in Models and turn on use_initial_prompt in config.json. Neither "
+                + "one does it alone."
+        case .hintAvailableButOff:
+            return "Whisper can take a vocabulary hint, and use_initial_prompt is off, which "
+                + "is the default, so the daemon hands it none. " + uses
+                + " To bias what is heard in the first place, set use_initial_prompt to true "
+                + "in config.json and restart the engine."
+        case .hintInUse:
+            return "Whisper is loaded and use_initial_prompt is on, so the daemon passes this "
+                + "whole list as the initial prompt and it does bias what is heard. " + uses
+        }
     }
 
     /// The configured model rather than a hardcoded name, because the claim above is only
