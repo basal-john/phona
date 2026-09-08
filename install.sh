@@ -32,6 +32,12 @@ mkdir -p "$TARGET"
 say "installing the engine into $TARGET"
 cp "$SRC/engine/phonad.py" "$SRC/engine/client.py" "$SRC/engine/audit.py" "$SRC/engine/model_updates.py" "$TARGET/"
 
+# switch-model.sh is the only correct way to change model. It backs the config up, waits
+# for the engine to report ready and rolls back if it never does, so the Models pane sends
+# people here rather than at the config file.
+cp "$SRC/switch-model.sh" "$TARGET/"
+chmod +x "$TARGET/switch-model.sh"
+
 if [[ ! -x "$TARGET/venv/bin/python" ]]; then
   say "creating the virtual environment"
   if command -v uv >/dev/null 2>&1; then
