@@ -261,7 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         OutputMute.release()
 
         let mine = session
-        hud.show(.working)
+        hud.show(mode(forSession: mine) == "cloud" ? .workingInCloud : .working)
         Cue.stop.play()
         let released = CFAbsoluteTimeGetCurrent()
         releasedAt = released

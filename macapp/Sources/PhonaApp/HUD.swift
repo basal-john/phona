@@ -137,7 +137,7 @@ struct HUDView: View {
                         .foregroundStyle(Color.blue)
                 }
 
-                ForEach(0..<(isCloud ? cloudBarCount : barCount), id: \.self) { i in
+                ForEach(Array(0..<(isCloud ? cloudBarCount : barCount)), id: \.self) { i in
                     Capsule()
                         .fill(barFill(i))
                         .frame(width: barWidth, height: barHeight(i))
