@@ -17,6 +17,7 @@ enum Previews {
 
         for (name, state) in [("hud-listening", HUDState.listening),
                               ("hud-working", .working),
+                              ("hud-working-cloud", .workingInCloud),
                               ("hud-done", .done),
                               ("hud-clipboard", .clipboard),
                               ("hud-trimmed", .trimmed),
