@@ -24,6 +24,7 @@ struct HistorySnapshot: Sendable {
     var dictionary: [String] = []
     var replacements: [String: String] = [:]
     var typingWordsPerMinute: Double = HistoryStore.defaultTypingWordsPerMinute
+    var useInitialPrompt = false
     var sttModel: String?
     var llmModel: String?
     var cloudModel: String?
@@ -70,29 +71,39 @@ final class HistoryStore: ObservableObject {
 
     private let queue = DispatchQueue(label: "com.basalona.phona.history", qos: .userInitiated)
     private var loadGeneration = 0
+    private var rateGeneration = 0
 
     var rows: [HistoryRow] { snapshot.rows }
     var insights: Insights { snapshot.insights }
 
-    /// Newest first, which is the order every list in the window shows.
-    ///
-    /// The parser hands rows back in file order, oldest first, and the archives are
-    /// concatenated in that order too. Sorting by timestamp rather than reversing, because
-    /// an archive rotation that lands mid-second can interleave two files.
+    /// Newest first, which is the order every list in the window shows. Ordered by
+    /// `HistoryOrder`, off the main thread with the rest of the load.
     @Published private(set) var descending: [HistoryRow] = []
 
+    /// Bumped every time a load lands. A view holding an index into `descending` watches this
+    /// to know the array underneath it was replaced.
+    @Published private(set) var loadToken = 0
+
+    /// Reads, parses, orders and computes on `queue`, and touches the main thread only to
+    /// publish the finished value.
+    ///
+    /// Every one of those steps grows with the archive set, which only ever gets bigger, and
+    /// the compute alone was measured at 3.2 seconds over 41 MB. None of it belongs on the
+    /// thread that has to keep drawing the window.
     func reload() {
         loadGeneration += 1
         let generation = loadGeneration
         isLoading = true
         queue.async { [weak self] in
             let loaded = HistoryStore.read()
+            let descending = HistoryOrder.newestFirst(loaded.snapshot.rows)
             DispatchQueue.main.async {
                 guard let self, generation == self.loadGeneration else { return }
                 self.snapshot = loaded.snapshot
-                self.descending = loaded.snapshot.rows.sorted { $0.ts > $1.ts }
+                self.descending = descending
                 self.hasHistoryFile = loaded.hasHistoryFile
                 self.isLoading = false
+                self.loadToken += 1
             }
         }
     }
@@ -100,19 +111,35 @@ final class HistoryStore: ObservableObject {
     /// Persist a new typing speed and recompute, without re-reading a megabyte of history.
     ///
     /// The rate is only ever a divisor over rows already in hand, so a change to it is
-    /// arithmetic rather than a load. Written with `Settings.set`, which rewrites one key and
+    /// arithmetic rather than a load. The arithmetic still walks every row, so it runs on
+    /// `queue` like the load does. Written with `Settings.set`, which rewrites one key and
     /// leaves the rest of config.json alone, because the daemon reads that same file.
+    ///
+    /// A reload that lands first wins, because it recomputes from the config this just wrote.
     func setTypingWordsPerMinute(_ rate: Double) {
         guard rate.isFinite, rate > 0 else { return }
         Settings.set(HistoryStore.typingSpeedKey, rate)
-        var updated = snapshot
-        updated.typingWordsPerMinute = rate
-        updated.insights = Insights.compute(rows: updated.rows,
+        rateGeneration += 1
+        let rateToken = rateGeneration
+        let loadToken = loadGeneration
+        let rows = snapshot.rows
+        snapshot.typingWordsPerMinute = rate
+        queue.async { [weak self] in
+            let insights = Insights.compute(rows: rows,
                                             typingWordsPerMinute: rate,
                                             calendar: .current,
                                             now: Date(),
                                             activityDays: HistoryStore.activityDays)
-        snapshot = updated
+            DispatchQueue.main.async {
+                guard let self,
+                      rateToken == self.rateGeneration,
+                      loadToken == self.loadGeneration else { return }
+                var updated = self.snapshot
+                updated.typingWordsPerMinute = rate
+                updated.insights = insights
+                self.snapshot = updated
+            }
+        }
     }
 
     /// The flag on a row, when the speaker raised one.
@@ -154,6 +181,7 @@ final class HistoryStore: ObservableObject {
         snapshot.corrections = readCorrections(timeZone: zone)
         snapshot.dictionary = (config["dictionary"] as? [String]) ?? []
         snapshot.replacements = (config["replacements"] as? [String: String]) ?? [:]
+        snapshot.useInitialPrompt = (config["use_initial_prompt"] as? NSNumber)?.boolValue ?? false
         snapshot.sttModel = nonEmpty(config["stt_model"])
         snapshot.llmModel = nonEmpty(config["llm_model"])
         snapshot.cloudModel = nonEmpty(config["cloud_model"])
