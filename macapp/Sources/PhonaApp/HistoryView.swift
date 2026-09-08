@@ -6,7 +6,9 @@ import SwiftUI
 ///
 /// `HistoryRow` is deliberately not `Identifiable`: two rows a second apart can share a
 /// timestamp, so a stamp is not an identity. The index into the loaded array is, for as long
-/// as that load is on screen, and a reload clears the selection rather than moving it.
+/// as that load is on screen, and a reload clears the selection rather than moving it. That
+/// clearing is `store.loadToken`, watched below, without which a reload leaves the index
+/// pointing at whichever row has slid into that slot.
 private struct Dictation: Identifiable, Equatable {
     let id: Int
     let row: HistoryRow
@@ -72,6 +74,7 @@ struct HistoryView: View {
                         detail.frame(maxWidth: .infinity)
                     }
                 }
+                .onChange(of: store.loadToken) { selection = nil }
             }
         }
     }
@@ -271,10 +274,23 @@ private struct DetailPane: View {
                 .textCase(.uppercase)
                 .foregroundStyle(.secondary)
             RouteDot(route: row.route)
-            Text(row.route == .local ? "left ⌥ · on-device" : "right ⌥ · cloud")
+            Text(routeLabel)
                 .font(.system(size: 10))
                 .foregroundStyle(Palette.route(row.route))
         }
+    }
+
+    /// What happened to the text, not which key was pressed.
+    ///
+    /// `route` answers the privacy question off `backend`, the only field that proves an
+    /// agent CLI answered. `mode` answers a different one, which cloud the speaker asked
+    /// for, and a row carrying `mode: cloud` with no backend is a request the cloud never
+    /// served. That row is a local correction and saying otherwise names a key press the
+    /// record cannot support.
+    private var routeLabel: String {
+        if row.route == .cloud { return "sent to the cloud" }
+        if row.mode == "cloud" { return "cloud asked for, corrected on this Mac" }
+        return "corrected on this Mac"
     }
 
     private func block(_ title: String, text: String, emphasised: Bool) -> some View {
