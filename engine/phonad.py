@@ -1408,10 +1408,43 @@ MAX_HISTORY_BYTES = 8_000_000
 
 
 def rotate(path, limit):
-    """Keep an append-only file from growing without bound over months of use."""
+    """Keep an append-only file from growing without bound over months of use.
+
+    The single archive slot is deliberate. This is for the log, which is a debugging aid,
+    so the second rotation discarding the first archive costs nothing. History must never
+    be rotated through here, see `rotate_history`.
+    """
     try:
         if path.exists() and path.stat().st_size > limit:
             path.replace(path.with_suffix(path.suffix + ".1"))
+    except Exception:
+        pass
+
+
+def next_archive(path):
+    """The archive name for `path`, one past the highest numbered archive that exists."""
+    highest = 0
+    for existing in path.parent.glob(path.name + ".*"):
+        tail = existing.name[len(path.name) + 1:]
+        if tail.isdigit():
+            highest = max(highest, int(tail))
+    return path.with_name(f"{path.name}.{highest + 1}")
+
+
+def rotate_history(path, limit):
+    """Rotate the history into a numbered archive that is never overwritten.
+
+    Ordering, which a reader outside this file depends on: history.jsonl.1 is the OLDEST
+    archive, a higher number is newer, and the live history.jsonl is the newest of all. The
+    whole record is history.jsonl.1 through .N in order, then history.jsonl.
+
+    Nothing is ever discarded. The app reports lifetime totals and streaks off this file,
+    and the single archive slot the log uses would silently drop months of it on the second
+    rotation and make every one of those numbers lie.
+    """
+    try:
+        if path.exists() and path.stat().st_size > limit:
+            path.replace(next_archive(path))
     except Exception:
         pass
 
@@ -1438,7 +1471,7 @@ def load_config():
 
 def write_history(entry):
     try:
-        rotate(HISTORY, MAX_HISTORY_BYTES)
+        rotate_history(HISTORY, MAX_HISTORY_BYTES)
         with open(HISTORY, "a") as fh:
             fh.write(json.dumps(entry) + "\n")
     except Exception as exc:
@@ -2405,6 +2438,10 @@ class Engine:
                 "seconds": round(seconds, 2),
                 "mode": CLOUD_MODE if mode == CLOUD_MODE else MODE_NAME,
                 "backend": getattr(self, "last_backend", None),
+                "stt_model": self.cfg.get("stt_model"),
+                "llm_model": self.cfg.get("llm_model"),
+                "cloud_model": (self.cfg.get("cloud_model")
+                                if mode == CLOUD_MODE else None),
                 "style": style,
                 "raw": raw,
                 "text": final,
@@ -2437,6 +2474,9 @@ class Engine:
                 "source": "text",
                 "seconds": 0,
                 "mode": MODE_NAME,
+                "stt_model": None,
+                "llm_model": self.cfg.get("llm_model"),
+                "cloud_model": None,
                 "style": style,
                 "raw": text,
                 "text": out,

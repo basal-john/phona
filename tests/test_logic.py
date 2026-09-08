@@ -4,6 +4,7 @@ Every case here corresponds to a defect that actually happened, which is the onl
 any of them are worth the maintenance.
 """
 
+import contextlib
 import importlib.util
 import io
 import json
@@ -2061,3 +2062,140 @@ def test_the_single_thread_does_not_hold_the_process_open():
     runner.call(lambda: None)
     worker = next(t for t in threading.enumerate() if t.name == "test")
     assert worker.daemon
+
+
+# --- the history must survive its own rotation -------------------------------------------
+
+def _fill(path, lines):
+    path.write_text("".join(line + "\n" for line in lines))
+    return lines
+
+
+def test_rotating_the_history_twice_loses_no_lines(tmp_path):
+    """A fix before the fact. The single slot the log rotates through would have had the
+    second rotation replace the first archive, and the window about to report lifetime
+    totals and streaks off this file would have reported them off whatever was left.
+    """
+    history = tmp_path / "history.jsonl"
+
+    oldest = _fill(history, [f"oldest {n}" for n in range(50)])
+    phonad.rotate_history(history, 10)
+    middle = _fill(history, [f"middle {n}" for n in range(50)])
+    phonad.rotate_history(history, 10)
+    newest = _fill(history, [f"newest {n}" for n in range(50)])
+
+    assert {p.name for p in tmp_path.iterdir()} == {
+        "history.jsonl", "history.jsonl.1", "history.jsonl.2"}
+
+    recovered = []
+    for name in ("history.jsonl.1", "history.jsonl.2", "history.jsonl"):
+        recovered += (tmp_path / name).read_text().splitlines()
+    assert recovered == oldest + middle + newest
+
+
+def test_the_first_history_archive_is_the_oldest(tmp_path):
+    """A reader outside this file stitches the record back together in archive order, so
+    which end of the numbering is old has to be asserted rather than only described.
+    """
+    history = tmp_path / "history.jsonl"
+    history.write_text("older\n")
+    phonad.rotate_history(history, 0)
+    history.write_text("newer\n")
+    phonad.rotate_history(history, 0)
+
+    assert (tmp_path / "history.jsonl.1").read_text() == "older\n"
+    assert (tmp_path / "history.jsonl.2").read_text() == "newer\n"
+    assert "history.jsonl.1 is the OLDEST" in phonad.rotate_history.__doc__, \
+        "the docstring no longer states the ordering this test holds the code to"
+
+
+def test_a_history_under_the_limit_is_left_alone(tmp_path):
+    history = tmp_path / "history.jsonl"
+    history.write_text("one line\n")
+    phonad.rotate_history(history, 8_000_000)
+    assert [p.name for p in tmp_path.iterdir()] == ["history.jsonl"]
+
+
+def test_the_log_still_discards_its_older_half(tmp_path):
+    """The log is a debugging aid and keeps its one slot. Giving it numbered archives would
+    grow without bound on the one file nobody ever reads twice.
+    """
+    log_file = tmp_path / "phonad.log"
+    log_file.write_text("first\n")
+    phonad.rotate(log_file, 0)
+    log_file.write_text("second\n")
+    phonad.rotate(log_file, 0)
+
+    assert [p.name for p in tmp_path.iterdir()] == ["phonad.log.1"]
+    assert (tmp_path / "phonad.log.1").read_text() == "second\n"
+
+
+# --- a history row must say which model produced it --------------------------------------
+
+MODEL_CFG = {
+    "silence_max_db": -42.0,
+    "max_words_per_second": 6.0,
+    "replacements": {},
+    "dictionary": [],
+    "spoken_layout": True,
+    "keep_audio_days": 0,
+    "stt_model": "mlx-community/parakeet-tdt-0.6b-v3",
+    "llm_model": "mlx-community/Qwen3-4B-Instruct-2507-8bit",
+    "cloud_model": "claude-sonnet-5",
+}
+
+
+def _recorded(monkeypatch, tmp_path, call):
+    """Run one request through the real entry-point and hand back what it wrote."""
+    written = []
+    monkeypatch.setattr(phonad, "peak_db", lambda path: None)
+    monkeypatch.setattr(phonad, "write_history", written.append)
+    monkeypatch.setattr(phonad, "retain_or_remove", lambda path, days: None)
+    take = tmp_path / "take.wav"
+    take.write_bytes(b"")
+    engine = types.SimpleNamespace(
+        cfg=dict(MODEL_CFG),
+        guard=contextlib.nullcontext,
+        transcribe=lambda path: "the tests is failing",
+        correct=lambda text: "The tests are failing.",
+        correct_cloud=lambda text: "The tests are failing.",
+        postprocess=lambda text, style: text,
+        last_backend=None)
+    result = call(engine, take)
+    assert result["state"] == "done", result
+    assert len(written) == 1, written
+    return written[0]
+
+
+def test_a_voice_row_names_the_models_that_produced_it(monkeypatch, tmp_path):
+    """A latency figure or a quality complaint could not be attributed to a model, so the
+    Models pane had nothing real to show per model.
+    """
+    entry = _recorded(monkeypatch, tmp_path,
+                      lambda engine, take: phonad.Engine.process(engine, take, 2.0))
+    assert entry["stt_model"] == MODEL_CFG["stt_model"]
+    assert entry["llm_model"] == MODEL_CFG["llm_model"]
+    assert entry["cloud_model"] is None, "a local dictation did not reach a cloud model"
+
+
+def test_a_cloud_row_names_the_cloud_model(monkeypatch, tmp_path):
+    entry = _recorded(
+        monkeypatch, tmp_path,
+        lambda engine, take: phonad.Engine.process(engine, take, 2.0,
+                                                   mode=phonad.CLOUD_MODE))
+    assert entry["mode"] == phonad.CLOUD_MODE
+    assert entry["cloud_model"] == MODEL_CFG["cloud_model"]
+    assert entry["stt_model"] == MODEL_CFG["stt_model"], \
+        "speech still ran locally on the cloud path"
+
+
+def test_a_text_row_names_no_speech_model(monkeypatch, tmp_path):
+    """`phona fix` never records audio, so a speech model on that row would be a model the
+    row cannot be evidence about.
+    """
+    entry = _recorded(
+        monkeypatch, tmp_path,
+        lambda engine, take: phonad.Engine.fix_text(engine, "the tests is failing"))
+    assert entry["stt_model"] is None
+    assert entry["llm_model"] == MODEL_CFG["llm_model"]
+    assert entry["cloud_model"] is None

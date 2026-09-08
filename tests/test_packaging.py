@@ -38,6 +38,21 @@ def test_installer_copies_every_engine_module():
         assert module in script, f"install.sh does not install {module}"
 
 
+def test_the_installer_ships_the_model_switcher():
+    """switch-model.sh backs the config up, restarts, waits for the engine to report ready
+    and rolls the config back if it never does. It was never copied to the install target,
+    so the only safe way to change model existed nowhere a user could reach it, and the
+    Models pane sends people to it.
+    """
+    script = (ROOT / "install.sh").read_text()
+    assert "switch-model.sh" in script, "install.sh does not install switch-model.sh"
+    assert 'chmod +x "$TARGET/switch-model.sh"' in script, \
+        "installed without the execute bit it is a script the user has to know to bash"
+
+    source = ROOT / "switch-model.sh"
+    assert source.stat().st_mode & 0o111, "switch-model.sh is not executable in the repo"
+
+
 def test_installer_honours_the_data_directory_override():
     script = (ROOT / "install.sh").read_text()
     assert "PHONA_HOME" in script, "the install target must be overridable for testing"
