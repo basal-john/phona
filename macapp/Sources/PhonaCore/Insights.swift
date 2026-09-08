@@ -25,8 +25,12 @@ public struct Insights: Sendable {
     public let dictations: Int
     public let spokenDictations: Int
     public let words: Int
+    public let spokenWords: Int
     public let spokenSeconds: Double
     public let typingWordsPerMinute: Double
+    /// Over `spokenWords`, never `words`. A typed FIX row is text somebody already typed, so
+    /// crediting its words as typing avoided adds a figure with nothing on the other side of
+    /// the subtraction and inflates every hour the hero claims.
     public let minutesToType: Double
     public let minutesSpoken: Double
     public let minutesSaved: Double
@@ -87,6 +91,7 @@ public struct Insights: Sendable {
     public init(dictations: Int,
                 spokenDictations: Int,
                 words: Int,
+                spokenWords: Int,
                 spokenSeconds: Double,
                 typingWordsPerMinute: Double,
                 minutesToType: Double,
@@ -106,6 +111,7 @@ public struct Insights: Sendable {
         self.dictations = dictations
         self.spokenDictations = spokenDictations
         self.words = words
+        self.spokenWords = spokenWords
         self.spokenSeconds = spokenSeconds
         self.typingWordsPerMinute = typingWordsPerMinute
         self.minutesToType = minutesToType
@@ -141,9 +147,10 @@ public struct Insights: Sendable {
 
         let spoken = rows.filter { $0.isSpoken }
         let words = rows.reduce(0) { $0 + $1.wordCount }
+        let spokenWords = spoken.reduce(0) { $0 + $1.wordCount }
         let spokenSeconds = spoken.reduce(0.0) { $0 + max($1.seconds, 0) }
 
-        let minutesToType = typingRate > 0 ? Double(words) / typingRate : 0
+        let minutesToType = typingRate > 0 ? Double(spokenWords) / typingRate : 0
         let minutesSpoken = spokenSeconds / 60
 
         var routeCounts: [Route: Int] = [.local: 0, .cloud: 0]
@@ -162,6 +169,7 @@ public struct Insights: Sendable {
         return Insights(dictations: rows.count,
                         spokenDictations: spoken.count,
                         words: words,
+                        spokenWords: spokenWords,
                         spokenSeconds: spokenSeconds,
                         typingWordsPerMinute: typingRate,
                         minutesToType: minutesToType,
@@ -284,21 +292,36 @@ public struct Insights: Sendable {
         return best
     }
 
-    /// Grouped by `llmModel`, which every row written before this release lacks entirely.
-    /// Those rows are skipped rather than pooled under an invented name. The latency is over
-    /// both paths, because the grammar model answers a typed FIX as well as a spoken one.
+    /// Grouped by the model that actually did the correcting, which is not always `llmModel`.
+    ///
+    /// The engine writes `llm_model` on every row, the configured local model, whether or not
+    /// that model was the one asked. On a row the cloud answered, `cloud_model` is the model
+    /// that did the work and the local one did nothing, so grouping on `llmModel` alone bills
+    /// the cloud's usage to the grammar model sitting idle. A row that names neither is
+    /// skipped rather than pooled under an invented name.
+    ///
+    /// Typed FIX rows belong here as much as spoken ones, because the grammar model answers
+    /// both. What does not belong is their speech time: the latency below is `llmSecs` alone,
+    /// so a figure this pane presents as a correction model's speed is only correction.
     private static func perModel(rows: [HistoryRow]) -> [ModelUsage] {
         var groups: [String: [HistoryRow]] = [:]
         for row in rows {
-            guard let model = row.llmModel else { continue }
+            guard let model = correctingModel(row) else { continue }
             groups[model, default: []].append(row)
         }
         return groups.map { model, group in
             ModelUsage(llmModel: model,
                        count: group.count,
-                       medianLatency: percentile(group.map { $0.sttSecs + $0.llmSecs }.sorted(), 50),
+                       medianLatency: percentile(group.map { $0.llmSecs }.sorted(), 50),
                        guardedCount: group.filter { $0.guarded }.count)
         }
         .sorted { $0.count == $1.count ? $0.llmModel < $1.llmModel : $0.count > $1.count }
+    }
+
+    /// The cloud model when the cloud answered, the local one otherwise. A cloud request that
+    /// fell back to the local model has no backend and so is a local correction here, which
+    /// is the same reading `route` and the History detail pane take.
+    private static func correctingModel(_ row: HistoryRow) -> String? {
+        row.route == .cloud ? row.cloudModel : row.llmModel
     }
 }

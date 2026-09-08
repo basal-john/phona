@@ -77,18 +77,22 @@ struct HomeView: View {
     }
 
     /// The subtraction, in words, exactly as it was performed.
+    ///
+    /// `spokenWords` rather than `words`, because those are the words the division above used.
+    /// A typed correction is text somebody already typed, so it avoided no typing and belongs
+    /// on neither side of this.
     private var arithmetic: String {
         let toType = Figures.decimal(insights.minutesToType)
         let spoken = Figures.decimal(insights.minutesSpoken)
-        let words = Figures.integer(insights.words)
+        let words = Figures.integer(insights.spokenWords)
         let rate = Figures.decimal(insights.typingWordsPerMinute, places: 0)
-        return "\(toType) min to type \(words) words at \(rate) wpm\n"
+        return "\(toType) min to type the \(words) words you spoke at \(rate) wpm\n"
             + "less \(spoken) min actually spoken"
     }
 
     private var typingSpeedPicker: some View {
         Picker("Typing speed", selection: Binding(
-            get: { closestOfferedSpeed },
+            get: { selectedSpeed },
             set: { store.setTypingWordsPerMinute($0) })) {
             ForEach(offeredSpeeds, id: \.self) { speed in
                 Text("\(Figures.decimal(speed, places: 0)) wpm").tag(speed)
@@ -102,12 +106,15 @@ struct HomeView: View {
 
     /// The stored speed is offered alongside the presets, so a hand-edited config.json value
     /// is not silently rounded to whatever preset happens to be nearest.
+    ///
+    /// Read off the snapshot rather than off `insights`, because the recompute now runs on a
+    /// background queue and the picker has to show the chosen speed the moment it is chosen.
     private var offeredSpeeds: [Double] {
-        Array(Set(HomeView.typingSpeeds + [insights.typingWordsPerMinute])).sorted()
+        Array(Set(HomeView.typingSpeeds + [selectedSpeed])).sorted()
     }
 
-    private var closestOfferedSpeed: Double {
-        insights.typingWordsPerMinute
+    private var selectedSpeed: Double {
+        store.snapshot.typingWordsPerMinute
     }
 
     private var tiles: some View {
