@@ -257,9 +257,9 @@ the fixed prompt prefix, which cut the grammar pass from 1.35 s to 0.40 s.
 | grammar | `mlx-community/Qwen3-4B-Instruct-2507-8bit` | 4.1 GB | won a four-model comparison on precision, not on repairs |
 
 Both are swappable. Edit `stt_model` or `llm_model` in `config.json` and run `phona restart`,
-or use `./switch-model.sh`. The backend is picked from the repo id, so naming a Whisper repo
-loads Whisper and needs no other change. A larger grammar model raises quality and roughly
-doubles latency.
+or run `~/.local/share/phona/switch-model.sh` (copied by `install.sh` and `update.sh`). The
+backend is picked from the repo id, so naming a Whisper repo loads Whisper and needs no other
+change. A larger grammar model raises quality and roughly doubles latency.
 
 ```bash
 phona models          # what is loaded, at which revision, and whether the hub has moved
@@ -337,7 +337,7 @@ Everything stays on your Mac, in `~/.local/share/phona`:
 
 | File | What is in it |
 | --- | --- |
-| `history.jsonl` | every dictation, in plain text, with what was heard and what was returned |
+| `history.jsonl` | every dictation, in plain text, with what was heard and what was returned (rotated to numbered archives) |
 | `corrections.jsonl` | the ones you flagged as wrong |
 | `config.json` | your settings, vocabulary and replacements |
 | `phonad.log`, `app.log` | diagnostics |

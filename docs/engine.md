@@ -48,14 +48,58 @@ from the configured repo id, so naming a Whisper repo loads Whisper and needs no
 | `~/.local/share/phona/phonad.py` | daemon holding the warm models |
 | `~/.local/share/phona/client.py` | records audio, talks to the daemon, pastes |
 | `~/.local/share/phona/config.json` | settings |
-| `~/.local/share/phona/history.jsonl` | every dictation, raw and corrected |
+| `~/.local/share/phona/history.jsonl` | active history file, rotated to numbered archives |
 | `~/.local/share/phona/phonad.log` | daemon log |
+| `~/.local/share/phona/switch-model.sh` | script to safely change speech or correction model |
 | `~/Library/LaunchAgents/com.basalona.phonad.plist` | starts the daemon at login |
 | `~/.hammerspoon/init.lua` | the Hammerspoon fallback, still hold-Option push to talk |
 
 Recording lives in the client, not the daemon, on purpose. macOS grants microphone access
 per responsible process, and a launchd daemon can never prompt for it. The client inherits
 the grant of whatever launches it, so Alfred or Terminal owns the permission.
+
+`switch-model.sh` is copied to `~/.local/share/phona/switch-model.sh` executable by both
+`install.sh` and `update.sh`. It is the correct way to change speech or correction model
+rather than editing `config.json` directly. When given an argument such as `8bit`, `4bit`,
+`8b`, `qwen35`, `gemma4`, `whisper` or `parakeet`, it backs up `config.json` to
+`config.json.bak-switch`, updates the model key, restarts the daemon, and polls the log for
+up to 240 seconds waiting for the engine to report ready. If the engine fails to report ready,
+it rolls the configuration back from the backup and restarts the daemon again. When run with no
+arguments, it prints the currently configured models.
+
+## History archive set and row structure
+
+History is an append-only archive set rather than a single file. When `history.jsonl` exceeds
+8 MB, the daemon rotates it to a numbered archive that is never overwritten. The ordering
+contract states that `history.jsonl.1` is the oldest archive, a higher number is newer, and
+the live `history.jsonl` is the newest of all. The whole record is `history.jsonl.1` through
+`history.jsonl.N` in order, followed by `history.jsonl`. Nothing is ever discarded. Anything
+reconstructing the full record must read every archive in the set, oldest first. Two tools
+in the repository currently do not: `engine/audit.py` and `engine/client.py` read only the
+live `history.jsonl` file.
+
+Each history row is written as a JSON line containing the following keys:
+
+| Key | Description | Nullable |
+| --- | --- | --- |
+| `ts` | Local timestamp in ISO format, for example `2026-09-08T19:30:00` | No |
+| `source` | Input source, either `"voice"` or `"text"` | No |
+| `seconds` | Audio duration in seconds rounded to two decimals, or `0` for text | No |
+| `mode` | Correction mode, either `"normal"` or `"cloud"` | No |
+| `backend` | Agent CLI name when cloud mode ran, for example `"claude"` | Yes, null on local dictation and text fixes |
+| `stt_model` | Configured speech model repo identifier, for example `"mlx-community/parakeet-tdt-0.6b-v3"` | Yes, null when source is `"text"` |
+| `llm_model` | Configured local grammar model repo identifier, for example `"mlx-community/Qwen3-4B-Instruct-2507-8bit"` | No |
+| `cloud_model` | Configured cloud model name, for example `"claude-sonnet-5"` | Yes, null when mode is not `"cloud"` |
+| `style` | Formatting style applied, for example `"chat"` or `"mail"` | Yes, null when no style matched |
+| `raw` | Raw transcript from speech or raw input text | No |
+| `text` | Final corrected and formatted text | No |
+| `stt_secs` | Transcription time in seconds, or `0` for text | No |
+| `llm_secs` | Correction time in seconds | No |
+| `guarded` | Boolean indicating whether the output guard was triggered | No |
+| `guard_reason` | Reason string when the guard triggered | Yes, null when not guarded |
+| `audio` | Recording filename under `audio/` when retention is enabled | Yes, null when source is `"text"` or retention is off |
+| `gaps` | List of audio gap metrics recorded during capture | Yes, absent on text fixes, empty list when no gaps |
+| `trimmed` | Number of repeated words trimmed by the hallucination guard | Yes, absent on text fixes, `0` when untrimmed |
 
 ## Commands
 
