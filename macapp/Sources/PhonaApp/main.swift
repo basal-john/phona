@@ -541,11 +541,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         let actual = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        DispatchQueue.global().async {
+        DispatchQueue.global().async { [weak self] in
             var payload: [String: Any] = ["cmd": "FLAG"]
             if !actual.isEmpty { payload["actual"] = actual }
-            _ = try? DaemonClient.request(payload, timeout: 20)
-            Paths.log("flagged the last dictation, actual supplied: \(!actual.isEmpty)")
+            let reply = try? DaemonClient.request(payload, timeout: 20)
+            let flagged = (reply?["state"] as? String) == "done"
+            Paths.log("flagged the last dictation, actual supplied: \(!actual.isEmpty), "
+                + "accepted: \(flagged)")
+            guard flagged else { return }
+            DispatchQueue.main.async { self?.historyStore.reload() }
         }
     }
 
