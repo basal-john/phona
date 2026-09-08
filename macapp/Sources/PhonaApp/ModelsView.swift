@@ -205,14 +205,16 @@ struct ModelsView: View {
     private var switching: some View {
         Card("Switching") {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Run switch-model.sh in the repository with the short name from the right "
-                    + "hand column, for example switch-model.sh 4bit. It rewrites config.json, "
-                    + "restarts the engine, waits for it to report ready, and rolls the change "
-                    + "back if it does not.")
+                Text("Run ~/.local/share/phona/switch-model.sh with the short name from the "
+                    + "right hand column, for example switch-model.sh 4bit. Both install.sh "
+                    + "and update.sh copy it there, so that path works whether Phona was "
+                    + "installed or cloned. It rewrites config.json, restarts the engine, "
+                    + "waits for it to report ready, and rolls the change back if it does not.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("switch-model.sh with no argument prints what is running now.")
+                Text("~/.local/share/phona/switch-model.sh with no argument prints what is "
+                    + "running now.")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.tertiary)
             }
