@@ -5,6 +5,7 @@ enum HUDState: Equatable {
     case hidden
     case listening
     case working
+    case workingInCloud
     case done
     /// Nothing usable was heard. Distinct from `failed` because it is not an error, so it
     /// gets no warning glyph and leaves without complaint.
@@ -47,8 +48,10 @@ struct HUDView: View {
     var solidBackground = false
 
     private let barCount = 5
+    private let cloudBarCount = 3
     private let barWidth: CGFloat = 4
     private let barGap: CGFloat = 7
+    private let cloudBarGap: CGFloat = 6
     private let barMin: CGFloat = 4
     private let barMax: CGFloat = 22
 
@@ -68,6 +71,8 @@ struct HUDView: View {
 
     private var shown: Bool { model.state != .hidden }
 
+    private var isCloud: Bool { model.state == .workingInCloud }
+
     /// Listening, but the device has not produced a buffer yet.
     private var waitingForAudio: Bool { model.state == .listening && !model.capturing }
 
@@ -84,7 +89,8 @@ struct HUDView: View {
         case .failed: return "exclamationmark.triangle.fill"
         case .clipboard: return "doc.on.clipboard"
         case .trimmed: return "scissors"
-        default: return "checkmark"
+        case .done, .hidden, .listening, .working, .workingInCloud, .cancelled:
+            return "checkmark"
         }
     }
 
@@ -93,7 +99,9 @@ struct HUDView: View {
         case .failed: return .orange
         case .clipboard: return .yellow
         case .trimmed: return .yellow
-        default: return .green
+        case .workingInCloud: return .blue
+        case .done, .hidden, .listening, .working, .cancelled:
+            return .green
         }
     }
 
@@ -104,19 +112,34 @@ struct HUDView: View {
             let profile: [Double] = [0.55, 0.82, 1.0, 0.82, 0.55]
             let scaled = model.level * profile[index]
             return barMin + (barMax - barMin) * CGFloat(scaled)
-        case .working:
+        case .working, .workingInCloud:
             return barMin + 3
         case .done, .failed, .cancelled, .clipboard, .trimmed, .hidden:
             return 0
         }
     }
 
+    private func barFill(_ index: Int) -> Color {
+        if isCloud {
+            let opacities: [Double] = [1.0, 0.55, 0.30]
+            let opacity = index < opacities.count ? opacities[index] : 1.0
+            return Color.blue.opacity(opacity)
+        }
+        return Color.white.opacity(waitingForAudio ? 0.30 : 0.92)
+    }
+
     var body: some View {
         ZStack {
-            HStack(spacing: barGap) {
-                ForEach(0..<barCount, id: \.self) { i in
+            HStack(spacing: isCloud ? cloudBarGap : barGap) {
+                if isCloud {
+                    Image(systemName: "cloud")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.blue)
+                }
+
+                ForEach(0..<(isCloud ? cloudBarCount : barCount), id: \.self) { i in
                     Capsule()
-                        .fill(Color.white.opacity(waitingForAudio ? 0.30 : 0.92))
+                        .fill(barFill(i))
                         .frame(width: barWidth, height: barHeight(i))
                         .animation(barSpring, value: model.level)
                         .animation(surfaceSpring, value: model.state)
@@ -142,7 +165,12 @@ struct HUDView: View {
                         .clipShape(Capsule())
                 }
             }
-            .overlay(Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 1))
+            .overlay(
+                Capsule().strokeBorder(
+                    isCloud ? Color.blue.opacity(0.55) : Color.white.opacity(0.14),
+                    lineWidth: 1
+                )
+            )
         )
         .compositingGroup()
         .shadow(color: .black.opacity(0.28), radius: 14, y: 6)
