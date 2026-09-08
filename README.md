@@ -257,9 +257,9 @@ the fixed prompt prefix, which cut the grammar pass from 1.35 s to 0.40 s.
 | grammar | `mlx-community/Qwen3-4B-Instruct-2507-8bit` | 4.1 GB | won a four-model comparison on precision, not on repairs |
 
 Both are swappable. Edit `stt_model` or `llm_model` in `config.json` and run `phona restart`,
-or use `./switch-model.sh`. The backend is picked from the repo id, so naming a Whisper repo
-loads Whisper and needs no other change. A larger grammar model raises quality and roughly
-doubles latency.
+or run `~/.local/share/phona/switch-model.sh` (copied by `install.sh` and `update.sh`). The
+backend is picked from the repo id, so naming a Whisper repo loads Whisper and needs no other
+change. A larger grammar model raises quality and roughly doubles latency.
 
 ```bash
 phona models          # what is loaded, at which revision, and whether the hub has moved
@@ -337,7 +337,8 @@ Everything stays on your Mac, in `~/.local/share/phona`:
 
 | File | What is in it |
 | --- | --- |
-| `history.jsonl` | every dictation, in plain text, with what was heard and what was returned |
+| `history.jsonl` | the live history, every dictation in plain text, with what was heard and what was returned |
+| `history.jsonl.1` … `.N` | the archives it was rotated into, `.1` the oldest, none of them ever discarded |
 | `corrections.jsonl` | the ones you flagged as wrong |
 | `config.json` | your settings, vocabulary and replacements |
 | `phonad.log`, `app.log` | diagnostics |
@@ -345,7 +346,18 @@ Everything stays on your Mac, in `~/.local/share/phona`:
 Worth being explicit about, because it is the obvious consequence of a local tool and still a
 surprise if nobody says it: the history is a plain text record of everything you have
 dictated, readable by anything running as you. Nothing is encrypted and nothing is uploaded.
-Delete `history.jsonl` whenever you like, the app recreates it.
+
+The record is not one file. Once `history.jsonl` passes 8 MB the engine renames it to
+`history.jsonl.1`, then `.2`, and keeps every one of them forever. The window reads the whole
+set, so deleting only `history.jsonl` erases nothing you can see: the lifetime totals and the
+full text of old dictations all come back. To actually erase the record, delete the archives
+with it:
+
+```bash
+rm ~/.local/share/phona/history.jsonl*
+```
+
+The engine recreates the live file on the next dictation.
 
 Audio is not kept. Each recording is written to a temporary file and deleted as soon as it has
 been transcribed, unless you set `keep_audio_days`.
@@ -354,8 +366,12 @@ The right Option key is the one exception to all of the above. It sends the tran
 dictation to the agent CLI named by `cloud_backend`, which reaches the model through whatever
 subscription that CLI is signed in to. No API key is stored here and no audio is sent. The
 left Option key never does this, and `cloud_backend` is not consulted unless the right key was
-the one pressed. Every dictation records which was used, as `mode` and `backend` in
-`history.jsonl`, so the record shows where each one went.
+the one pressed. Every dictation records three separate things about this in `history.jsonl`.
+`mode` is the key that was held, `cloud_sent` is whether the transcript was actually handed to
+the CLI, and `backend` is whose correction was delivered. `cloud_sent` is the one that says
+where the text went, because a cloud reply the guard refuses is corrected locally and records
+no backend, and by then the transcript has already gone. The app draws its privacy dot from
+that field and from nothing else.
 
 ## Keeping it honest
 

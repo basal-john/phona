@@ -204,12 +204,18 @@ def cloud_command(backend, cli, model, workdir):
     raise ValueError(f"unknown cloud backend: {backend}")
 
 
-def cloud_correct(text, backend, model=None, timeout=120):
+def cloud_correct(text, backend, model=None, timeout=120, on_send=None):
     """Clean one dictation with a subscription-backed agent CLI.
 
     Raises rather than returning something unusable, so the caller's fallback to the local
     model is reached by one path instead of two. Nothing about the transcript reaches a
     shell: it is written to stdin of an argv list.
+
+    `on_send` is called once, at the last moment before the transcript is handed to a
+    process, and never on a path that gives up first. Everything that can fail without
+    sending anything fails above it: a CLI that is not installed, and a backend
+    `cloud_command` does not know. That makes the call the one honest witness that the
+    text left this machine, which is what the app draws its privacy dot from.
     """
     cli = resolve_cloud_cli(backend)
     if not cli:
@@ -217,6 +223,8 @@ def cloud_correct(text, backend, model=None, timeout=120):
 
     with tempfile.TemporaryDirectory(prefix="phona-cloud-") as workdir:
         argv, _ = cloud_command(backend, cli, model, workdir)
+        if on_send:
+            on_send()
         proc = subprocess.run(
             argv,
             input=f"{CLOUD_PROMPT}\n\n{text}",
@@ -1408,10 +1416,43 @@ MAX_HISTORY_BYTES = 8_000_000
 
 
 def rotate(path, limit):
-    """Keep an append-only file from growing without bound over months of use."""
+    """Keep an append-only file from growing without bound over months of use.
+
+    The single archive slot is deliberate. This is for the log, which is a debugging aid,
+    so the second rotation discarding the first archive costs nothing. History must never
+    be rotated through here, see `rotate_history`.
+    """
     try:
         if path.exists() and path.stat().st_size > limit:
             path.replace(path.with_suffix(path.suffix + ".1"))
+    except Exception:
+        pass
+
+
+def next_archive(path):
+    """The archive name for `path`, one past the highest numbered archive that exists."""
+    highest = 0
+    for existing in path.parent.glob(path.name + ".*"):
+        tail = existing.name[len(path.name) + 1:]
+        if tail.isdigit():
+            highest = max(highest, int(tail))
+    return path.with_name(f"{path.name}.{highest + 1}")
+
+
+def rotate_history(path, limit):
+    """Rotate the history into a numbered archive that is never overwritten.
+
+    Ordering, which a reader outside this file depends on: history.jsonl.1 is the OLDEST
+    archive, a higher number is newer, and the live history.jsonl is the newest of all. The
+    whole record is history.jsonl.1 through .N in order, then history.jsonl.
+
+    Nothing is ever discarded. The app reports lifetime totals and streaks off this file,
+    and the single archive slot the log uses would silently drop months of it on the second
+    rotation and make every one of those numbers lie.
+    """
+    try:
+        if path.exists() and path.stat().st_size > limit:
+            path.replace(next_archive(path))
     except Exception:
         pass
 
@@ -1438,7 +1479,7 @@ def load_config():
 
 def write_history(entry):
     try:
-        rotate(HISTORY, MAX_HISTORY_BYTES)
+        rotate_history(HISTORY, MAX_HISTORY_BYTES)
         with open(HISTORY, "a") as fh:
             fh.write(json.dumps(entry) + "\n")
     except Exception as exc:
@@ -1747,6 +1788,7 @@ class Engine:
         self.busy_since = None
         self.last_guarded = False
         self.last_guard_reason = None
+        self.last_cloud_sent = False
         self.prefix_tokens = []
         self.cache = None
         self.fix_prefix_tokens = []
@@ -2183,7 +2225,9 @@ class Engine:
     def correct(self, text):
         """Correct one utterance and return the corrected text.
 
-        Sets `self.last_guarded` for the caller to record.
+        Sets `self.last_guarded` for the caller to record, and clears `last_cloud_sent`,
+        because nothing on this path can reach a cloud process. `correct_cloud` restores it
+        around its own fallback call, so a refused cloud reply still reports the send.
 
         When the result looks like the model acted on the text rather than correcting it,
         one retry restates the rule inline, which holds far better on a small model than the
@@ -2194,6 +2238,7 @@ class Engine:
         self.last_guarded = False
         self.last_guard_reason = None
         self.last_backend = None
+        self.last_cloud_sent = False
 
         chunks = split_for_correction(text)
         if len(chunks) == 1:
@@ -2219,13 +2264,24 @@ class Engine:
 
         A refusal falls through to the local model rather than to a mechanical tidy, which
         is what keeps the right Option key from ever being worse than the left one.
+
+        `last_backend` and `last_cloud_sent` answer two different questions and both are
+        recorded. `last_backend` says whose answer was delivered, so a refusal clears it.
+        `last_cloud_sent` says whether the transcript was handed to a cloud process, which a
+        refusal does not undo, and it is the only field the privacy dot may be drawn from.
         """
         self.last_backend = None
+        self.last_cloud_sent = False
         backend = self.cfg.get("cloud_backend") or "claude"
+
+        def sent():
+            self.last_cloud_sent = True
+
         try:
             out = cloud_correct(text, backend,
                                 self.cfg.get("cloud_model"),
-                                self.cfg.get("cloud_timeout", 120))
+                                self.cfg.get("cloud_timeout", 120),
+                                on_send=sent)
             reason = self._refuse(text, out)
             if reason is None:
                 self.last_guarded = False
@@ -2237,7 +2293,9 @@ class Engine:
             reason = str(exc)
             log(f"cloud {backend} failed: {exc}, correcting locally instead")
 
+        was_sent = self.last_cloud_sent
         out = self.correct(text)
+        self.last_cloud_sent = was_sent
         local = self.last_guard_reason
         self.last_guarded = True
         self.last_guard_reason = f"cloud {backend}: {reason}"
@@ -2405,6 +2463,11 @@ class Engine:
                 "seconds": round(seconds, 2),
                 "mode": CLOUD_MODE if mode == CLOUD_MODE else MODE_NAME,
                 "backend": getattr(self, "last_backend", None),
+                "cloud_sent": bool(getattr(self, "last_cloud_sent", False)),
+                "stt_model": self.cfg.get("stt_model"),
+                "llm_model": self.cfg.get("llm_model"),
+                "cloud_model": (self.cfg.get("cloud_model")
+                                if mode == CLOUD_MODE else None),
                 "style": style,
                 "raw": raw,
                 "text": final,
@@ -2437,6 +2500,9 @@ class Engine:
                 "source": "text",
                 "seconds": 0,
                 "mode": MODE_NAME,
+                "stt_model": None,
+                "llm_model": self.cfg.get("llm_model"),
+                "cloud_model": None,
                 "style": style,
                 "raw": text,
                 "text": out,

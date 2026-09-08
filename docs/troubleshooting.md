@@ -7,7 +7,7 @@ under `~/.local/share/phona/`:
 | --- | --- |
 | `~/.local/share/phona/app.log` | the app |
 | `~/.local/share/phona/phonad.log` | the engine |
-| `~/.local/share/phona/history.jsonl` | every dictation, what was heard next to what was corrected |
+| `~/.local/share/phona/history.jsonl` | the live history, what was heard next to what was corrected, with older rows in `history.jsonl.1` and up |
 
 ## Nothing happens when I tap Option
 

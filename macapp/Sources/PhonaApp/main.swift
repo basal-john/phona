@@ -12,6 +12,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var levelTimer: Timer?
     private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
+    private var mainWindow: NSWindow?
+
+    /// Held on the delegate rather than inside the window's view, because the reload trigger
+    /// is the window becoming key and only a window delegate can see that.
+    private let historyStore = HistoryStore()
     private let permissions = PermissionState()
     private var tapInstalled = false
 
@@ -102,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(Settings.showInDock ? .regular : .accessory)
         OutputMute.recoverFromInterruptedDictation()
+        buildMainMenu()
         buildStatusItem()
 
         hotkeys.probing = CommandLine.arguments.contains("--probe-hotkey")
@@ -261,7 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         OutputMute.release()
 
         let mine = session
-        hud.show(.working)
+        hud.show(mode(forSession: mine) == "cloud" ? .workingInCloud : .working)
         Cue.stop.play()
         let released = CFAbsoluteTimeGetCurrent()
         releasedAt = released
@@ -535,17 +541,178 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         let actual = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        DispatchQueue.global().async {
+        DispatchQueue.global().async { [weak self] in
             var payload: [String: Any] = ["cmd": "FLAG"]
             if !actual.isEmpty { payload["actual"] = actual }
-            _ = try? DaemonClient.request(payload, timeout: 20)
-            Paths.log("flagged the last dictation, actual supplied: \(!actual.isEmpty)")
+            let problem = AppDelegate.flagProblem(payload)
+            Paths.log("flagged the last dictation, actual supplied: \(!actual.isEmpty), "
+                + "accepted: \(problem == nil)")
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let problem {
+                    self.reportFlagFailure(problem)
+                } else {
+                    self.historyStore.reload()
+                }
+            }
         }
     }
 
+    /// Why the daemon did not record the flag, or nil when it did.
+    ///
+    /// Every one of these is something the speaker can act on: a daemon that is not running,
+    /// a socket that timed out, a history file with nothing in it yet. Dropping them left the
+    /// button looking like it had worked, on the one feature in the app that collects ground
+    /// truth, so a flag nobody knows was lost is a correction nobody types again.
+    private static func flagProblem(_ payload: [String: Any]) -> String? {
+        let reply: [String: Any]
+        do {
+            reply = try DaemonClient.request(payload, timeout: 20)
+        } catch {
+            return "The engine did not answer. \(error.localizedDescription)"
+        }
+        if (reply["state"] as? String) == "done" { return nil }
+        if let detail = reply["error"] as? String, !detail.isEmpty {
+            return "The engine refused the flag. \(detail)"
+        }
+        return "The engine answered without recording the flag."
+    }
+
+    /// A modal rather than the menu bar tooltip `notify` leaves behind.
+    ///
+    /// `notify` exists so a failed paste does not throw a dialog in front of what somebody
+    /// was typing. Here they have just dismissed a dialog of their own and are waiting on
+    /// it, so there is nothing to interrupt, and a tooltip on an icon nobody is looking at is
+    /// how the drop went unnoticed in the first place. The log line is kept either way.
+    private func reportFlagFailure(_ problem: String) {
+        notify("Phona", problem)
+        let alert = NSAlert()
+        alert.messageText = "The dictation was not flagged"
+        alert.informativeText = problem
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    /// The window that replaced the history file and the README.
+    ///
+    /// Built the way `openSettings` builds its window, for the same reason: nothing in this
+    /// app has a `Scene`, so there is no `WindowGroup` and no `openWindow` to reach for. The
+    /// window is kept rather than released so a second open restores the pane and the
+    /// selection the reader left behind.
+    ///
+    /// `NSApp.activate(ignoringOtherApps:)` is not optional here. When `show_in_dock` is off
+    /// the app runs `.accessory`, and an accessory app that orders a window front without
+    /// activating leaves it behind whatever was in front, with no menu bar of its own.
+    @objc private func openMainWindow() {
+        if let window = mainWindow {
+            historyStore.reload()
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 980, height: 660),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false)
+        window.title = "Phona"
+        window.contentMinSize = NSSize(width: 900, height: 620)
+        window.contentView = NSHostingView(
+            rootView: MainWindowView(store: historyStore,
+                                     flag: { [weak self] in self?.flagLastDictation() }))
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        mainWindow = window
+        historyStore.reload()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// A main menu, without which no window in this app can copy or paste.
+    ///
+    /// `grep -rn mainMenu` returned nothing before this release: the app never set one. Cmd-C,
+    /// Cmd-V, Cmd-X, Cmd-A and Cmd-Z are not built into a text view, they are menu items whose
+    /// key equivalents the menu bar dispatches, so with no main menu every one of them does
+    /// nothing at all. The Settings sheet survived that because it is a form people type into.
+    /// A History pane whose whole purpose is copying text out cannot.
+    ///
+    /// Every editing item is sent to the first responder with a nil target rather than to this
+    /// delegate. That is what lets whichever text view is focused claim the ones it can handle
+    /// and lets the rest grey themselves out, which a target on the delegate would defeat.
+    ///
+    /// Under `.accessory` the app owns no menu bar until it activates, so these items are only
+    /// on screen while one of Phona's own windows is in front. Cmd-0 therefore reaches the
+    /// window from inside the app, and from anywhere else the status menu is the way in.
+    private func buildMainMenu() {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu(title: "Phona")
+        appMenu.addItem(withTitle: "About Phona",
+                        action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+                        keyEquivalent: "")
+        appMenu.addItem(.separator())
+        let settings = NSMenuItem(title: "Settings...",
+                                  action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        appMenu.addItem(settings)
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide Phona",
+                        action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = NSMenuItem(title: "Hide Others",
+                                    action: #selector(NSApplication.hideOtherApplications(_:)),
+                                    keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthers)
+        appMenu.addItem(withTitle: "Show All",
+                        action: #selector(NSApplication.unhideAllApplications(_:)),
+                        keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit Phona",
+                        action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redo)
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Select All",
+                         action: #selector(NSResponder.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        main.addItem(editItem)
+
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "Window")
+        let home = NSMenuItem(title: "Phona Home",
+                              action: #selector(openMainWindow), keyEquivalent: "0")
+        home.target = self
+        windowMenu.addItem(home)
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(withTitle: "Minimize",
+                           action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Zoom",
+                           action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(withTitle: "Bring All to Front",
+                           action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        windowItem.submenu = windowMenu
+        main.addItem(windowItem)
+
+        NSApp.mainMenu = main
+        NSApp.windowsMenu = windowMenu
+    }
+
     @objc private func openReleases() { NSWorkspace.shared.open(UpdateCheck.releasesPage) }
-    @objc private func openHistory() { NSWorkspace.shared.open(Paths.history) }
-    @objc private func openReadme() { NSWorkspace.shared.open(Paths.readme) }
     @objc private func warmMic() {
         audioQueue.async { [weak self] in self?.recorder.warm() }
     }
@@ -681,11 +848,10 @@ extension AppDelegate: NSMenuDelegate {
             menu.addItem(item)
             menu.addItem(.separator())
         }
+        add(menu, "Phona Home...", #selector(openMainWindow), key: "0")
         add(menu, "Settings...", #selector(openSettings), key: ",")
         add(menu, "Setup and permissions...", #selector(showOnboarding))
         add(menu, "Mark last dictation as wrong...", #selector(flagLastDictation))
-        add(menu, "Open history file", #selector(openHistory))
-        add(menu, "Open README", #selector(openReadme))
         menu.addItem(.separator())
         add(menu, "Warm microphone", #selector(warmMic))
         add(menu, "Restart daemon", #selector(restartDaemon))
@@ -697,6 +863,18 @@ extension AppDelegate: NSMenuDelegate {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.target = self
         menu.addItem(item)
+    }
+}
+
+extension AppDelegate: NSWindowDelegate {
+    /// Re-read the history when the window comes forward, and only then.
+    ///
+    /// A timer would re-read a growing file on a schedule nobody asked for, and the only
+    /// moment a stale figure matters is the moment somebody looks at it. The notification
+    /// arrives for every window that becomes key, so it is filtered to this one.
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === mainWindow else { return }
+        historyStore.reload()
     }
 }
 
