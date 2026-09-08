@@ -18,11 +18,20 @@ ends a moment early. A shortcut mid-dictation is ignored rather than treated as 
 since Option+Tab mid-sentence is someone changing window while they talk. Escape throws the
 recording away.
 
-The right Option key is not a hotkey and never arms one. It is the key people reach for as a
-modifier, and `maskAlternate` does not say which side was pressed, so watching that flag alone
-meant the right key started dictations too. The side comes out of the device-dependent flag
-bits instead, `0x20` for left and `0x40` for right, and the right key now counts as an ordinary
-modifier: tapping it does nothing, and pressing it mid-dictation is ignored like any other key.
+The two Option keys are told apart, and each one means something. `maskAlternate` does not say
+which side was pressed, so watching that flag alone meant the right key started dictations by
+accident, which is the one Option most often reached for as a modifier. The side comes out of
+the device-dependent flag bits, `0x20` for left and `0x40` for right.
+
+That fix made the right key an ordinary modifier. It is now deliberately assigned instead: the
+left key corrects on the local model and the right key corrects in the cloud. Each arms only
+when it is the one Option held, so every Option shortcut still behaves as a shortcut, and
+holding both arms neither, because two backends cannot correct one dictation and picking one
+silently would make a slip look like a working choice.
+
+The side is read once, at the moment the dictation starts, and either key stops a running one.
+Stopping stays easier than starting for the reason above, and reading the side only at the
+start means releasing the other key cannot reroute a sentence already spoken.
 
 There is deliberately no fallback. A keyboard that reported Option with no side bit at all
 would not arm a dictation, rather than being treated as the left key, because treating it as
@@ -143,6 +152,89 @@ badly misheard, where the raw words are more use than a confident rewrite of non
 A list gets a tighter size budget than ordinary text, because layout is allowed to add
 structure but never content, and that is what stops the model padding an enumeration with
 items nobody said.
+
+## The cloud correction
+
+The right Option key hands the transcript to an agent CLI signed in to a subscription, rather
+than to an API key, because there is no API access here. `claude`, `codex` and `gemini` all
+authenticate that way.
+
+It is a second key rather than a setting because the two differ in where the text goes, and
+that is a decision per sentence, not per install. A setting would make it a thing you forget
+you turned on.
+
+The cloud pass reuses `_refuse` instead of bringing its own guard. The rules there encode
+measured failures of exactly this task, and the failure that matters most, a model answering a
+dictated question instead of correcting it, is not a small-model problem: measured on four real
+dictations, one backend answered two of them. Prompt wording does not fix it. Three different
+prompts scored identically, which is the same conclusion this file already records for the 4B
+model, that prompt rules alone do not hold.
+
+A refusal falls back to the local model, not to the mechanical tidy. That is the whole reason
+the right key cannot be worse than the left one: measured across four recordings, every
+fallback produced text identical to the local result.
+
+Chunking is skipped on this path. `split_for_correction` exists because a small model loses the
+thread of a long utterance, and a frontier model does not, so chunking would buy extra requests
+and extra latency for nothing.
+
+### Two guard rules were measuring the model, not the text
+
+The cloud correction was accepted on 0 of 4 recordings when it was first wired up, and neither
+reason was the cloud model doing anything wrong.
+
+Any two quote marks against a transcript with none read as a fabricated quoted block. That is
+what a 4B model's `The summary is "the ticket is about a flaky test"` looks like, and a model
+that punctuates well trips it honestly: asked to correct "just make it as welcome to the alpha
+list boot camp" it returned `Just make it "Welcome to the Alpha List Boot Camp."`, a correct
+quoting of a title, and the whole correction was discarded for it. A share of the candidate
+does not separate the two cases, because on a short dictation a quoted title is most of the
+answer as well, 0.76 against the block's 0.69. What separates them is whether the speaker said
+the quoted words: none of the block is in its transcript and every word of the title is in its
+own. Replayed over 2036 recorded dictations the new rule changes one verdict, the intended one,
+with no collateral.
+
+`Claude`, `Codex` and `Gemini` were missing from the dictionary, so resolving the mishearing
+"cloud" to "Claude" counted as naming something never said. That is the strongest single
+argument for this path, a class of error the local model structurally cannot fix and the
+replacements map cannot anticipate, and the guard was rejecting it.
+
+With both fixed it is accepted on 4 of 4.
+
+### What is deliberately still unguarded
+
+One cloud correction dropped an opening sentence, "So again, I did not understand this.", and
+nothing caught it. `longest_dropped_run` scored it 1, because a five character prefix matched
+the dropped `understand` to the kept `underlying`; `same_stem` fixes that class and changes no
+verdict over the corpus either way. `dropped_sentence` catches a lost sentence whose content
+words are scattered, and fires on 2 of 2038 recorded dictations, both real losses.
+
+Neither catches this one. That sentence reduces to a single content word, so any rule sharp
+enough to see it would also strip the false starts the prompt asks to have removed. It is a
+judgement difference between the two models about what counts as a run-up, and it is left
+alone rather than papered over with a threshold fitted to one sample.
+
+### The environment the CLI needs
+
+`USER` has to be in it. Without it the Claude CLI reports "OAuth session expired and could not
+be refreshed", which reads as an expired login rather than a missing variable, and the same
+command works in a terminal. Bisected against a stripped environment: `HOME` and `PATH` alone
+fail, `LOGNAME` does not help, `TMPDIR` does not help, `USER` alone fixes it.
+
+The CLI is also resolved against a candidate list rather than `PATH` alone, for the reason
+`resolve_ffmpeg` already documents: a daemon started from a GUI login item inherits a `PATH`
+with none of these directories in it.
+
+### The flags are load-bearing
+
+These are agents, not completion endpoints, and most of the cost is scaffolding that loads
+before any work happens: instruction files, hooks, MCP servers, the user's own settings.
+Dropping them on codex took one request from 18.2 s and 101,766 tokens to 7.5 s. Latency is
+not a property of the model either. The same input measured 4.23, 10.21 and 20.60 s against
+1.65 s locally, which is queue and start-up noise, so a single sample ranks nothing.
+
+`gpt-5.1-codex-mini` is unreachable on subscription auth, HTTP 400, and is deliberately absent
+from the backend list.
 
 ## Layout
 
@@ -453,7 +545,13 @@ coverage, it is there so the same mistake cannot ship twice:
 | an image survives being displaced by a dictation | a dictation destroying whatever image or file was on the clipboard |
 | an empty clipboard is not a loss | a warning shown every time you dictate with nothing copied |
 | a page named after a chat app is not chat | a GitHub page about `slack-notifier` styling a comment box as a message |
-| only the left key starts a dictation | the right Option key, the one reached for as a modifier, arming a dictation |
+| each Option key arms only when it is the one held | the right Option key, reached for as a modifier, arming a dictation |
+| holding both Option keys arms neither | a slip choosing a correction backend silently |
+| the mode reaches the engine from the request | the right key silently correcting locally, the failure hardest to notice |
+| a quoted title is not a fabricated quote | a correct quoting of the speaker's own words thrown away |
+| an unrelated word sharing a root is not a trace | a deleted sentence scoring 1 because `understand` matched `underlying` |
+| a lost sentence is caught even when scattered | content loss a run counter cannot see |
+| a run-up is not a dropped sentence | the false starts the prompt asks to remove reading as deletion |
 | the side masks are the documented ones | a typo in a bit value, invisible here and wrong on another keyboard |
 | the style reaches the engine from the request | the chat style silently never applying, as an ordinary full stop |
 

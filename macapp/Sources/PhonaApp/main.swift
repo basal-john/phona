@@ -324,23 +324,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if !DaemonClient.isAlive() { DaemonClient.startAndWait() }
             if let released = self.releasedAt { self.trace("daemon request sent", since: released) }
 
-            /// A normal reply lands in 1-5s. Past that, a HUD stuck on "working" with no other
+            /// A local reply lands in 1-5s. Past that, a HUD stuck on "working" with no other
             /// signal reads as broken rather than slow, which is what "the output never came"
             /// turned out to mean on 2026-09-01: the daemon was still alive, just tens of
             /// seconds slower than usual under memory pressure from an unrelated process. This
             /// does not change when or whether the result arrives, only whether the wait during
             /// it is legible, so a still-slow request after this one keeps working the same way,
             /// just with something to check.
-            let stillWorkingNotice = "Still working. This dictation is taking longer than usual."
+            ///
+            /// The cloud correction moves both numbers. Measured on real dictations it takes
+            /// 7-20s, so the local 8s deadline would fire on every single one of them and
+            /// call an expected wait "longer than usual", which is how a notice stops meaning
+            /// anything. The right Option key gets its own deadline past its normal range and
+            /// wording that says what is being waited for rather than that something is wrong.
+            let cloud = self.mode(forSession: mine) == "cloud"
+            let stillWorkingNotice = cloud
+                ? "Still working. The cloud model usually takes 7-20 seconds."
+                : "Still working. This dictation is taking longer than usual."
+            let slowAfter: Double = cloud ? 25 : 8
             let slowNotice = DispatchWorkItem { [weak self] in
                 guard let self, mine == self.session else { return }
                 /// Never clobber a tooltip already there, ours or a warning from an earlier
                 /// dictation waiting to be read (see the matching guard below on clear).
                 guard self.statusItem?.button?.toolTip == nil else { return }
                 self.statusItem?.button?.toolTip = stillWorkingNotice
-                Paths.log("dictation still running past 8s, longer than the usual 1-5s")
+                Paths.log("dictation still running past \(Int(slowAfter))s, "
+                          + (cloud ? "longer than the usual 7-20s for the cloud model"
+                                   : "longer than the usual 1-5s"))
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: slowNotice)
+            DispatchQueue.main.asyncAfter(deadline: .now() + slowAfter, execute: slowNotice)
 
             let outcome = Result { try DaemonClient.process(url: take.url,
                                                             seconds: take.seconds,

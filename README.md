@@ -24,6 +24,10 @@ No account, no API key, no audio leaving your machine.
 You tap the left Option key and talk. Tap it again and Phona transcribes what you said, fixes
 the grammar, and pastes the result into whatever app you were in.
 
+The right Option key does the same thing with a better grammar pass, one that runs in the
+cloud. It is a separate key rather than a setting so the choice is yours per sentence, and so
+nothing leaves your Mac unless you press it.
+
 ```text
 "there any way we can access these logs from the preference menu"
     -> Is there any way we can access these logs from the preference menu?
@@ -36,9 +40,14 @@ The correction step is the point. Speech-to-text alone gives you exactly what yo
 including every dropped auxiliary and tense slip. That is fine for notes and wrong for a pull
 request comment.
 
-Everything runs on your Mac. Parakeet for speech, a 4B language model for the grammar pass,
-both on Apple's MLX. Your voice never reaches a server, so it is safe for work you would not
-paste into a web form. It is also fast, because there is no network round trip.
+The left Option key runs entirely on your Mac. Parakeet for speech, a 4B language model for
+the grammar pass, both on Apple's MLX. Nothing reaches a server, so it is safe for work you
+would not paste into a web form. It is also fast, because there is no network round trip.
+
+Your voice never leaves your Mac on either key: the recording is transcribed locally in both
+cases and the audio is never uploaded. What the right Option key sends is the transcript, as
+text, to whichever model you have configured. That is a real difference and worth deciding
+per sentence rather than once, which is why it is a key and not a preference.
 
 | Stage | Time |
 | --- | --- |
@@ -84,9 +93,24 @@ warning the first time. Right click the app, choose Open, then Open again. Once 
 ## Using it
 
 Tap the **left Option** key on its own, speak, tap it again. That is the whole interface.
-Escape throws the recording away. Resting on the key does nothing, and the right Option key
-is never a hotkey, so every Option shortcut you already use keeps working. The
+Escape throws the recording away. Resting on the key does nothing.
+
+Tap the **right Option** key instead to have the cloud model do the grammar pass. Everything
+else about it is the same, including the sounds and the HUD, and either key stops a recording
+the other one started. Holding both starts nothing.
+
+Both keys arm only when they are the one Option held, so Option+click, Option+e and every
+other Option shortcut you already use keeps working. The
 [design notes](docs/decisions.md#the-hotkey) explain how.
+
+| | Grammar pass | Typical time | Leaves your Mac |
+| --- | --- | --- | --- |
+| left Option | Qwen3-4B, on your Mac | 2 to 5 s | no |
+| right Option | Claude, Codex or Gemini | 7 to 20 s | the transcript, as text |
+
+The cloud pass is checked by the same guard as the local one, and a result the guard refuses
+falls back to the local correction rather than to the raw transcript. So the right key is
+never worse than the left one, only slower.
 
 | While you talk | After the second tap | When it lands |
 | --- | --- | --- |
@@ -288,6 +312,9 @@ Every key in the table below belongs to the daemon, which reads them once at sta
 | `min_seconds` | `0.4` | shorter recordings are a slip of the key |
 | `max_seconds` | `300` | hard cap on one recording |
 | `device_open_timeout` | `6.0` | seconds to wait for the input to produce audio |
+| `cloud_backend` | `claude` | which agent CLI the right Option key uses: `claude`, `codex` or `gemini` |
+| `cloud_model` | `claude-sonnet-5` | model for that CLI, or leave empty for its default |
+| `cloud_timeout` | `120` | seconds before a cloud correction gives up and the local model takes over |
 | `use_initial_prompt` | `false` | bias Whisper with the dictionary. Ignored by Parakeet |
 | `dictionary` | `["Phona"]` | vocabulary hint, only used when the flag above is on |
 | `replacements` | `{}` | literal fixes, for example `{"jeera": "Jira"}` |
@@ -322,6 +349,13 @@ Delete `history.jsonl` whenever you like, the app recreates it.
 
 Audio is not kept. Each recording is written to a temporary file and deleted as soon as it has
 been transcribed, unless you set `keep_audio_days`.
+
+The right Option key is the one exception to all of the above. It sends the transcript of that
+dictation to the agent CLI named by `cloud_backend`, which reaches the model through whatever
+subscription that CLI is signed in to. No API key is stored here and no audio is sent. The
+left Option key never does this, and `cloud_backend` is not consulted unless the right key was
+the one pressed. Every dictation records which was used, as `mode` and `backend` in
+`history.jsonl`, so the record shows where each one went.
 
 ## Keeping it honest
 

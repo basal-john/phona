@@ -1,9 +1,13 @@
 # phona
 
-Voice to grammar-corrected text, fully local, on Apple Silicon.
+Voice to grammar-corrected text on Apple Silicon, local by default.
 
 Press a hotkey, speak, press it again. The corrected text is pasted where your cursor is.
-Nothing leaves the machine.
+
+Speech to text is always local. The grammar pass is local unless the caller asks for
+`mode: "cloud"`, which the app sends when the right Option key was the one pressed; the
+transcript then goes to the agent CLI named by `cloud_backend`. The `phona` CLI never asks
+for it, so everything documented here stays on the machine.
 
 This file documents the Python engine and the `phona` CLI. The Mac app is a second front end
 onto the same daemon and differs in the parts it owns: it captures with `AVAudioEngine` rather
@@ -15,6 +19,10 @@ menu bar. Everything from the silence gate onwards is shared.
 ```
 mic -> ffmpeg (16 kHz mono) -> silence gate -> Parakeet TDT 0.6b v3
     -> repetition guard -> Qwen3-4B grammar pass -> clipboard -> paste at cursor
+
+                           mode: "cloud" replaces one stage:
+                              -> claude | codex | gemini
+                                 guard refuses -> Qwen3-4B
 ```
 
 ffmpeg is the CLI's capture path. The app captures with `AVAudioEngine` and hands the daemon
