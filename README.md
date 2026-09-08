@@ -366,8 +366,12 @@ The right Option key is the one exception to all of the above. It sends the tran
 dictation to the agent CLI named by `cloud_backend`, which reaches the model through whatever
 subscription that CLI is signed in to. No API key is stored here and no audio is sent. The
 left Option key never does this, and `cloud_backend` is not consulted unless the right key was
-the one pressed. Every dictation records which was used, as `mode` and `backend` in
-`history.jsonl`, so the record shows where each one went.
+the one pressed. Every dictation records three separate things about this in `history.jsonl`.
+`mode` is the key that was held, `cloud_sent` is whether the transcript was actually handed to
+the CLI, and `backend` is whose correction was delivered. `cloud_sent` is the one that says
+where the text went, because a cloud reply the guard refuses is corrected locally and records
+no backend, and by then the transcript has already gone. The app draws its privacy dot from
+that field and from nothing else.
 
 ## Keeping it honest
 

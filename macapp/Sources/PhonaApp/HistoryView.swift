@@ -27,8 +27,8 @@ private enum HistoryFilter: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .all: return "All"
-        case .local: return "On-device"
-        case .cloud: return "Cloud"
+        case .local: return "On this Mac"
+        case .cloud: return "Left this Mac"
         case .guarded: return "Guard stepped in"
         case .flagged: return "You flagged"
         }
@@ -118,7 +118,7 @@ struct HistoryView: View {
         case .local: return store.insights.routeCounts[.local] ?? 0
         case .cloud: return store.insights.routeCounts[.cloud] ?? 0
         case .guarded: return store.insights.guardedCount
-        case .flagged: return store.snapshot.corrections.count
+        case .flagged: return store.snapshot.flaggedRowCount
         }
     }
 
@@ -280,17 +280,22 @@ private struct DetailPane: View {
         }
     }
 
-    /// What happened to the text, not which key was pressed.
+    /// What happened to the text, and then whose correction landed.
     ///
-    /// `route` answers the privacy question off `backend`, the only field that proves an
-    /// agent CLI answered. `mode` answers a different one, which cloud the speaker asked
-    /// for, and a row carrying `mode: cloud` with no backend is a request the cloud never
-    /// served. That row is a local correction and saying otherwise names a key press the
-    /// record cannot support.
+    /// `route` answers the first off `cloud_sent`, whether the transcript was handed to a
+    /// cloud process. `backend` answers the second, whose reply was used. A row that reads
+    /// sent with no backend is one the cloud saw and did not correct, which is what a
+    /// refused or failed cloud request leaves behind and is the reason these are two fields.
+    /// The third case is a right-Option dictation where nothing was ever sent, because the
+    /// agent CLI was not installed.
     private var routeLabel: String {
-        if row.route == .cloud { return "sent to the cloud" }
-        if row.mode == "cloud" { return "cloud asked for, corrected on this Mac" }
-        return "corrected on this Mac"
+        if row.route == .cloud {
+            return row.backend == nil
+                ? "left this Mac, then corrected on it"
+                : "left this Mac and was corrected there"
+        }
+        if row.mode == "cloud" { return "cloud asked for, nothing was sent" }
+        return "never left this Mac"
     }
 
     private func block(_ title: String, text: String, emphasised: Bool) -> some View {
@@ -328,9 +333,34 @@ private struct DetailPane: View {
         .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Palette.slow.opacity(0.3)))
     }
 
+    /// Which of the three things the guard can leave behind actually landed.
+    ///
+    /// The engine has no path that hands back the transcript verbatim, so the note never
+    /// says it does. What it can leave is the local model's second attempt, a mechanical
+    /// tidy of the transcript when that was refused as well, or, on the cloud path, the
+    /// local model's ordinary correction.
+    ///
+    /// The reason string is the only record of which, and its shape is the tell.
+    /// `_correct_one` writes a bare reason. `correct_cloud` prefixes `cloud <backend>:` when
+    /// it throws the cloud reply away, and appends `; local:` on top of that when the local
+    /// model it fell back to was refused too. No local reason begins with the word cloud.
     private var guardNote: String {
-        let reason = row.guardReason ?? "no reason was recorded"
-        return "The guard rejected the correction and delivered the transcript instead. Reason: \(reason)."
+        let localOutcome = "what landed is its second attempt, or the transcript with its "
+            + "capitals and full stops put back mechanically if that was refused too"
+        guard let reason = row.guardReason else {
+            return "The guard rejected a correction on this dictation. No reason was "
+                + "recorded on the row, so which stage it was cannot be read back."
+        }
+        if reason.hasPrefix("cloud ") {
+            if reason.contains("; local: ") {
+                return "The cloud correction was not used, and the local model that took "
+                    + "over was rejected as well, so \(localOutcome). Reason: \(reason)."
+            }
+            return "The cloud correction was not used, so the local model corrected this "
+                + "one instead and its reply is what landed. Reason: \(reason)."
+        }
+        return "The local model's first reply was rejected, so \(localOutcome). "
+            + "Reason: \(reason)."
     }
 
     private var trimNote: String {
@@ -369,8 +399,12 @@ private struct DetailPane: View {
 
     /// The cloud model when the cloud answered, the local one otherwise, and a plain refusal
     /// to guess for rows written before the engine recorded either.
+    ///
+    /// Off `backend` rather than `route`, because `route` now reports a transcript that was
+    /// sent and refused as having left this Mac, and naming the cloud model on that row
+    /// would credit a reply that was thrown away.
     private var correctionModel: String {
-        if row.route == .cloud, let cloud = row.cloudModel { return cloud }
+        if row.backend != nil, let cloud = row.cloudModel { return cloud }
         if let local = row.llmModel { return local }
         return "not recorded, this row predates model identity in the history"
     }

@@ -19,21 +19,48 @@ final class DictionaryReachTests: XCTestCase {
 
     /// Parakeet takes no initial prompt at all, so the flag cannot change the answer.
     func testParakeetTakesNoHintWhateverTheFlagSays() {
-        XCTAssertEqual(DictionaryReach.resolve(sttModel: parakeet, useInitialPrompt: false),
-                       .modelTakesNoHint)
-        XCTAssertEqual(DictionaryReach.resolve(sttModel: parakeet, useInitialPrompt: true),
-                       .modelTakesNoHint)
+        XCTAssertEqual(reach(parakeet, flag: false), .modelTakesNoHint)
+        XCTAssertEqual(reach(parakeet, flag: true), .modelTakesNoHint)
     }
 
     /// `use_initial_prompt` defaults to false, so switching to Whisper on its own changes
     /// nothing. That was the remedy the Dictionary pane used to offer.
     func testWhisperWithTheFlagOffStillReachesNothing() {
-        XCTAssertEqual(DictionaryReach.resolve(sttModel: whisper, useInitialPrompt: false),
-                       .hintAvailableButOff)
+        XCTAssertEqual(reach(whisper, flag: false), .hintAvailableButOff)
     }
 
     func testWhisperWithTheFlagOnFeedsTheTranscriber() {
-        XCTAssertEqual(DictionaryReach.resolve(sttModel: whisper, useInitialPrompt: true),
-                       .hintInUse)
+        XCTAssertEqual(reach(whisper, flag: true), .hintInUse)
+    }
+
+    /// The daemon builds `", ".join(dictionary)` and only passes an `initial_prompt` when
+    /// that is not empty, so the flag being on is not enough to claim words are reaching the
+    /// transcriber. The pane used to claim it with an empty list.
+    func testAnEmptyDictionaryReachesNothingEvenWithTheFlagOn() {
+        XCTAssertEqual(reach(whisper, flag: true, words: []), .nothingToSend)
+        XCTAssertEqual(reach(whisper, flag: false, words: []), .nothingToSend)
+        XCTAssertEqual(reach(whisper, flag: true, words: [""]), .nothingToSend)
+    }
+
+    /// The mirror is of the join, not of the entry count. Two empty entries join to the
+    /// separator between them, which the daemon does pass.
+    func testTheHintIsWhatTheDaemonWouldJoin() {
+        XCTAssertEqual(DictionaryReach.hint(from: []), "")
+        XCTAssertEqual(DictionaryReach.hint(from: [""]), "")
+        XCTAssertEqual(DictionaryReach.hint(from: ["", ""]), ", ")
+        XCTAssertEqual(DictionaryReach.hint(from: ["Phona", "Jira"]), "Phona, Jira")
+        XCTAssertEqual(reach(whisper, flag: true, words: ["", ""]), .hintInUse)
+    }
+
+    /// A model that takes no hint is the answer before emptiness, because no dictionary
+    /// would change it.
+    func testParakeetWithAnEmptyDictionaryStillNamesTheModel() {
+        XCTAssertEqual(reach(parakeet, flag: true, words: []), .modelTakesNoHint)
+    }
+
+    private func reach(_ model: String,
+                       flag: Bool,
+                       words: [String] = ["Phona"]) -> DictionaryReach {
+        DictionaryReach.resolve(sttModel: model, useInitialPrompt: flag, dictionary: words)
     }
 }

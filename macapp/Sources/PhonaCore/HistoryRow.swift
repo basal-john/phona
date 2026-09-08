@@ -1,11 +1,16 @@
 import Foundation
 
-/// Whether a dictation's text left this machine.
+/// Whether a dictation's transcript was handed to a cloud process.
 ///
-/// Only that. It is not a record of which key was pressed: a right-Option dictation whose
-/// cloud request was refused or failed is corrected locally and is `.local` here, which is
-/// the truth about the text and not the truth about the key. `mode` is the field that knows
-/// which key was asked for.
+/// Only that. It is not a record of which key was pressed, and it is not a record of which
+/// model produced the delivered text. A right-Option dictation whose cloud reply was refused
+/// is `.cloud` here and was corrected by the local model, because the transcript had already
+/// gone. `mode` is the field that knows which key was asked for and `backend` is the field
+/// that knows whose answer was used.
+///
+/// `.local` is a promise that the text stayed on this Mac. `.cloud` is only a statement that
+/// it did not, so the two are not symmetric: an over-stated `.cloud` costs a reader nothing
+/// and an over-stated `.local` is the one error a privacy claim may never make.
 public enum Route: String, Sendable {
     case local
     case cloud
@@ -37,6 +42,10 @@ public struct HistoryRow: Sendable, Equatable {
     public let audio: String?
     public let flagged: Bool
 
+    /// `cloud_sent`, absent on every row written before it existed. Nil is not false: the
+    /// two are read differently by `route`, so this stays optional all the way through.
+    public let cloudSent: Bool?
+
     public init(ts: Date,
                 source: String?,
                 mode: String?,
@@ -54,7 +63,8 @@ public struct HistoryRow: Sendable, Equatable {
                 guardReason: String?,
                 trimmed: Bool,
                 audio: String?,
-                flagged: Bool = false) {
+                flagged: Bool = false,
+                cloudSent: Bool? = nil) {
         self.ts = ts
         self.source = source
         self.mode = mode
@@ -73,14 +83,28 @@ public struct HistoryRow: Sendable, Equatable {
         self.trimmed = trimmed
         self.audio = audio
         self.flagged = flagged
+        self.cloudSent = cloudSent
     }
 
-    /// `backend` is the only honest witness that the text left the machine, because the
-    /// engine records one only when an agent CLI actually answered. A cloud request that is
-    /// refused or that fails falls back to the local model and records no backend. Deriving
-    /// this from `mode` instead would claim a privacy boundary was crossed when it was not.
+    /// `.local` only when the record can carry that claim, and `.cloud` whenever it cannot.
+    ///
+    /// `cloud_sent` is written by the engine immediately before the transcript is handed to
+    /// an agent process and stays true when the reply is then refused, so on a row that
+    /// carries it this is exactly the question a reader is asking. `backend` cannot answer
+    /// it: a refused cloud reply clears the backend and the transcript has still gone.
+    ///
+    /// Rows written before that key existed fall back to either witness they do carry: a
+    /// recorded `backend`, which only an agent CLI that answered can produce, or a `mode` of
+    /// cloud, the key that was held. Vintages exist that carry one and not the other, so
+    /// reading only `mode` would call an older answered cloud row local.
+    ///
+    /// The fallback over-states leaving in one case, a right-Option dictation where the
+    /// agent CLI was not installed and nothing was ever sent. The trade is deliberate. An
+    /// old row that reads `.cloud` may have stayed on this Mac, and no row that reads
+    /// `.local` ever left it.
     public var route: Route {
-        backend == nil ? .local : .cloud
+        if let cloudSent { return cloudSent ? .cloud : .local }
+        return (backend != nil || mode == "cloud") ? .cloud : .local
     }
 
     /// Over `text`, what was delivered, never `raw`, what the transcriber heard. The
@@ -105,7 +129,10 @@ public enum HistoryParser {
     /// The engine writes `time.strftime("%Y-%m-%dT%H:%M:%S")`, a naive local wall clock with
     /// no zone and no offset. Parsing it as UTC shifts every row by the machine's offset,
     /// which is how a dictation lands on the wrong day, so the zone is always passed in.
-    private static func makeFormatter(_ timeZone: TimeZone) -> DateFormatter {
+    ///
+    /// Not private, because `corrections.jsonl` carries the same stamp written by the same
+    /// call, and a second formatter beside this one is how the two files stop joining.
+    static func makeFormatter(_ timeZone: TimeZone) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)
@@ -183,7 +210,8 @@ public enum HistoryParser {
                           guardReason: string(object["guard_reason"]),
                           trimmed: boolean(object["trimmed"]),
                           audio: string(object["audio"]),
-                          flagged: boolean(object["flagged"]))
+                          flagged: boolean(object["flagged"]),
+                          cloudSent: optionalBoolean(object["cloud_sent"]))
     }
 
     /// An absent key, a JSON null and an empty string all mean the same thing to every
@@ -203,6 +231,12 @@ public enum HistoryParser {
 
     private static func boolean(_ value: Any?) -> Bool {
         (value as? NSNumber)?.boolValue ?? false
+    }
+
+    /// Absent and false are the same thing to most callers here and not to `route`, which
+    /// has to know whether the engine that wrote the row was old enough to be silent.
+    private static func optionalBoolean(_ value: Any?) -> Bool? {
+        (value as? NSNumber)?.boolValue
     }
 }
 

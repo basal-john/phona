@@ -68,15 +68,18 @@ struct DictionaryView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
     }
 
-    /// Which of the three answers this Mac is actually in, from the loaded speech model and
-    /// the `use_initial_prompt` flag together.
+    /// Which of the four answers this Mac is actually in, from the loaded speech model, the
+    /// `use_initial_prompt` flag and the dictionary itself together.
     private var reach: DictionaryReach {
         DictionaryReach.resolve(sttModel: store.snapshot.sttModel,
-                                useInitialPrompt: store.snapshot.useInitialPrompt)
+                                useInitialPrompt: store.snapshot.useInitialPrompt,
+                                dictionary: words)
     }
 
     private var headline: String {
         switch reach {
+        case .nothingToSend:
+            return "There are no words here to send to the transcriber."
         case .modelTakesNoHint, .hintAvailableButOff:
             return "On \(speechModelName) these words never reach the transcriber."
         case .hintInUse:
@@ -90,6 +93,13 @@ struct DictionaryView: View {
         let uses = "Your words keep a term intact once it has been heard, and stop the guard "
             + "rejecting a name it does not recognise."
         switch reach {
+        case .nothingToSend:
+            return "The daemon only passes an initial prompt when the joined dictionary is "
+                + "not empty, so with nothing in the list the flag makes no difference. "
+                + uses
+                + " To bias what is heard in the first place, add a word in the Words tab "
+                + "of Settings, run speech on a Whisper model, and turn on "
+                + "use_initial_prompt in config.json. All three are needed."
         case .modelTakesNoHint:
             return "This speech model accepts no vocabulary hint at all. " + uses
                 + " To bias what is heard in the first place, switch speech to a Whisper "

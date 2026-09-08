@@ -111,33 +111,35 @@ struct MainWindowView: View {
     }
 }
 
-/// Which key means which route, in the one place that is always on screen.
+/// What the dot on every dictation means, in the one place that is always on screen.
 ///
-/// The privacy boundary is chosen per utterance by which Option key is held, so the dot on a
-/// row is meaningless until a reader knows that. The legend is in the sidebar footer rather
-/// than repeated on each pane for exactly that reason.
+/// It names the dot rather than the Option keys, because the key and the dot can disagree.
+/// The key chooses which correction is asked for and the dot reports what happened to the
+/// text, so a right-Option dictation whose cloud reply was thrown away was corrected on this
+/// Mac and still carries the blue dot: the transcript had already gone. A legend that read
+/// "right ⌥ means cloud" would leave a reader thinking a green dot on that row was possible.
 struct RouteLegend: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("Dictation keys")
+            Text("The dot on a dictation")
                 .font(.caption2.weight(.semibold))
                 .textCase(.uppercase)
                 .foregroundStyle(.secondary)
-            row(key: "left ⌥", route: .local, label: "on-device")
-            row(key: "right ⌥", route: .cloud, label: "cloud")
+            row(route: .local, label: "stayed on this Mac")
+            row(route: .cloud, label: "went to the cloud")
+            Text("Left ⌥ asks for the on-device correction, right ⌥ for the cloud one. A "
+                + "cloud request that was refused still went, so it keeps the blue dot.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
     }
 
-    private func row(key: String, route: Route, label: String) -> some View {
+    private func row(route: Route, label: String) -> some View {
         HStack(spacing: 7) {
-            Text(key)
-                .font(.system(size: 10, design: .monospaced))
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.quaternary))
             RouteDot(route: route)
             Text(label)
                 .font(.caption)
@@ -148,10 +150,10 @@ struct RouteLegend: View {
 
 /// The one design idea that appears on every dictation in the window.
 ///
-/// Green for text that never left the machine, blue for text that did. It is drawn from
-/// `HistoryRow.route`, which reads the recorded backend rather than the key that was held,
-/// because a refused or failed cloud request falls back to the local model and a dot taken
-/// from the key would claim a boundary was crossed when it was not.
+/// Green for text that stayed on this Mac, blue for text that did not. It is drawn from
+/// `HistoryRow.route`, which reads whether the transcript was handed to a cloud process
+/// rather than which key was held or whose answer was used, because those two both draw a
+/// green dot on a dictation the cloud has already seen.
 ///
 /// System colours rather than the mock-up's hex, so both dots stay legible when the window
 /// is in dark appearance.
@@ -163,16 +165,20 @@ struct RouteDot: View {
         Circle()
             .fill(Palette.route(route))
             .frame(width: diameter, height: diameter)
-            .accessibilityLabel(route == .local ? "on-device" : "cloud")
+            .accessibilityLabel(route == .local ? "stayed on this Mac" : "went to the cloud")
     }
 }
 
 /// The route as a word, for places that have room for one.
+///
+/// A statement about the text rather than the route's own name, because "cloud" beside a
+/// dictation reads as the cloud having corrected it and the dot only claims the text went
+/// there. Kept short because the master row carries up to three more chips beside it.
 struct RouteBadge: View {
     let route: Route
 
     var body: some View {
-        Text(route == .local ? "on-device" : "cloud")
+        Text(route == .local ? "on this Mac" : "left this Mac")
             .font(.system(size: 10))
             .foregroundStyle(Palette.route(route))
             .padding(.horizontal, 4)
