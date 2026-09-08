@@ -73,11 +73,50 @@ def test_guard_rejects_model_acting_on_the_text(source, candidate):
                  "She doesn't want any help from anybody.", id="double-negative"),
     pytest.param('he said "ship it" in the standup',
                  'He said "ship it" in the standup.', id="quote-the-speaker-dictated"),
+    pytest.param("just make it as welcome to the team handbook",
+                 'Just make it "Welcome to the Team Handbook."',
+                 id="quoted-title-inside-a-real-correction"),
+    pytest.param("replace the second slide with my details my details can be found "
+                 "on the intro page and also um drop the pricing part from the slide just "
+                 "make it as welcome to the team handbook",
+                 "Replace the second slide with my details. My details can be found "
+                 "on the intro page. Also, drop the pricing part from the slide. Just make "
+                 'it "Welcome to the Team Handbook."',
+                 id="a-dictated-instruction-correctly-punctuated"),
 ])
 def test_guard_accepts_real_corrections(source, candidate):
     """The guard must not over-fire. A correction may grow, and a quote the speaker
     actually dictated is not evidence of misbehaviour."""
     assert phonad.Engine._looks_like_a_reply(source, candidate) is False
+
+
+def test_a_lost_sentence_is_caught_even_when_its_words_are_scattered():
+    """`longest_dropped_run` counts words in a row, so a deletion whose content words are
+    few or spread out scores below the threshold and passes. The loss happens at the level
+    of a sentence, so it is also asked about there."""
+    source = ("we should ship the migration on friday. the staging box is already running "
+              "the new schema.")
+    candidate = "The staging box is already running the new schema."
+    assert phonad.longest_dropped_run(source, candidate) < phonad.MAX_DROPPED_RUN
+    assert phonad.dropped_sentence(source, candidate) is not None
+
+
+def test_a_run_up_is_not_a_dropped_sentence():
+    """The prompt asks for false starts to be removed, so removing one must not read as a
+    deletion. A run-up carries no content words, or one."""
+    source = "um so yeah. the tests is failing on ci."
+    candidate = "The tests are failing on CI."
+    assert phonad.dropped_sentence(source, candidate) is None
+
+
+def test_an_unrelated_word_sharing_a_root_is_not_a_trace_of_the_speakers_word():
+    """A five character prefix matched `understand` to `underlying` and made a deleted
+    sentence score 1. An inflection has to survive the tightening."""
+    assert phonad.same_stem("understand", "underlying") is False
+    assert phonad.same_stem("investigate", "investigating") is True
+    assert phonad.same_stem("apple", "apples") is True
+    assert phonad.same_stem("test", "text") is False
+
 
 
 # --- enumerated speech laid out as a list ------------------------------------------
@@ -737,7 +776,7 @@ def test_the_style_reaches_the_engine_from_the_request():
     the request. Dropped anywhere along the way it fails silently, as an ordinary full stop."""
     calls = []
     engine = types.SimpleNamespace(
-        process=lambda path, seconds, style, history, retain: calls.append((style,))
+        process=lambda path, seconds, style, history, retain, mode: calls.append((style,))
         or {"state": "done", "text": "ok"})
 
     conn = _FakeConn({"cmd": "PROCESS", "path": "/tmp/take.wav", "seconds": 2.0,
@@ -745,6 +784,36 @@ def test_the_style_reaches_the_engine_from_the_request():
     phonad.handle(conn, engine)
 
     assert calls == [("chat",)]
+
+
+def test_the_mode_reaches_the_engine_from_the_request():
+    """The right Option key is the only thing that knows it was the right one, so the mode
+    travels in the request the way the style does. Dropped along the way it fails silently
+    as an ordinary local correction, which is the failure hardest to notice."""
+    calls = []
+    engine = types.SimpleNamespace(
+        process=lambda path, seconds, style, history, retain, mode: calls.append(mode)
+        or {"state": "done", "text": "ok"})
+
+    conn = _FakeConn({"cmd": "PROCESS", "path": "/tmp/take.wav", "seconds": 2.0,
+                      "mode": "cloud"})
+    phonad.handle(conn, engine)
+
+    assert calls == ["cloud"]
+
+
+def test_a_request_without_a_mode_corrects_locally():
+    """`phona` on the command line and the left Option key both send no mode, and must keep
+    the local model rather than reaching the network."""
+    calls = []
+    engine = types.SimpleNamespace(
+        process=lambda path, seconds, style, history, retain, mode: calls.append(mode)
+        or {"state": "done", "text": "ok"})
+
+    conn = _FakeConn({"cmd": "PROCESS", "path": "/tmp/take.wav", "seconds": 2.0})
+    phonad.handle(conn, engine)
+
+    assert calls == [None]
 
 
 def test_a_request_without_a_style_still_works():

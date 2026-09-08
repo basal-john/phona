@@ -58,6 +58,7 @@ The run also records wall clock timings, and those do move between runs.
 
 import contextlib
 import difflib
+import getpass
 import json
 import math
 import os
@@ -69,6 +70,7 @@ import socket
 import string
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -116,6 +118,145 @@ def resolve_ffmpeg():
 FFMPEG = resolve_ffmpeg() or "ffmpeg"
 
 MODE_NAME = "correct"
+CLOUD_MODE = "cloud"
+
+# Where each agent CLI is looked for when PATH does not have it, for the reason
+# `resolve_ffmpeg` documents: a daemon started from a GUI login item inherits a PATH with
+# none of these directories in it, and every cloud correction would then fail with
+# FileNotFoundError while the binary sat one directory away.
+CLOUD_CLI_CANDIDATES = {
+    "claude": ("~/.local/bin/claude", "/opt/homebrew/bin/claude"),
+    "codex": ("/opt/homebrew/bin/codex", "~/.local/bin/codex"),
+    "gemini": ("/opt/homebrew/bin/gemini", "~/.local/bin/gemini"),
+}
+
+CLOUD_PROMPT = (
+    "Proofread this transcript of dictated speech. Fix grammar, punctuation and "
+    "capitalisation, remove filler words and false starts, and join broken sentences into "
+    "correctly formatted paragraphs. Do not change the intention or the core essence of the "
+    "message, and keep the speaker's own wording wherever it is already correct. Return the "
+    "same message, corrected, and nothing else. Do not summarise, shorten, expand, translate "
+    "or add anything."
+)
+
+
+def resolve_cloud_cli(backend):
+    """The agent CLI for a backend, or None when it is not installed."""
+    found = shutil.which(backend)
+    if found:
+        return found
+    for candidate in CLOUD_CLI_CANDIDATES.get(backend, ()):
+        expanded = os.path.expanduser(candidate)
+        if os.access(expanded, os.X_OK):
+            return expanded
+    return None
+
+
+def cloud_env():
+    """The environment an agent CLI needs to reach the signed-in subscription.
+
+    `USER` is the load-bearing one and the reason this function exists. Without it the
+    Claude CLI fails with "OAuth session expired and could not be refreshed", which reads
+    as an expired login rather than a missing variable, and the same command works in a
+    terminal. Measured by bisecting a stripped environment: HOME and PATH alone fail,
+    LOGNAME does not help, TMPDIR does not help, and USER alone fixes it.
+    """
+    env = {
+        "HOME": os.path.expanduser("~"),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
+        "USER": os.environ.get("USER") or os.environ.get("LOGNAME") or getpass.getuser(),
+        "LANG": os.environ.get("LANG", "en_US.UTF-8"),
+    }
+    if os.environ.get("TMPDIR"):
+        env["TMPDIR"] = os.environ["TMPDIR"]
+    return env
+
+
+def cloud_command(backend, cli, model, workdir):
+    """How to ask one agent CLI for a single answer and nothing else.
+
+    These are agents rather than completion endpoints, so most of this is about not paying
+    for the scaffolding. Each flag drops something that would otherwise load before any work
+    happens: project instruction files, hooks, MCP servers and the user's own settings.
+    Dropping them on codex took one request from 18.2s and 101,766 tokens to 7.5s.
+
+    The prompt goes on stdin for claude, because an empty or flag-shaped argument is
+    swallowed by its parser and the request then fails for having no prompt at all. Gemini is
+    asked for JSON because its plain text interleaves MCP warnings with the answer.
+    """
+    if backend == "claude":
+        argv = [cli, "-p", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+                "--settings", "{}"]
+        if model:
+            argv += ["--model", model]
+        return argv, "stdin"
+    if backend == "codex":
+        argv = [cli, "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules",
+                "--skip-git-repo-check", "-s", "read-only", "-C", workdir, "--color", "never"]
+        if model:
+            argv += ["-m", model]
+        return argv, "stdin"
+    if backend == "gemini":
+        argv = [cli, "-o", "json", "--approval-mode", "plan"]
+        if model:
+            argv += ["-m", model]
+        return argv, "stdin"
+    raise ValueError(f"unknown cloud backend: {backend}")
+
+
+def cloud_correct(text, backend, model=None, timeout=120):
+    """Clean one dictation with a subscription-backed agent CLI.
+
+    Raises rather than returning something unusable, so the caller's fallback to the local
+    model is reached by one path instead of two. Nothing about the transcript reaches a
+    shell: it is written to stdin of an argv list.
+    """
+    cli = resolve_cloud_cli(backend)
+    if not cli:
+        raise RuntimeError(f"{backend} is not installed")
+
+    with tempfile.TemporaryDirectory(prefix="phona-cloud-") as workdir:
+        argv, _ = cloud_command(backend, cli, model, workdir)
+        proc = subprocess.run(
+            argv,
+            input=f"{CLOUD_PROMPT}\n\n{text}",
+            capture_output=True, text=True, timeout=timeout,
+            cwd=workdir, env=cloud_env())
+
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        raise RuntimeError(f"{backend} exited {proc.returncode}: "
+                           f"{detail[-1][:160] if detail else 'no output'}")
+
+    out = (proc.stdout or "").strip()
+    if backend == "gemini":
+        try:
+            out = (json.loads(out).get("response") or "").strip()
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    if not out:
+        raise RuntimeError(f"{backend} returned nothing")
+    return strip_wrapping(out)
+
+
+def strip_wrapping(text):
+    """Undo the two things a chat model adds around an answer it was told not to decorate.
+
+    A fenced block around the whole answer, and a preamble line introducing it. Both have
+    been seen from every backend, and neither is worth a retry when it can be removed.
+    """
+    text = text.strip()
+    if text.startswith("```") and text.rstrip().endswith("```"):
+        body = text[3:text.rstrip().rindex("```")]
+        first, newline, rest = body.partition("\n")
+        # A language tag, not content: one short word on the opening line.
+        body = rest if newline and len(first.split()) <= 1 else body
+        text = body.strip() or text
+    lines = text.splitlines()
+    if len(lines) > 1 and lines[0].rstrip().endswith(":") and len(lines[0]) < 80:
+        text = "\n".join(lines[1:]).strip()
+    return text
+
 
 DEFAULTS = {
     "stt_model": "mlx-community/parakeet-tdt-0.6b-v3",
@@ -133,6 +274,11 @@ DEFAULTS = {
     "self_correction": True,
     "silence_max_db": -42.0,
     "max_words_per_second": 6.0,
+    # The right Option key's cleanup. Only ever reached when the caller asks for
+    # mode "cloud", so an unreachable backend cannot affect the ordinary hotkey.
+    "cloud_backend": "claude",
+    "cloud_model": "claude-sonnet-5",
+    "cloud_timeout": 120,
     "dictionary": ["Phona"],
     "replacements": {},
     "keep_audio_days": 0,
@@ -1025,6 +1171,25 @@ just only also too about into over under again more most other than
 
 MAX_DROPPED_RUN = 4
 MIN_SIMILARITY = 0.40
+# The fewest content words a sentence must carry before losing all of them counts as a
+# deletion rather than the removal of a run-up. A false start carries one.
+DROPPED_SENTENCE_FLOOR = 2
+
+QUOTED_SPAN = re.compile(r'"[^"]*"')
+# How much of a quoted span has to be words the speaker actually said before the quotes are
+# punctuation in the answer rather than a block the model made up.
+#
+# This started as a count, any two quote marks against a transcript with none, which is what
+# a 4B model's `The summary is "the ticket is about a flaky test"` looks like. A model that
+# punctuates well trips that honestly: asked to correct "just make it as welcome to the team
+# handbook", a frontier model returned `Just make it "Welcome to the Team Handbook."`, a
+# correct quoting of a title, and the whole correction was thrown away for it.
+#
+# A share of the candidate does not separate those two, because on a short dictation a
+# quoted title is most of the answer as well, 0.76 against the block's 0.69. What separates
+# them is whether the speaker said the quoted words: none of the block is in its transcript,
+# and every word of the title is in its own.
+QUOTED_MIN_SPOKEN = 0.6
 WORD = re.compile(r"[A-Za-z][A-Za-z'\-]*")
 
 
@@ -1130,13 +1295,60 @@ def longest_dropped_run(source, candidate):
     kept = set(_spoken_content(candidate))
     run = longest = 0
     for word in _spoken_content(source):
-        if word in kept or any(k.startswith(word[:5]) or word.startswith(k[:5])
-                               for k in kept):
+        if word in kept or any(same_stem(word, k) for k in kept):
             run = 0
         else:
             run += 1
             longest = max(longest, run)
     return longest
+
+
+def dropped_sentence(source, candidate, floor=DROPPED_SENTENCE_FLOOR):
+    """A whole sentence of the speaker's that left no trace in the answer.
+
+    `longest_dropped_run` counts content words in a row and cannot see a deletion whose
+    words are scattered or few. This asks the question at the level the loss happens at:
+    the speaker said a sentence, and none of it came back.
+
+    The floor is what keeps this off the filler the prompt asks to be removed. A run-up
+    like "Um so yeah" carries no content words at all and a false start carries one, so
+    neither reaches the floor, while a sentence carrying an actual clause does. Measured
+    over 2038 recorded dictations, this fires on 2 and both are real losses.
+    """
+    kept = set(_spoken_content(candidate))
+    for sentence in SENTENCE_END.split(source.strip()):
+        words = _spoken_content(sentence)
+        if len(words) < floor:
+            continue
+        if not any(w in kept or any(same_stem(w, k) for k in kept) for w in words):
+            return sentence.strip()
+    return None
+
+
+def same_stem(a, b):
+    """Whether two words differ only by an ending, so one is a trace of the other.
+
+    A fixed five character prefix was enough to make a deleted sentence invisible. Asked to
+    correct "So again, I did not understand this. So whenever I transcribe something...",
+    a model returned the text without its first sentence, and the run scored 1: `understand`
+    was matched to the kept word `underlying` because both begin "under". The whole point of
+    the run is to see a deleted clause, and it saw nothing.
+
+    The prefix now has to cover the shorter word almost entirely, which is what an inflection
+    does and what an unrelated word sharing a root does not. Two characters of slack carries
+    `investigate` to `investigating`, and the floor of four keeps a short pair like `test`
+    and `text` apart, where two characters of slack would be most of the word.
+    """
+    shorter = min(len(a), len(b))
+    need = max(4, shorter - 2)
+    if shorter < need:
+        return False
+    common = 0
+    for x, y in zip(a, b):
+        if x != y:
+            break
+        common += 1
+    return common >= need
 
 
 CHAT_KEEP_STOP = {"etc", "vs", "approx", "dr", "mr", "mrs", "ms", "prof", "inc", "ltd",
@@ -1949,8 +2161,15 @@ class Engine:
         if any(t in lowered for t in tells) and not any(t in source.lower() for t in tells):
             return True
 
-        if candidate.count('"') >= 2 and source.count('"') == 0:
-            return True
+        if source.count('"') == 0:
+            said = {w.lower() for w in WORD.findall(source)}
+            for span in QUOTED_SPAN.findall(candidate):
+                words = WORD.findall(span)
+                if not words:
+                    continue
+                spoken = sum(1 for w in words if w.lower() in said)
+                if spoken / len(words) < QUOTED_MIN_SPOKEN:
+                    return True
 
         if src_words >= 4:
             import difflib
@@ -1974,6 +2193,7 @@ class Engine:
         """
         self.last_guarded = False
         self.last_guard_reason = None
+        self.last_backend = None
 
         chunks = split_for_correction(text)
         if len(chunks) == 1:
@@ -1981,6 +2201,49 @@ class Engine:
 
         log(f"correcting {len(text.split())} words as {len(chunks)} chunks")
         return join_corrected(self._correct_one(chunk) for chunk in chunks)
+
+    def correct_cloud(self, text):
+        """Correct one utterance with the cloud backend, or locally if that will not do.
+
+        The guard is `_refuse`, the local path's own, reused rather than reimplemented
+        because it encodes measured failures of this exact task. The one that matters most
+        here is a model answering a dictated question instead of correcting it, which a
+        frontier model does too: measured on four real dictations, one backend returned an
+        answer for two of them. Prompt wording did not move that. Three different prompts
+        scored identically, which is the same finding this file already records for the 4B
+        model, that prompt rules alone do not hold.
+
+        Chunking is deliberately skipped. `split_for_correction` exists because a small
+        model loses the thread of a long utterance, and a frontier model does not, so
+        chunking here would only buy extra requests and extra latency.
+
+        A refusal falls through to the local model rather than to a mechanical tidy, which
+        is what keeps the right Option key from ever being worse than the left one.
+        """
+        self.last_backend = None
+        backend = self.cfg.get("cloud_backend") or "claude"
+        try:
+            out = cloud_correct(text, backend,
+                                self.cfg.get("cloud_model"),
+                                self.cfg.get("cloud_timeout", 120))
+            reason = self._refuse(text, out)
+            if reason is None:
+                self.last_guarded = False
+                self.last_guard_reason = None
+                self.last_backend = backend
+                return out
+            log(f"cloud {backend}: {reason}, correcting locally instead")
+        except Exception as exc:
+            reason = str(exc)
+            log(f"cloud {backend} failed: {exc}, correcting locally instead")
+
+        out = self.correct(text)
+        local = self.last_guard_reason
+        self.last_guarded = True
+        self.last_guard_reason = f"cloud {backend}: {reason}"
+        if local:
+            self.last_guard_reason += f"; local: {local}"
+        return out
 
     def _correct_one(self, text):
         """Correct one chunk, retrying once and tidying mechanically if that also fails.
@@ -2021,6 +2284,9 @@ class Engine:
         run = longest_dropped_run(text, out)
         if run >= MAX_DROPPED_RUN:
             return f"correction dropped {run} of the speaker's words in a row"
+        gone = dropped_sentence(text, out)
+        if gone:
+            return f"correction dropped a whole sentence: {gone[:60]!r}"
         allowed = list((self.cfg.get("replacements") or {}).values())
         allowed += self.cfg.get("dictionary") or []
         invented = invented_names(text, out, allowed)
@@ -2077,12 +2343,16 @@ class Engine:
 
     # -- requests ----------------------------------------------------------
 
-    def process(self, path, seconds, style=None, history=True, retain=True):
+    def process(self, path, seconds, style=None, history=True, retain=True, mode=None):
         """Transcribe a recorded wav, correct it and record the result in history.
 
         The style names the kind of app the text is going into, sent by the caller because
         the daemon cannot see the screen. It is recorded in history so an audit can tell a
         message that was styled from one that was not.
+
+        The mode names what corrects it, and only `cloud` means anything: it is what the
+        right Option key sends. Anything else, including nothing, is the local model, so a
+        caller that has never heard of the cloud mode keeps the behaviour it has today.
         """
         with self.guard():
             path = Path(path)
@@ -2123,7 +2393,8 @@ class Engine:
             source = apply_replacements(source, self.cfg.get("replacements"))
 
             t1 = time.time()
-            final = self.correct(source)
+            final = (self.correct_cloud(source) if mode == CLOUD_MODE
+                     else self.correct(source))
             t_llm = time.time() - t1
 
             final = restore_protected_terms(raw, final, self.cfg.get("dictionary"))
@@ -2132,7 +2403,8 @@ class Engine:
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "source": "voice",
                 "seconds": round(seconds, 2),
-                "mode": MODE_NAME,
+                "mode": CLOUD_MODE if mode == CLOUD_MODE else MODE_NAME,
+                "backend": getattr(self, "last_backend", None),
                 "style": style,
                 "raw": raw,
                 "text": final,
@@ -2224,7 +2496,7 @@ def handle(conn, engine):
         elif cmd == "PROCESS":
             reply = engine.process(req.get("path", ""), float(req.get("seconds") or 0),
                                    style, req.get("history", True),
-                                   req.get("retain", True))
+                                   req.get("retain", True), req.get("mode"))
         elif cmd == "FLAG":
             reply = flag_last(req.get("actual"))
         elif cmd == "FIX":
@@ -2239,6 +2511,9 @@ def handle(conn, engine):
                 "stt_model": engine.cfg["stt_model"],
                 "llm_model": engine.cfg["llm_model"],
                 "mode": MODE_NAME,
+                "cloud_backend": engine.cfg.get("cloud_backend"),
+                "cloud_model": engine.cfg.get("cloud_model"),
+                "cloud_cli": resolve_cloud_cli(engine.cfg.get("cloud_backend") or "claude"),
                 "prefix_tokens": len(engine.prefix_tokens),
                 "stt_revision": (cached_revision(engine.cfg["stt_model"]) or "")[:12] or None,
                 "llm_revision": (cached_revision(engine.cfg["llm_model"]) or "")[:12] or None,

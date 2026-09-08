@@ -66,6 +66,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return styleForSession.style
     }
 
+    /// Which Option key started each hold, tagged with that hold and locked for the same
+    /// reason `styleForSession` is: it is written on the main thread when the key goes down
+    /// and read from `deliver`'s queue when the text comes back.
+    private var cloudForSession: (session: Int, cloud: Bool)?
+
+    private func rememberCloud(_ cloud: Bool, session: Int) {
+        styleLock.lock()
+        defer { styleLock.unlock() }
+        if let cloudForSession, cloudForSession.session > session { return }
+        cloudForSession = (session, cloud)
+    }
+
+    /// The correction mode for a hold, or nil for the local model.
+    ///
+    /// Defaults to the local model when the tag does not match, so a hold whose record was
+    /// overtaken is cleaned the way it is cleaned today rather than sent to the cloud.
+    private func mode(forSession wanted: Int) -> String? {
+        styleLock.lock()
+        defer { styleLock.unlock() }
+        guard let cloudForSession, cloudForSession.session == wanted else { return nil }
+        return cloudForSession.cloud ? "cloud" : nil
+    }
+
     /// Bring the app up without ever blocking on a permission dialog.
     ///
     /// Accepts two debug flags, `--probe-focus` and `--setup`, which open a window or log
@@ -82,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildStatusItem()
 
         hotkeys.probing = CommandLine.arguments.contains("--probe-hotkey")
-        hotkeys.onBegin = { [weak self] in self?.beginDictation() }
+        hotkeys.onBegin = { [weak self] cloud in self?.beginDictation(cloud: cloud) }
         hotkeys.onEnd = { [weak self] in self?.endDictation() }
         hotkeys.onAbort = { [weak self] in self?.abortDictation() }
 
@@ -164,9 +187,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///
     /// The waveform idles until the first buffer lands, because a flat waveform and a waveform
     /// with nothing behind it look identical.
-    private func beginDictation() {
+    private func beginDictation(cloud: Bool = false) {
         session += 1
         let mine = session
+        rememberCloud(cloud, session: mine)
         hud.show(.listening)
         Cue.start.play()
         startLevelTimer()
@@ -300,27 +324,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if !DaemonClient.isAlive() { DaemonClient.startAndWait() }
             if let released = self.releasedAt { self.trace("daemon request sent", since: released) }
 
-            /// A normal reply lands in 1-5s. Past that, a HUD stuck on "working" with no other
+            /// A local reply lands in 1-5s. Past that, a HUD stuck on "working" with no other
             /// signal reads as broken rather than slow, which is what "the output never came"
             /// turned out to mean on 2026-09-01: the daemon was still alive, just tens of
             /// seconds slower than usual under memory pressure from an unrelated process. This
             /// does not change when or whether the result arrives, only whether the wait during
             /// it is legible, so a still-slow request after this one keeps working the same way,
             /// just with something to check.
-            let stillWorkingNotice = "Still working. This dictation is taking longer than usual."
+            ///
+            /// The cloud correction moves both numbers. Measured on real dictations it takes
+            /// 7-20s, so the local 8s deadline would fire on every single one of them and
+            /// call an expected wait "longer than usual", which is how a notice stops meaning
+            /// anything. The right Option key gets its own deadline past its normal range and
+            /// wording that says what is being waited for rather than that something is wrong.
+            let cloud = self.mode(forSession: mine) == "cloud"
+            let stillWorkingNotice = cloud
+                ? "Still working. The cloud model usually takes 7-20 seconds."
+                : "Still working. This dictation is taking longer than usual."
+            let slowAfter: Double = cloud ? 25 : 8
             let slowNotice = DispatchWorkItem { [weak self] in
                 guard let self, mine == self.session else { return }
                 /// Never clobber a tooltip already there, ours or a warning from an earlier
                 /// dictation waiting to be read (see the matching guard below on clear).
                 guard self.statusItem?.button?.toolTip == nil else { return }
                 self.statusItem?.button?.toolTip = stillWorkingNotice
-                Paths.log("dictation still running past 8s, longer than the usual 1-5s")
+                Paths.log("dictation still running past \(Int(slowAfter))s, "
+                          + (cloud ? "longer than the usual 7-20s for the cloud model"
+                                   : "longer than the usual 1-5s"))
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: slowNotice)
+            DispatchQueue.main.asyncAfter(deadline: .now() + slowAfter, execute: slowNotice)
 
             let outcome = Result { try DaemonClient.process(url: take.url,
                                                             seconds: take.seconds,
-                                                            mode: nil,
+                                                            mode: self.mode(forSession: mine),
                                                             style: self.style(forSession: mine)) }
             slowNotice.cancel()
             if let released = self.releasedAt, case .success(let r) = outcome {
