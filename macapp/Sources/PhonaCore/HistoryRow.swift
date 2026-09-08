@@ -1,6 +1,11 @@
 import Foundation
 
-/// Which key produced a dictation, and therefore whether its text left the machine.
+/// Whether a dictation's text left this machine.
+///
+/// Only that. It is not a record of which key was pressed: a right-Option dictation whose
+/// cloud request was refused or failed is corrected locally and is `.local` here, which is
+/// the truth about the text and not the truth about the key. `mode` is the field that knows
+/// which key was asked for.
 public enum Route: String, Sendable {
     case local
     case cloud
@@ -70,10 +75,10 @@ public struct HistoryRow: Sendable, Equatable {
         self.flagged = flagged
     }
 
-    /// `mode` says which key the speaker pressed, `backend` says whether the cloud actually
-    /// answered. A cloud request that is refused or that fails falls back to the local model
-    /// and records no backend, so only a backend proves the text left the machine. Showing
-    /// the mode instead would claim a privacy boundary was crossed when it was not.
+    /// `backend` is the only honest witness that the text left the machine, because the
+    /// engine records one only when an agent CLI actually answered. A cloud request that is
+    /// refused or that fails falls back to the local model and records no backend. Deriving
+    /// this from `mode` instead would claim a privacy boundary was crossed when it was not.
     public var route: Route {
         backend == nil ? .local : .cloud
     }
@@ -198,5 +203,23 @@ public enum HistoryParser {
 
     private static func boolean(_ value: Any?) -> Bool {
         (value as? NSNumber)?.boolValue ?? false
+    }
+}
+
+/// The order the window lists dictations in, which has to be the order the engine wrote them.
+public enum HistoryOrder {
+
+    /// Newest first, by file position, over rows concatenated oldest archive first.
+    ///
+    /// Not by timestamp. The engine stamps rows with a whole second, so two dictations a
+    /// fraction apart share one, and `sorted` is free to put either first and to put a
+    /// different one first on the next load. The daemon's FLAG command acts on the last line
+    /// of the live history, so the app decides which row may be flagged from whatever lands
+    /// at the front of this array, and a front that moves means flagging the wrong dictation.
+    ///
+    /// File position is the write order and it never ties, because rotation is a rename and
+    /// every row is appended to the live file after it. Reversing that is the whole job.
+    public static func newestFirst(_ rows: [HistoryRow]) -> [HistoryRow] {
+        Array(rows.reversed())
     }
 }

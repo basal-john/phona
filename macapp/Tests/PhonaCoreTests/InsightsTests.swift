@@ -33,7 +33,9 @@ final class InsightsTests: XCTestCase {
                        stt: Double = 1,
                        llm: Double = 1,
                        backend: String? = nil,
+                       mode: String? = nil,
                        llmModel: String? = nil,
+                       cloudModel: String? = nil,
                        guarded: Bool = false,
                        trimmed: Bool = false) -> String {
         var fields = [
@@ -48,7 +50,9 @@ final class InsightsTests: XCTestCase {
             "\"trimmed\": \(trimmed)",
             "\"backend\": " + (backend.map { "\"\($0)\"" } ?? "null"),
         ]
+        if let mode { fields.append("\"mode\": \"\(mode)\"") }
         if let llmModel { fields.append("\"llm_model\": \"\(llmModel)\"") }
+        if let cloudModel { fields.append("\"cloud_model\": \"\(cloudModel)\"") }
         return "{" + fields.joined(separator: ", ") + "}"
     }
 
@@ -141,6 +145,7 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(insights.dictations, 2)
         XCTAssertEqual(insights.spokenDictations, 1)
         XCTAssertEqual(insights.words, 13)
+        XCTAssertEqual(insights.spokenWords, 3)
         XCTAssertEqual(insights.spokenSeconds, 30)
         XCTAssertEqual(insights.minutesSpoken, 0.5)
         XCTAssertEqual(insights.spokenWordsPerMinute, 6, accuracy: 0.0001)
@@ -275,6 +280,39 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(insights.minutesToType, 5, accuracy: 0.0001)
         XCTAssertEqual(insights.minutesSpoken, 1, accuracy: 0.0001)
         XCTAssertEqual(insights.minutesSaved, 4, accuracy: 0.0001)
+    }
+
+    /// A typed FIX row is text somebody already typed. Crediting its words as typing avoided
+    /// adds to one side of the subtraction with nothing on the other, which is how the hero
+    /// figure came to be inflated by every text correction ever made.
+    func testATypedRowContributesNoTypingTimeAvoided() {
+        let spokenOnly = compute(voice("2026-09-08T09:00:00", text: words(120), seconds: 60),
+                                 typing: 40)
+        let withATypedRow = compute("""
+        \(voice("2026-09-08T09:00:00", text: words(120), seconds: 60))
+        \(typed("2026-09-08T10:00:00", text: words(400)))
+        """, typing: 40)
+
+        XCTAssertEqual(withATypedRow.words, 520)
+        XCTAssertEqual(withATypedRow.spokenWords, 120)
+        XCTAssertEqual(withATypedRow.minutesToType, spokenOnly.minutesToType, accuracy: 0.0001)
+        XCTAssertEqual(withATypedRow.minutesSaved, spokenOnly.minutesSaved, accuracy: 0.0001)
+        XCTAssertEqual(withATypedRow.minutesToType, 3, accuracy: 0.0001)
+        XCTAssertEqual(withATypedRow.minutesSaved, 2, accuracy: 0.0001)
+    }
+
+    /// The exact shape the reviewer measured on real engine output, one voice row and one
+    /// typed row, where the typed row pushed minutes to type above what was ever spoken.
+    func testTypingTimeAvoidedIsOverSpokenWordsOnly() {
+        let insights = compute("""
+        \(voice("2026-09-08T09:00:00", text: words(2), seconds: 3))
+        \(typed("2026-09-08T09:01:00", text: words(4)))
+        """, typing: 40)
+
+        XCTAssertEqual(insights.spokenWords, 2)
+        XCTAssertEqual(insights.minutesToType, 0.05, accuracy: 0.0001)
+        XCTAssertEqual(insights.minutesSpoken, 0.05, accuracy: 0.0001)
+        XCTAssertEqual(insights.minutesSaved, 0, accuracy: 0.0001)
     }
 
     /// Speaking two words over five minutes really is slower than typing them. The caller
@@ -473,6 +511,44 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(insights.perModel[0].guardedCount, 1)
         XCTAssertEqual(insights.perModel[1].llmModel, "gemma")
         XCTAssertEqual(insights.perModel[1].count, 1)
+    }
+
+    /// The engine writes `llm_model` on cloud rows too, the configured local model, whether
+    /// or not that model did the correcting. Billing the cloud's work to the idle local model
+    /// is what made this pane's counts wrong.
+    func testPerModelAttributesACloudRowToTheModelThatAnswered() {
+        let insights = compute("""
+        \(voice("2026-09-08T09:00:00", text: "hi", stt: 0, llm: 1, llmModel: "qwen"))
+        \(voice("2026-09-08T09:01:00", text: "hi", stt: 0, llm: 3, backend: "claude",
+                     mode: "cloud", llmModel: "qwen", cloudModel: "claude-sonnet-5"))
+        """)
+
+        XCTAssertEqual(insights.perModel.count, 2)
+        XCTAssertEqual(Set(insights.perModel.map(\.llmModel)), ["qwen", "claude-sonnet-5"])
+        XCTAssertEqual(insights.perModel.first { $0.llmModel == "qwen" }?.count, 1)
+        XCTAssertEqual(insights.perModel.first { $0.llmModel == "claude-sonnet-5" }?.count, 1)
+    }
+
+    /// A cloud request the cloud never served falls back to the local model, and the local
+    /// model is then the one that did the correcting.
+    func testPerModelCountsARefusedCloudRowAgainstTheLocalModel() {
+        let insights = compute("""
+        \(voice("2026-09-08T09:00:00", text: "hi", stt: 0, llm: 2, mode: "cloud",
+                     llmModel: "qwen", cloudModel: "claude-sonnet-5"))
+        """)
+
+        XCTAssertEqual(insights.perModel.map(\.llmModel), ["qwen"])
+    }
+
+    /// The pane presents this as a correction model's latency, so speech time has no business
+    /// in it. Both rows below take 9 seconds in all and 2 seconds of correction.
+    func testPerModelLatencyIsCorrectionTimeAlone() {
+        let insights = compute("""
+        \(voice("2026-09-08T09:00:00", text: "hi", stt: 7, llm: 2, llmModel: "qwen"))
+        \(voice("2026-09-08T09:01:00", text: "hi", stt: 7, llm: 2, llmModel: "qwen"))
+        """)
+
+        XCTAssertEqual(insights.perModel[0].medianLatency, 2, accuracy: 0.0001)
     }
 
     func testPerModelBreaksATieOnNameSoTheOrderIsStable() {

@@ -337,7 +337,8 @@ Everything stays on your Mac, in `~/.local/share/phona`:
 
 | File | What is in it |
 | --- | --- |
-| `history.jsonl` | every dictation, in plain text, with what was heard and what was returned (rotated to numbered archives) |
+| `history.jsonl` | the live history, every dictation in plain text, with what was heard and what was returned |
+| `history.jsonl.1` … `.N` | the archives it was rotated into, `.1` the oldest, none of them ever discarded |
 | `corrections.jsonl` | the ones you flagged as wrong |
 | `config.json` | your settings, vocabulary and replacements |
 | `phonad.log`, `app.log` | diagnostics |
@@ -345,7 +346,18 @@ Everything stays on your Mac, in `~/.local/share/phona`:
 Worth being explicit about, because it is the obvious consequence of a local tool and still a
 surprise if nobody says it: the history is a plain text record of everything you have
 dictated, readable by anything running as you. Nothing is encrypted and nothing is uploaded.
-Delete `history.jsonl` whenever you like, the app recreates it.
+
+The record is not one file. Once `history.jsonl` passes 8 MB the engine renames it to
+`history.jsonl.1`, then `.2`, and keeps every one of them forever. The window reads the whole
+set, so deleting only `history.jsonl` erases nothing you can see: the lifetime totals and the
+full text of old dictations all come back. To actually erase the record, delete the archives
+with it:
+
+```bash
+rm ~/.local/share/phona/history.jsonl*
+```
+
+The engine recreates the live file on the next dictation.
 
 Audio is not kept. Each recording is written to a temporary file and deleted as soon as it has
 been transcribed, unless you set `keep_audio_days`.
