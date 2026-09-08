@@ -457,6 +457,23 @@ Old takes are pruned on every run, so turning it on cannot fill the disk and for
 turn it off costs one rolling window rather than every recording ever made. Set it back to `0`
 when the comparison is finished.
 
+## The history rotation
+
+The daemon originally rotated `history.jsonl` through `rotate(path, limit)`, the same helper
+used for `phonad.log`. That helper rotates to a single archive slot, `path.1`. For the log,
+which is purely a debugging aid, the second rotation discarding the first archive costs nothing.
+For history, that single-slot rotation silently destroys the older record.
+
+The failure that forced the change was lifetime statistics. When the application reports
+lifetime figures and streaks, a single-slot rotation silently drops months of dictations on the
+second rotation and makes every lifetime number on screen lie with confidence.
+
+History now rotates through `rotate_history(path, limit)` to numbered archives that are never
+overwritten: `history.jsonl.1` through `history.jsonl.N`. The ordering contract guarantees that
+`history.jsonl.1` is the oldest archive, higher numbers are newer, and the live `history.jsonl`
+is the newest of all. Nothing is ever discarded. Any consumer computing lifetime figures or
+aggregates reads the full archive set in order, while the log retains its single slot.
+
 ## The clipboard
 
 Pasting cannot be verified: posting Cmd+V reports that the event was sent, never that anything
