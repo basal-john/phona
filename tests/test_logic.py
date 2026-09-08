@@ -90,6 +90,35 @@ def test_guard_accepts_real_corrections(source, candidate):
     assert phonad.Engine._looks_like_a_reply(source, candidate) is False
 
 
+def test_a_lost_sentence_is_caught_even_when_its_words_are_scattered():
+    """`longest_dropped_run` counts words in a row, so a deletion whose content words are
+    few or spread out scores below the threshold and passes. The loss happens at the level
+    of a sentence, so it is also asked about there."""
+    source = ("we should ship the migration on friday. the staging box is already running "
+              "the new schema.")
+    candidate = "The staging box is already running the new schema."
+    assert phonad.longest_dropped_run(source, candidate) < phonad.MAX_DROPPED_RUN
+    assert phonad.dropped_sentence(source, candidate) is not None
+
+
+def test_a_run_up_is_not_a_dropped_sentence():
+    """The prompt asks for false starts to be removed, so removing one must not read as a
+    deletion. A run-up carries no content words, or one."""
+    source = "um so yeah. the tests is failing on ci."
+    candidate = "The tests are failing on CI."
+    assert phonad.dropped_sentence(source, candidate) is None
+
+
+def test_an_unrelated_word_sharing_a_root_is_not_a_trace_of_the_speakers_word():
+    """A five character prefix matched `understand` to `underlying` and made a deleted
+    sentence score 1. An inflection has to survive the tightening."""
+    assert phonad.same_stem("understand", "underlying") is False
+    assert phonad.same_stem("investigate", "investigating") is True
+    assert phonad.same_stem("apple", "apples") is True
+    assert phonad.same_stem("test", "text") is False
+
+
+
 # --- enumerated speech laid out as a list ------------------------------------------
 
 ENUMERATED = ("there is three things first we need to update the config second the tests "
