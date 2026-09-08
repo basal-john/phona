@@ -85,7 +85,7 @@ Each history row is written as a JSON line containing the following keys:
 | `ts` | Local timestamp in ISO format, for example `2026-09-08T19:30:00` | No |
 | `source` | Input source, either `"voice"` or `"text"` | No |
 | `seconds` | Audio duration in seconds rounded to two decimals, or `0` for text | No |
-| `mode` | Correction mode, either `"normal"` or `"cloud"` | No |
+| `mode` | Correction mode, either `"correct"` or `"cloud"` | No |
 | `backend` | Agent CLI name when cloud mode ran, for example `"claude"` | Yes, null on local dictation and text fixes |
 | `stt_model` | Configured speech model repo identifier, for example `"mlx-community/parakeet-tdt-0.6b-v3"` | Yes, null when source is `"text"` |
 | `llm_model` | Configured local grammar model repo identifier, for example `"mlx-community/Qwen3-4B-Instruct-2507-8bit"` | No |
