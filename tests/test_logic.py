@@ -73,6 +73,16 @@ def test_guard_rejects_model_acting_on_the_text(source, candidate):
                  "She doesn't want any help from anybody.", id="double-negative"),
     pytest.param('he said "ship it" in the standup',
                  'He said "ship it" in the standup.', id="quote-the-speaker-dictated"),
+    pytest.param("just make it as welcome to the alpha list boot camp",
+                 'Just make it "Welcome to the Alpha List Boot Camp."',
+                 id="quoted-title-inside-a-real-correction"),
+    pytest.param("replace the second slide with my information my information can be found "
+                 "in my home page and also um remove the CTO part from the slide just make "
+                 "it as welcome to the alpha list boot camp",
+                 "Replace the second slide with my information. My information can be found "
+                 "on my homepage. Also, remove the CTO part from the slide. Just make it "
+                 '"Welcome to the Alpha List Boot Camp."',
+                 id="a-dictated-instruction-correctly-punctuated"),
 ])
 def test_guard_accepts_real_corrections(source, candidate):
     """The guard must not over-fire. A correction may grow, and a quote the speaker
@@ -737,7 +747,7 @@ def test_the_style_reaches_the_engine_from_the_request():
     the request. Dropped anywhere along the way it fails silently, as an ordinary full stop."""
     calls = []
     engine = types.SimpleNamespace(
-        process=lambda path, seconds, style, history, retain: calls.append((style,))
+        process=lambda path, seconds, style, history, retain, mode: calls.append((style,))
         or {"state": "done", "text": "ok"})
 
     conn = _FakeConn({"cmd": "PROCESS", "path": "/tmp/take.wav", "seconds": 2.0,
@@ -745,6 +755,36 @@ def test_the_style_reaches_the_engine_from_the_request():
     phonad.handle(conn, engine)
 
     assert calls == [("chat",)]
+
+
+def test_the_mode_reaches_the_engine_from_the_request():
+    """The right Option key is the only thing that knows it was the right one, so the mode
+    travels in the request the way the style does. Dropped along the way it fails silently
+    as an ordinary local correction, which is the failure hardest to notice."""
+    calls = []
+    engine = types.SimpleNamespace(
+        process=lambda path, seconds, style, history, retain, mode: calls.append(mode)
+        or {"state": "done", "text": "ok"})
+
+    conn = _FakeConn({"cmd": "PROCESS", "path": "/tmp/take.wav", "seconds": 2.0,
+                      "mode": "cloud"})
+    phonad.handle(conn, engine)
+
+    assert calls == ["cloud"]
+
+
+def test_a_request_without_a_mode_corrects_locally():
+    """`phona` on the command line and the left Option key both send no mode, and must keep
+    the local model rather than reaching the network."""
+    calls = []
+    engine = types.SimpleNamespace(
+        process=lambda path, seconds, style, history, retain, mode: calls.append(mode)
+        or {"state": "done", "text": "ok"})
+
+    conn = _FakeConn({"cmd": "PROCESS", "path": "/tmp/take.wav", "seconds": 2.0})
+    phonad.handle(conn, engine)
+
+    assert calls == [None]
 
 
 def test_a_request_without_a_style_still_works():

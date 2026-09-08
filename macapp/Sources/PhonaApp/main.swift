@@ -66,6 +66,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return styleForSession.style
     }
 
+    /// Which Option key started each hold, tagged with that hold and locked for the same
+    /// reason `styleForSession` is: it is written on the main thread when the key goes down
+    /// and read from `deliver`'s queue when the text comes back.
+    private var cloudForSession: (session: Int, cloud: Bool)?
+
+    private func rememberCloud(_ cloud: Bool, session: Int) {
+        styleLock.lock()
+        defer { styleLock.unlock() }
+        if let cloudForSession, cloudForSession.session > session { return }
+        cloudForSession = (session, cloud)
+    }
+
+    /// The correction mode for a hold, or nil for the local model.
+    ///
+    /// Defaults to the local model when the tag does not match, so a hold whose record was
+    /// overtaken is cleaned the way it is cleaned today rather than sent to the cloud.
+    private func mode(forSession wanted: Int) -> String? {
+        styleLock.lock()
+        defer { styleLock.unlock() }
+        guard let cloudForSession, cloudForSession.session == wanted else { return nil }
+        return cloudForSession.cloud ? "cloud" : nil
+    }
+
     /// Bring the app up without ever blocking on a permission dialog.
     ///
     /// Accepts two debug flags, `--probe-focus` and `--setup`, which open a window or log
@@ -82,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildStatusItem()
 
         hotkeys.probing = CommandLine.arguments.contains("--probe-hotkey")
-        hotkeys.onBegin = { [weak self] in self?.beginDictation() }
+        hotkeys.onBegin = { [weak self] cloud in self?.beginDictation(cloud: cloud) }
         hotkeys.onEnd = { [weak self] in self?.endDictation() }
         hotkeys.onAbort = { [weak self] in self?.abortDictation() }
 
@@ -164,9 +187,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///
     /// The waveform idles until the first buffer lands, because a flat waveform and a waveform
     /// with nothing behind it look identical.
-    private func beginDictation() {
+    private func beginDictation(cloud: Bool = false) {
         session += 1
         let mine = session
+        rememberCloud(cloud, session: mine)
         hud.show(.listening)
         Cue.start.play()
         startLevelTimer()
@@ -320,7 +344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let outcome = Result { try DaemonClient.process(url: take.url,
                                                             seconds: take.seconds,
-                                                            mode: nil,
+                                                            mode: self.mode(forSession: mine),
                                                             style: self.style(forSession: mine)) }
             slowNotice.cancel()
             if let released = self.releasedAt, case .success(let r) = outcome {

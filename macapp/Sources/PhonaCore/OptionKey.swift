@@ -71,8 +71,30 @@ public enum OptionKey {
         flags & otherModifierMask != 0 || rightIsDown(flags: flags)
     }
 
+    /// A modifier that is neither Option key. Each side asks about the other one itself, so
+    /// this deliberately says nothing about Option.
+    public static func foreignModifierIsDown(flags: UInt64) -> Bool {
+        flags & otherModifierMask != 0
+    }
+
     /// The whole arming decision. The left Option key held, with nothing else.
     public static func armsDictation(flags: UInt64) -> Bool {
         dictationSideIsDown(flags: flags) && !otherModifierIsDown(flags: flags)
+    }
+
+    /// The right Option key held on its own, which dictates and cleans in the cloud.
+    ///
+    /// The right key used to be refused outright, because `maskAlternate` does not name a
+    /// side and watching it alone let the right key start the ordinary dictation by accident.
+    /// The side bits settled that, and the key is now deliberately assigned rather than
+    /// merely tolerated: it arms only when it is the one Option down, so Option+click and
+    /// every other shortcut reached for with the right thumb still behaves as a modifier.
+    ///
+    /// Holding both keys arms neither. Two backends cannot both clean one dictation, and
+    /// picking the left one silently would make a slip look like a working choice.
+    public static func armsCloudDictation(flags: UInt64) -> Bool {
+        rightIsDown(flags: flags)
+            && !leftIsDown(flags: flags)
+            && !foreignModifierIsDown(flags: flags)
     }
 }

@@ -98,6 +98,57 @@ final class OptionKeyTests: XCTestCase {
         XCTAssertFalse(OptionKey.armsDictation(flags: 0))
     }
 
+    /// The right key is deliberately assigned now, so it has to arm on its own and only on
+    /// its own. Every test above still holds: it must never arm the local dictation.
+    func testTheRightKeyAloneArmsTheCloudDictation() {
+        XCTAssertTrue(OptionKey.armsCloudDictation(flags: rightOnly))
+        XCTAssertFalse(OptionKey.armsCloudDictation(flags: leftOnly))
+        XCTAssertFalse(OptionKey.armsCloudDictation(flags: 0))
+        XCTAssertFalse(OptionKey.armsCloudDictation(flags: OptionKey.eitherMask),
+                       "no side bit could be either key")
+    }
+
+    /// Both keys down arms neither. Two backends cannot both clean one dictation, and
+    /// picking one silently would make a slip look like a working choice.
+    func testHoldingBothKeysArmsNothing() {
+        XCTAssertFalse(OptionKey.armsDictation(flags: bothKeys))
+        XCTAssertFalse(OptionKey.armsCloudDictation(flags: bothKeys))
+    }
+
+    func testAnyOtherModifierAlsoStopsTheRightKeyArming() {
+        for modifier in [0x0002_0000, 0x0004_0000, 0x0010_0000, 0x0080_0000] as [UInt64] {
+            XCTAssertFalse(OptionKey.armsCloudDictation(flags: rightOnly | modifier),
+                           String(format: "%#010llx joined the hold", modifier))
+        }
+    }
+
+    /// The two arming decisions must never both be true, whatever the flags, because the
+    /// monitor tests them in order and a flag combination answering yes to both would make
+    /// that order decide the backend.
+    func testTheTwoArmingDecisionsAreMutuallyExclusive() {
+        let bits: [UInt64] = [
+            OptionKey.eitherMask, OptionKey.leftMask, OptionKey.rightMask,
+            0x0002_0000, 0x0004_0000, 0x0010_0000, 0x0080_0000,
+        ]
+        for mask in 0..<(1 << bits.count) {
+            var flags: UInt64 = 0
+            for (i, bit) in bits.enumerated() where mask & (1 << i) != 0 { flags |= bit }
+            XCTAssertFalse(
+                OptionKey.armsDictation(flags: flags)
+                    && OptionKey.armsCloudDictation(flags: flags),
+                String(format: "%#010llx armed both", flags))
+        }
+    }
+
+    /// `foreignModifierIsDown` deliberately says nothing about Option, because each side
+    /// asks about the other one itself.
+    func testForeignModifiersExcludeBothOptionKeys() {
+        XCTAssertFalse(OptionKey.foreignModifierIsDown(flags: leftOnly))
+        XCTAssertFalse(OptionKey.foreignModifierIsDown(flags: rightOnly))
+        XCTAssertFalse(OptionKey.foreignModifierIsDown(flags: bothKeys))
+        XCTAssertTrue(OptionKey.foreignModifierIsDown(flags: 0x0010_0000), "that is command")
+    }
+
     /// The other modifier bits are `CGEventFlags` values, so a typo would be invisible in
     /// behaviour here and wrong somewhere else.
     func testTheOtherModifierMaskMatchesCoreGraphics() {
