@@ -174,15 +174,17 @@ final class InsightsTests: XCTestCase {
         XCTAssertNil(HistoryParser.row(from: noBackendKey, timeZone: Self.berlin)?.backend)
     }
 
-    /// A cloud request that is refused falls back to the local model and records no backend,
-    /// so only a backend proves the text left the machine, never the mode.
-    func testOnlyABackendMakesARowCloud() {
+    /// An older row carries no `cloud_sent`, so the route falls back to either witness it
+    /// does have. A refused cloud request records no backend and the transcript had still
+    /// gone, so the fallback reads the mode too and over-states leaving rather than under-
+    /// stating it. `RouteTests` covers the whole matrix, including rows that do carry the key.
+    func testAnOlderRowLeansOnEitherWitnessItCarries() {
         let refused = """
         {"ts": "2026-09-08T09:00:00", "source": "voice", "seconds": 5, "mode": "cloud", \
         "backend": null, "raw": "hi", "text": "hi"}
         """
         let answered = voice("2026-09-08T09:00:00", text: "hi", backend: "claude")
-        XCTAssertEqual(HistoryParser.row(from: refused, timeZone: Self.berlin)?.route, .local)
+        XCTAssertEqual(HistoryParser.row(from: refused, timeZone: Self.berlin)?.route, .cloud)
         XCTAssertEqual(HistoryParser.row(from: answered, timeZone: Self.berlin)?.route, .cloud)
     }
 

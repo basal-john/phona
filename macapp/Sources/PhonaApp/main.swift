@@ -544,13 +544,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global().async { [weak self] in
             var payload: [String: Any] = ["cmd": "FLAG"]
             if !actual.isEmpty { payload["actual"] = actual }
-            let reply = try? DaemonClient.request(payload, timeout: 20)
-            let flagged = (reply?["state"] as? String) == "done"
+            let problem = AppDelegate.flagProblem(payload)
             Paths.log("flagged the last dictation, actual supplied: \(!actual.isEmpty), "
-                + "accepted: \(flagged)")
-            guard flagged else { return }
-            DispatchQueue.main.async { self?.historyStore.reload() }
+                + "accepted: \(problem == nil)")
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let problem {
+                    self.reportFlagFailure(problem)
+                } else {
+                    self.historyStore.reload()
+                }
+            }
         }
+    }
+
+    /// Why the daemon did not record the flag, or nil when it did.
+    ///
+    /// Every one of these is something the speaker can act on: a daemon that is not running,
+    /// a socket that timed out, a history file with nothing in it yet. Dropping them left the
+    /// button looking like it had worked, on the one feature in the app that collects ground
+    /// truth, so a flag nobody knows was lost is a correction nobody types again.
+    private static func flagProblem(_ payload: [String: Any]) -> String? {
+        let reply: [String: Any]
+        do {
+            reply = try DaemonClient.request(payload, timeout: 20)
+        } catch {
+            return "The engine did not answer. \(error.localizedDescription)"
+        }
+        if (reply["state"] as? String) == "done" { return nil }
+        if let detail = reply["error"] as? String, !detail.isEmpty {
+            return "The engine refused the flag. \(detail)"
+        }
+        return "The engine answered without recording the flag."
+    }
+
+    /// A modal rather than the menu bar tooltip `notify` leaves behind.
+    ///
+    /// `notify` exists so a failed paste does not throw a dialog in front of what somebody
+    /// was typing. Here they have just dismissed a dialog of their own and are waiting on
+    /// it, so there is nothing to interrupt, and a tooltip on an icon nobody is looking at is
+    /// how the drop went unnoticed in the first place. The log line is kept either way.
+    private func reportFlagFailure(_ problem: String) {
+        notify("Phona", problem)
+        let alert = NSAlert()
+        alert.messageText = "The dictation was not flagged"
+        alert.informativeText = problem
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     /// The window that replaced the history file and the README.

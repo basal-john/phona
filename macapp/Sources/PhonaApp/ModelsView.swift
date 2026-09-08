@@ -155,14 +155,16 @@ struct ModelsView: View {
                     Text(store.snapshot.cloudModel ?? "no cloud model is configured")
                         .textSelection(.enabled)
                     Spacer(minLength: 8)
-                    Text("\(Figures.integer(store.insights.routeCounts[.cloud] ?? 0)) dictations")
+                    Text("\(Figures.integer(store.insights.routeCounts[.cloud] ?? 0)) sent")
                         .font(.caption)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
                 Text("Speech stays on this Mac either way. Only the correction step is sent, "
                     + "and a cloud correction that fails the guards falls back to the local "
-                    + "model rather than being pasted.")
+                    + "model rather than being pasted. The count is dictations whose "
+                    + "transcript went, so it includes the ones this model did not end up "
+                    + "correcting.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

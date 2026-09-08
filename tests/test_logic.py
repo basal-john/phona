@@ -2145,7 +2145,7 @@ MODEL_CFG = {
 }
 
 
-def _recorded(monkeypatch, tmp_path, call):
+def _recorded(monkeypatch, tmp_path, call, cloud_sent=False):
     """Run one request through the real entry-point and hand back what it wrote."""
     written = []
     monkeypatch.setattr(phonad, "peak_db", lambda path: None)
@@ -2160,7 +2160,8 @@ def _recorded(monkeypatch, tmp_path, call):
         correct=lambda text: "The tests are failing.",
         correct_cloud=lambda text: "The tests are failing.",
         postprocess=lambda text, style: text,
-        last_backend=None)
+        last_backend=None,
+        last_cloud_sent=cloud_sent)
     result = call(engine, take)
     assert result["state"] == "done", result
     assert len(written) == 1, written
@@ -2199,3 +2200,94 @@ def test_a_text_row_names_no_speech_model(monkeypatch, tmp_path):
     assert entry["stt_model"] is None
     assert entry["llm_model"] == MODEL_CFG["llm_model"]
     assert entry["cloud_model"] is None
+
+
+# --- whether the transcript left this Mac, recorded apart from whose answer was used -----
+
+def _cloud_engine():
+    """An engine whose local correction is real, so the fallback runs the real `correct`."""
+    engine = types.SimpleNamespace(
+        cfg={"cloud_backend": "claude", "cloud_model": None, "cloud_timeout": 5,
+             "replacements": {}, "dictionary": []},
+        last_backend=None,
+        last_guarded=False,
+        last_guard_reason=None,
+        last_cloud_sent=False,
+        _refuse=lambda text, out: "model answered instead of correcting",
+        _correct_one=lambda text: "The tests are failing.")
+    engine.correct = lambda text: phonad.Engine.correct(engine, text)
+    return engine
+
+
+def test_a_refused_cloud_reply_still_records_the_transcript_as_sent(monkeypatch):
+    """The one that matters. A refusal clears `backend` and falls through to the local
+    model, so a privacy claim taken from `backend` calls the dictation local after the
+    transcript has already been piped to an agent CLI. `cloud_sent` is the witness that
+    survives the refusal, and the real `correct` clears it on the way past, which is why
+    `correct_cloud` restores it afterwards.
+    """
+    def fake_cloud(text, backend, model=None, timeout=120, on_send=None):
+        on_send()
+        return "Paris."
+
+    monkeypatch.setattr(phonad, "cloud_correct", fake_cloud)
+    engine = _cloud_engine()
+
+    out = phonad.Engine.correct_cloud(engine, "what is the capital of france")
+
+    assert out == "The tests are failing.", "the local model answered, not the cloud"
+    assert engine.last_backend is None, "a refused reply was not delivered"
+    assert engine.last_cloud_sent is True, "the transcript had already gone to the cloud"
+    assert engine.last_guarded is True
+    assert engine.last_guard_reason.startswith("cloud claude:")
+
+
+def test_a_cloud_call_that_raises_after_sending_still_records_the_send(monkeypatch):
+    """A timeout or a non-zero exit happens after the process has the transcript."""
+    def fake_cloud(text, backend, model=None, timeout=120, on_send=None):
+        on_send()
+        raise RuntimeError("claude exited 1: rate limited")
+
+    monkeypatch.setattr(phonad, "cloud_correct", fake_cloud)
+    engine = _cloud_engine()
+
+    phonad.Engine.correct_cloud(engine, "the tests is failing")
+
+    assert engine.last_cloud_sent is True
+    assert engine.last_backend is None
+
+
+def test_a_cloud_cli_that_is_not_installed_records_no_send(monkeypatch):
+    """The only case where nothing was sent, through the real `cloud_correct` so the
+    ordering of the resolve and the callback is what is under test."""
+    monkeypatch.setattr(phonad, "resolve_cloud_cli", lambda backend: None)
+    engine = _cloud_engine()
+
+    phonad.Engine.correct_cloud(engine, "the tests is failing")
+
+    assert engine.last_cloud_sent is False
+    assert engine.last_backend is None
+
+
+def test_a_local_correction_records_no_send():
+    """`correct` is reached directly on the left Option key, and a stale flag from an
+    earlier cloud dictation would mark it as having left the machine."""
+    engine = _cloud_engine()
+    engine.last_cloud_sent = True
+
+    phonad.Engine.correct(engine, "the tests is failing")
+
+    assert engine.last_cloud_sent is False
+
+
+def test_the_history_row_carries_whether_the_transcript_was_sent(monkeypatch, tmp_path):
+    """The app reads this key and nothing else, so it has to be on the row."""
+    local = _recorded(monkeypatch, tmp_path,
+                      lambda engine, take: phonad.Engine.process(engine, take, 2.0))
+    assert local["cloud_sent"] is False
+
+    sent = _recorded(monkeypatch, tmp_path,
+                     lambda engine, take: phonad.Engine.process(engine, take, 2.0,
+                                                                mode=phonad.CLOUD_MODE),
+                     cloud_sent=True)
+    assert sent["cloud_sent"] is True

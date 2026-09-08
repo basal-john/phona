@@ -319,9 +319,12 @@ public struct Insights: Sendable {
     }
 
     /// The cloud model when the cloud answered, the local one otherwise. A cloud request that
-    /// fell back to the local model has no backend and so is a local correction here, which
-    /// is the same reading `route` and the History detail pane take.
+    /// fell back to the local model has no backend and so is a local correction here.
+    ///
+    /// Off `backend` rather than `route`. `route` is the privacy claim and reports a refused
+    /// cloud request as having left this Mac, which it did, but the reply that landed came
+    /// from the local model and this pane measures models by the work they actually did.
     private static func correctingModel(_ row: HistoryRow) -> String? {
-        row.route == .cloud ? row.cloudModel : row.llmModel
+        row.backend != nil ? row.cloudModel : row.llmModel
     }
 }

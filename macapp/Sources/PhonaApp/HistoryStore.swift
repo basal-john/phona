@@ -2,16 +2,6 @@ import Foundation
 import PhonaCore
 import SwiftUI
 
-/// One flag the speaker raised, as written by the daemon's FLAG command.
-///
-/// `actual` is what they say they really said, and it is the only ground truth anywhere in
-/// the record. The history file knows what was heard and what was delivered, never what was
-/// meant, so this is the single most useful field in the whole store.
-struct Correction: Sendable, Equatable {
-    let flaggedAt: Date?
-    let actual: String?
-}
-
 /// Everything the window reads off disk, gathered in one background pass.
 ///
 /// One value rather than several published properties, because the panes cross-reference
@@ -20,7 +10,15 @@ struct Correction: Sendable, Equatable {
 struct HistorySnapshot: Sendable {
     var rows: [HistoryRow] = []
     var insights: Insights
-    var corrections: [Date: Correction] = [:]
+    var corrections: [CorrectionKey: Correction] = [:]
+
+    /// Rows a flag actually joins, counted once during the load.
+    ///
+    /// Not `corrections.count`. That is records in the file, and a record whose transcript
+    /// matches no row on disk joins nothing, so the two can disagree and the filter shows the
+    /// join. Counted here rather than in the picker because the picker asks on every render
+    /// and the walk is over every row in every archive.
+    var flaggedRowCount = 0
     var dictionary: [String] = []
     var replacements: [String: String] = [:]
     var typingWordsPerMinute: Double = HistoryStore.defaultTypingWordsPerMinute
@@ -144,11 +142,11 @@ final class HistoryStore: ObservableObject {
 
     /// The flag on a row, when the speaker raised one.
     func correction(for row: HistoryRow) -> Correction? {
-        snapshot.corrections[row.ts]
+        snapshot.corrections[CorrectionLog.key(for: row)]
     }
 
     func isFlagged(_ row: HistoryRow) -> Bool {
-        snapshot.corrections[row.ts] != nil
+        correction(for: row) != nil
     }
 
     /// Whether the daemon's FLAG command can act on this row.
@@ -179,6 +177,9 @@ final class HistoryStore: ObservableObject {
                                              now: Date(),
                                              activityDays: activityDays)
         snapshot.corrections = readCorrections(timeZone: zone)
+        snapshot.flaggedRowCount = rows.reduce(into: 0) { total, row in
+            if snapshot.corrections[CorrectionLog.key(for: row)] != nil { total += 1 }
+        }
         snapshot.dictionary = (config["dictionary"] as? [String]) ?? []
         snapshot.replacements = (config["replacements"] as? [String: String]) ?? [:]
         snapshot.useInitialPrompt = (config["use_initial_prompt"] as? NSNumber)?.boolValue ?? false
@@ -188,41 +189,16 @@ final class HistoryStore: ObservableObject {
         return (snapshot, !paths.isEmpty)
     }
 
-    /// `corrections.jsonl`, keyed by the timestamp of the history row each flag points at.
+    /// `corrections.jsonl`, indexed by `CorrectionLog` so a flag lands on one dictation.
     ///
     /// The flag does not live on the history row. `Insights.flaggedCount` reads an optional
     /// `flagged` key that the engine never writes, so it is always zero, and the real record
-    /// is this separate append-only file. Joining on `ts` is what makes the flagged filter
-    /// and the detail pane's ground truth possible at all.
-    ///
-    /// A later flag on the same row wins, because a speaker who flags twice is correcting
-    /// their own first attempt.
-    private static func readCorrections(timeZone: TimeZone) -> [Date: Correction] {
+    /// is this separate append-only file. The join is what makes the flagged filter and the
+    /// detail pane's ground truth possible at all.
+    private static func readCorrections(timeZone: TimeZone) -> [CorrectionKey: Correction] {
         let url = Paths.base.appendingPathComponent("corrections.jsonl")
         guard let contents = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
-        let formatter = stampFormatter(timeZone)
-        var flags: [Date: Correction] = [:]
-        for line in contents.split(separator: "\n", omittingEmptySubsequences: true) {
-            guard let data = String(line).data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let stamp = object["ts"] as? String,
-                  let ts = formatter.date(from: stamp) else { continue }
-            let flaggedAt = (object["flagged_at"] as? String).flatMap(formatter.date(from:))
-            flags[ts] = Correction(flaggedAt: flaggedAt, actual: nonEmpty(object["actual"]))
-        }
-        return flags
-    }
-
-    /// The same naive local wall clock the history parser reads, for the same reason: the
-    /// engine writes `time.strftime("%Y-%m-%dT%H:%M:%S")` with no zone, so parsing it as UTC
-    /// would shift every flag by the machine's offset and no flag would ever join a row.
-    private static func stampFormatter(_ timeZone: TimeZone) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        return formatter
+        return CorrectionLog.flags(from: contents, timeZone: timeZone)
     }
 
     private static func readConfig() -> [String: Any] {
