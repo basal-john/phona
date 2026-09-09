@@ -150,8 +150,24 @@ struct ModelsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     RouteDot(route: .cloud)
-                    Text(store.snapshot.cloudModel ?? "no cloud model is configured")
-                        .textSelection(.enabled)
+                    /// The model the daemon reports, which is the file's value where it has
+                    /// one and the daemon's default otherwise. This line used to read the
+                    /// file alone and so announced that no cloud model was configured on
+                    /// every default install, including while the cloud was correcting.
+                    if let model = store.snapshot.cloudModel {
+                        Text(model).textSelection(.enabled)
+                        /// Only alongside a model. The daemon reports `cloud_backend`
+                        /// whether or not it has a model, so naming it on its own produced
+                        /// a row reading "no cloud model is configured, via claude".
+                        if let backend = store.snapshot.cloudBackend {
+                            Text("via \(backend)")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("no cloud model is configured")
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer(minLength: 8)
                     Text("\(Figures.integer(store.insights.routeCounts[.cloud] ?? 0)) sent")
                         .font(.caption)

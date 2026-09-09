@@ -75,13 +75,35 @@ done
   kill "$DAEMON_PID" 2>/dev/null || true
 fi
 
-mkdir -p "$HOME/.local/bin"
-ln -sf "$TARGET/client.py" /dev/null 2>/dev/null || true
-cat > "$HOME/.local/bin/phona" <<EOF
+# The `phona` command, pointed at whichever install this run set up.
+#
+# Only written for a real install. `PHONA_HOME` exists so the installer can be exercised
+# against a throwaway directory, and CI does exactly that with `PHONA_HOME=/tmp/phona-ci`.
+# Writing the shared shim on those runs pointed the user's own `phona` command into a
+# temporary directory, which works until /tmp is cleared and then fails with no clue why.
+# It happened on this machine. A test install now gets its shim inside its own target and
+# leaves the real one alone.
+#
+# The condition is whether PHONA_HOME is unset or empty, not where it points, because that
+# is the actual question and because comparing against the default would restate the path
+# here. Empty counts as unset on purpose: TARGET is expanded with the same `:-` default, so
+# `PHONA_HOME=` already means an ordinary install, and the two have to agree.
+#
+# A run that sets PHONA_HOME to the default path gets its shim at $TARGET/phona, which
+# still works and is the same file the default install would have written anyway.
+if [[ -z "${PHONA_HOME:-}" ]]; then
+  SHIM="$HOME/.local/bin/phona"
+  mkdir -p "$HOME/.local/bin"
+else
+  SHIM="$TARGET/phona"
+  say "PHONA_HOME is set, so the phona command goes to $SHIM and the shared one is untouched"
+fi
+
+cat > "$SHIM" <<EOF
 #!/bin/zsh
 exec "$TARGET/venv/bin/python" "$TARGET/client.py" "\$@"
 EOF
-chmod +x "$HOME/.local/bin/phona"
+chmod +x "$SHIM"
 
 say "done"
 cat <<'EOF'

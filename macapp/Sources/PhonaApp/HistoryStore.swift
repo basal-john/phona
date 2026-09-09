@@ -26,6 +26,8 @@ struct HistorySnapshot: Sendable {
     var sttModel: String?
     var llmModel: String?
     var cloudModel: String?
+    /// Which CLI the cloud correction goes through, when one is configured.
+    var cloudBackend: String?
 
     static func empty(typingWordsPerMinute: Double = HistoryStore.defaultTypingWordsPerMinute,
                       now: Date = Date()) -> HistorySnapshot {
@@ -197,9 +199,22 @@ final class HistoryStore: ObservableObject {
         snapshot.dictionary = (config["dictionary"] as? [String]) ?? []
         snapshot.replacements = (config["replacements"] as? [String: String]) ?? [:]
         snapshot.useInitialPrompt = (config["use_initial_prompt"] as? NSNumber)?.boolValue ?? false
-        snapshot.sttModel = nonEmpty(config["stt_model"])
-        snapshot.llmModel = nonEmpty(config["llm_model"])
-        snapshot.cloudModel = nonEmpty(config["cloud_model"])
+        /// The daemon first, config.json second.
+        ///
+        /// config.json is what a user has pinned. The daemon merges that over its own
+        /// defaults and is the only thing that knows what is actually loaded, and the two
+        /// disagree in the ordinary case: `cloud_model` is absent from the file on a
+        /// default install, so reading only the file made the Models pane report that no
+        /// cloud model was configured while cloud corrections were being made.
+        ///
+        /// The fallback matters. The window opens whether or not the engine is up, and a
+        /// pane that showed nothing while the daemon warmed its models would be a worse
+        /// answer than the pinned value.
+        let running = DaemonClient.models()
+        snapshot.sttModel = running?.sttModel ?? nonEmpty(config["stt_model"])
+        snapshot.llmModel = running?.llmModel ?? nonEmpty(config["llm_model"])
+        snapshot.cloudModel = running?.cloudModel ?? nonEmpty(config["cloud_model"])
+        snapshot.cloudBackend = running?.cloudBackend ?? nonEmpty(config["cloud_backend"])
         return (snapshot, !paths.isEmpty)
     }
 
