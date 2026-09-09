@@ -84,10 +84,13 @@ fi
 # It happened on this machine. A test install now gets its shim inside its own target and
 # leaves the real one alone.
 #
-# The condition is whether PHONA_HOME was set rather than where it points, because that is
-# the actual question and because comparing against the default would restate it here. A
-# run that sets PHONA_HOME to the default path gets its shim at $TARGET/phona, which still
-# works and is the same file the default install would have used anyway.
+# The condition is whether PHONA_HOME is unset or empty, not where it points, because that
+# is the actual question and because comparing against the default would restate the path
+# here. Empty counts as unset on purpose: TARGET is expanded with the same `:-` default, so
+# `PHONA_HOME=` already means an ordinary install, and the two have to agree.
+#
+# A run that sets PHONA_HOME to the default path gets its shim at $TARGET/phona, which
+# still works and is the same file the default install would have written anyway.
 if [[ -z "${PHONA_HOME:-}" ]]; then
   SHIM="$HOME/.local/bin/phona"
   mkdir -p "$HOME/.local/bin"

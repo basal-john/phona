@@ -98,6 +98,16 @@ jobs:
 
       - name: Installer works on a clean target
         run: |
+          # A PHONA_HOME run must leave the shared shim exactly as it found it. It used to
+          # overwrite it, which pointed a real user's `phona` command into a temporary
+          # directory that /tmp later cleared.
+          #
+          # Recorded rather than asserted absent, because whether the runner image happens
+          # to ship a `phona` on PATH is not this test's business. Unchanged is the claim.
+          SHIM="$HOME/.local/bin/phona"
+          before="absent"
+          [[ -e "$SHIM" ]] && before="$(shasum -a 256 "$SHIM" | cut -d' ' -f1)"
+
           # PHONA_HOME keeps this away from any real install. Models are skipped, since
           # downloading several gigabytes per run buys nothing here.
           PHONA_HOME=/tmp/phona-ci PHONA_SKIP_MODELS=1 ./install.sh
@@ -105,10 +115,11 @@ jobs:
             test -f "/tmp/phona-ci/$module" || { echo "installer did not place $module"; exit 1; }
           done
           /tmp/phona-ci/venv/bin/python -c "import mlx_whisper, mlx_lm; print('engine imports ok')"
-          # A PHONA_HOME run must not write the shared shim. It used to, which pointed a
-          # real user's `phona` command into a temporary directory that /tmp later cleared.
-          test ! -e "$HOME/.local/bin/phona" \
-            || { echo "a test install wrote the shared phona shim"; exit 1; }
+
+          after="absent"
+          [[ -e "$SHIM" ]] && after="$(shasum -a 256 "$SHIM" | cut -d' ' -f1)"
+          [[ "$before" == "$after" ]] \
+            || { echo "a test install changed the shared phona shim ($before -> $after)"; exit 1; }
           test -x /tmp/phona-ci/phona \
             || { echo "a test install did not get its own phona shim"; exit 1; }
 

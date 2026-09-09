@@ -1147,9 +1147,17 @@ if CommandLine.arguments.contains("--probe-models") {
         print("\(padded) used=\(used ?? "none")  daemon=\(fromDaemon ?? "none")  "
             + "config=\(pinned ?? "none")")
     }
-    print(running == nil
-        ? "daemon: not reachable, so every answer below falls back to config.json"
-        : "daemon: reachable")
+    /// `models()` returns nil for two different reasons and they are worth telling apart:
+    /// no daemon at all, or a daemon that did not answer STATUS, which is what an older
+    /// one does. PING is the older command, so it separates them.
+    if running != nil {
+        print("daemon: reachable, and answered STATUS")
+    } else if DaemonClient.isAlive() {
+        print("daemon: reachable but did not answer STATUS, so every answer below falls "
+            + "back to config.json")
+    } else {
+        print("daemon: not reachable, so every answer below falls back to config.json")
+    }
     line("speech", "stt_model", running?.sttModel)
     line("local", "llm_model", running?.llmModel)
     line("cloud", "cloud_model", running?.cloudModel)
