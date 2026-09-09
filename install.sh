@@ -30,7 +30,8 @@ done
 mkdir -p "$TARGET"
 
 say "installing the engine into $TARGET"
-cp "$SRC/engine/phonad.py" "$SRC/engine/client.py" "$SRC/engine/audit.py" "$SRC/engine/model_updates.py" "$TARGET/"
+cp "$SRC/engine/phonad.py" "$SRC/engine/client.py" "$SRC/engine/audit.py" "$SRC/engine/model_updates.py" \
+   "$SRC/engine/history_file.py" "$TARGET/"
 
 # switch-model.sh is the only correct way to change model. It backs the config up, waits
 # for the engine to report ready and rolls back if it never does, so the Models pane sends

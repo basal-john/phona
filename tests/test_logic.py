@@ -5,6 +5,7 @@ any of them are worth the maintenance.
 """
 
 import contextlib
+import datetime as dt
 import importlib.util
 import io
 import json
@@ -19,7 +20,14 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def load(name):
-    """Import an engine module without needing it installed."""
+    """Import an engine module without needing it installed.
+
+    `engine` goes on the path because the modules import each other by bare name, which is
+    what they get at runtime: the installer copies them side by side and every entry point
+    is a script in that directory, so its own directory is `sys.path[0]`.
+    """
+    if str(ROOT / "engine") not in sys.path:
+        sys.path.insert(0, str(ROOT / "engine"))
     spec = importlib.util.spec_from_file_location(name, ROOT / "engine" / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -28,6 +36,7 @@ def load(name):
 
 
 phonad = load("phonad")
+history_file = load("history_file")
 audit = load("audit")
 client = load("client")
 
@@ -2291,3 +2300,121 @@ def test_the_history_row_carries_whether_the_transcript_was_sent(monkeypatch, tm
                                                                 mode=phonad.CLOUD_MODE),
                      cloud_sent=True)
     assert sent["cloud_sent"] is True
+
+
+# --- the readers have to see the archives, not only the live file ------------------------
+
+def _archived_history(tmp_path, *generations):
+    """Write `generations` oldest-first as the engine would leave them after rotating."""
+    history = tmp_path / "history.jsonl"
+    for rows in generations:
+        history.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        phonad.rotate_history(history, 0)
+    return history
+
+
+def _row(ts, text):
+    return {"ts": ts, "source": "voice", "raw": text, "text": text, "seconds": 1}
+
+
+def test_the_reader_returns_every_archive_oldest_first_then_the_live_file(tmp_path):
+    """`phona history` and `phona audit` opened history.jsonl alone, so from the first
+    rotation onward they reported on the tail of the record and said nothing was missing.
+    """
+    _archived_history(tmp_path,
+                      [_row("2026-01-01T09:00:00", "oldest")],
+                      [_row("2026-02-01T09:00:00", "middle")])
+    (tmp_path / "history.jsonl").write_text(
+        json.dumps(_row("2026-03-01T09:00:00", "newest")) + "\n")
+
+    assert [p.name for p in history_file.paths(tmp_path)] == [
+        "history.jsonl.1", "history.jsonl.2", "history.jsonl"]
+    assert [r["text"] for r in history_file.read(tmp_path)] == ["oldest", "middle", "newest"]
+
+
+def test_the_reader_orders_ten_archives_by_number_and_not_by_name(tmp_path):
+    """As strings `.10` sorts between `.1` and `.2`, which hands back the record shuffled
+    and is the same defect the app's own reader had to be held to.
+    """
+    history = tmp_path / "history.jsonl"
+    for n in range(1, 12):
+        history.write_text(json.dumps(_row("2026-01-01T09:00:00", f"gen {n}")) + "\n")
+        phonad.rotate_history(history, 0)
+
+    assert [p.name for p in history_file.paths(tmp_path)][:3] == [
+        "history.jsonl.1", "history.jsonl.2", "history.jsonl.3"]
+    assert [r["text"] for r in history_file.read(tmp_path)] == [
+        f"gen {n}" for n in range(1, 12)]
+
+
+def test_a_file_that_is_not_a_numbered_archive_stays_out_of_the_record(tmp_path):
+    """A hand-made backup next to the history must not silently double the totals."""
+    (tmp_path / "history.jsonl").write_text(json.dumps(_row("2026-03-01T09:00:00", "live")) + "\n")
+    (tmp_path / "history.jsonl.bak").write_text(
+        json.dumps(_row("2026-03-01T09:00:00", "copy")) + "\n")
+
+    assert [r["text"] for r in history_file.read(tmp_path)] == ["live"]
+
+
+def test_one_unreadable_line_costs_neither_its_file_nor_the_archives_after_it(tmp_path):
+    (tmp_path / "history.jsonl.1").write_text(
+        json.dumps(_row("2026-01-01T09:00:00", "kept")) + "\nnot json\n")
+    (tmp_path / "history.jsonl").write_text(json.dumps(_row("2026-03-01T09:00:00", "live")) + "\n")
+
+    assert [r["text"] for r in history_file.read(tmp_path)] == ["kept", "live"]
+
+
+def test_a_corrupt_archive_does_not_cost_the_archives_after_it(tmp_path):
+    """`read_text` raises `UnicodeDecodeError`, which is a `ValueError` and so escaped the
+    guard entirely. One bad byte in one old archive took `phona history` down with it.
+    """
+    (tmp_path / "history.jsonl.1").write_text(json.dumps(_row("2026-01-01T09:00:00", "kept")) + "\n")
+    (tmp_path / "history.jsonl.2").write_bytes(b"\xff\xfe not utf 8 \x80\n")
+    (tmp_path / "history.jsonl").write_text(json.dumps(_row("2026-03-01T09:00:00", "live")) + "\n")
+
+    assert [r["text"] for r in history_file.read(tmp_path)] == ["kept", "live"]
+
+
+def test_a_row_survives_one_bad_byte_inside_an_otherwise_valid_line(tmp_path):
+    """Dropping the dictation would lose more than the character does."""
+    good = json.dumps(_row("2026-01-01T09:00:00", "caf")).encode()
+    (tmp_path / "history.jsonl").write_bytes(good.replace(b'"caf"', b'"caf\xe9"') + b"\n")
+
+    rows = history_file.read(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["text"].startswith("caf")
+
+
+def test_no_history_at_all_reads_as_no_rows(tmp_path):
+    assert history_file.paths(tmp_path) == []
+    assert history_file.read(tmp_path) == []
+
+
+def test_the_client_history_command_shows_rows_from_an_archive(monkeypatch, tmp_path, capsys):
+    """The end the user actually touches. `phona history` printed nothing from before the
+    first rotation, and `--export` wrote that partial record under a confident count.
+    """
+    _archived_history(tmp_path, [_row("2026-01-01T09:00:00", "archived dictation")])
+    (tmp_path / "history.jsonl").write_text(
+        json.dumps(_row("2026-03-01T09:00:00", "live dictation")) + "\n")
+    monkeypatch.setattr(client, "BASE", tmp_path)
+
+    client.show_history(10, as_json=True)
+    printed = json.loads(capsys.readouterr().out)
+
+    assert [r["text"] for r in printed] == ["archived dictation", "live dictation"]
+
+
+def test_the_audit_counts_dictations_from_the_archives_too(monkeypatch, tmp_path):
+    """`audit.collect` is what the weekly report is built from. Reading the live file alone
+    made it undercount the window it was asked about without saying so.
+    """
+    today = dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    _archived_history(tmp_path, [_row(today, "archived today")])
+    (tmp_path / "history.jsonl").write_text(json.dumps(_row(today, "live today")) + "\n")
+    monkeypatch.setattr(audit, "BASE", tmp_path)
+    monkeypatch.setattr(audit, "CORRECTIONS", tmp_path / "corrections.jsonl")
+    monkeypatch.setattr(audit, "inference_findings", lambda history, limit=40: [])
+    monkeypatch.setattr(audit, "model_update_check", lambda: [])
+
+    assert audit.collect(7)["dictations"] == 2

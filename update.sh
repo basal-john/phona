@@ -23,7 +23,8 @@ else
 fi
 
 say "updating the engine"
-cp engine/phonad.py engine/client.py engine/audit.py engine/model_updates.py "$TARGET/"
+cp engine/phonad.py engine/client.py engine/audit.py engine/model_updates.py \
+   engine/history_file.py "$TARGET/"
 cp switch-model.sh "$TARGET/"
 chmod +x "$TARGET/switch-model.sh"
 
