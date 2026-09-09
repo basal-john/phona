@@ -92,9 +92,9 @@ struct MainWindowView: View {
                 Button {
                     model.legendShown.toggle()
                 } label: {
-                    Label("What the dots mean", systemImage: "info.circle")
+                    Label("What the Marks Mean", systemImage: "info.circle")
                 }
-                .help("What the dot on a dictation means")
+                .help("What the mark on a dictation means")
                 .popover(isPresented: $model.legendShown, arrowEdge: .bottom) {
                     RouteLegend().frame(width: 300)
                 }
@@ -144,10 +144,10 @@ struct MainWindowView: View {
     }
 }
 
-/// What the dot on every dictation means, in one place the whole window can reach.
+/// What the mark on every dictation means, in one place the whole window can reach.
 ///
-/// It names the dot rather than the Option keys, because the key and the dot can disagree.
-/// The key chooses which correction is asked for and the dot reports what happened to the
+/// It names the mark rather than the Option keys, because the key and the mark can disagree.
+/// The key chooses which correction is asked for and the mark reports what happened to the
 /// text, so a right-Option dictation whose cloud reply was thrown away was corrected on this
 /// Mac and still carries the blue mark: the transcript had already gone. A legend that read
 /// "right ⌥ means cloud" would leave a reader thinking a green mark on that row was possible.
@@ -179,8 +179,8 @@ struct RouteLegend: View {
 
 /// The one design idea that appears on every dictation in the window.
 ///
-/// A filled dot for text that stayed on this Mac, an arrow for text that did not, green and
-/// blue behind them. The two shapes carry the whole distinction on their own, because a
+/// A filled circle for text that stayed on this Mac, an arrow for text that did not, with
+/// green and blue behind them. The two shapes carry the distinction on their own, because a
 /// reader who cannot separate green from blue is a reader this mark has to work for, and on
 /// the Home pane it is the only route signal on the row.
 ///
