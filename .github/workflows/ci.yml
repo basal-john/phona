@@ -105,6 +105,12 @@ jobs:
             test -f "/tmp/phona-ci/$module" || { echo "installer did not place $module"; exit 1; }
           done
           /tmp/phona-ci/venv/bin/python -c "import mlx_whisper, mlx_lm; print('engine imports ok')"
+          # A PHONA_HOME run must not write the shared shim. It used to, which pointed a
+          # real user's `phona` command into a temporary directory that /tmp later cleared.
+          test ! -e "$HOME/.local/bin/phona" \
+            || { echo "a test install wrote the shared phona shim"; exit 1; }
+          test -x /tmp/phona-ci/phona \
+            || { echo "a test install did not get its own phona shim"; exit 1; }
 
       - name: Upload the rendered interface
         if: always()

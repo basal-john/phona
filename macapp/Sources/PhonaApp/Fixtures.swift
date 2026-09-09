@@ -134,6 +134,7 @@ enum Fixtures {
         snapshot.sttModel = speechModel
         snapshot.llmModel = localModel
         snapshot.cloudModel = cloudModel
+        snapshot.cloudBackend = "claude"
         return snapshot
     }
 }

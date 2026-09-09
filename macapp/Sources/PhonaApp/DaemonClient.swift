@@ -88,6 +88,41 @@ enum DaemonClient {
         return obj
     }
 
+    /// Which models the daemon actually has, as opposed to which ones config.json pins.
+    ///
+    /// These are two different questions and the Models pane was answering the wrong one.
+    /// It read `cloud_model` straight out of config.json, which does not carry the key on
+    /// this machine, so the pane said "no cloud model is configured" while the daemon was
+    /// correcting through claude-sonnet-5. The daemon merges the file over its own defaults
+    /// and reports the result, so asking it is the only way to be right about what is
+    /// running.
+    ///
+    /// Every field stays optional. An older daemon may not answer STATUS at all, and a
+    /// caller that cannot reach one has to fall back to the file rather than claim nothing
+    /// is loaded.
+    struct Models {
+        let sttModel: String?
+        let llmModel: String?
+        let cloudModel: String?
+        let cloudBackend: String?
+    }
+
+    /// A short timeout on purpose. This runs inside the window's load, and a daemon that is
+    /// still warming its models is the normal state right after a restart. Waiting on it
+    /// would hold up every figure in the window to settle one line of one pane.
+    static func models(timeout: TimeInterval = 3) -> Models? {
+        guard let reply = try? request(["cmd": "STATUS"], timeout: timeout),
+              (reply["state"] as? String) == "ready" else { return nil }
+        func text(_ key: String) -> String? {
+            guard let value = reply[key] as? String, !value.isEmpty else { return nil }
+            return value
+        }
+        return Models(sttModel: text("stt_model"),
+                      llmModel: text("llm_model"),
+                      cloudModel: text("cloud_model"),
+                      cloudBackend: text("cloud_backend"))
+    }
+
     static func isAlive() -> Bool {
         guard let reply = try? request(["cmd": "PING"], timeout: 5) else { return false }
         return (reply["state"] as? String) == "ready"

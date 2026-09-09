@@ -1126,6 +1126,37 @@ if CommandLine.arguments.contains("--check-fixtures") {
     exit(1)
 }
 
+/// Print which models the app believes are loaded, and where each answer came from.
+///
+/// A sibling of `--probe-focus` and `--probe-style`. It exists because the Models pane
+/// spent a release reporting that no cloud model was configured while cloud corrections
+/// were being made: it read config.json, which does not carry `cloud_model` on a default
+/// install, and never asked the daemon, which merges the file over its own defaults. This
+/// prints both sides so the two can be compared without opening the window.
+if CommandLine.arguments.contains("--probe-models") {
+    let running = DaemonClient.models()
+    var config: [String: Any] = [:]
+    if let data = try? Data(contentsOf: Paths.config),
+       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        config = obj
+    }
+    func line(_ label: String, _ key: String, _ fromDaemon: String?) {
+        let pinned = (config[key] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let used = fromDaemon ?? pinned
+        let padded = label.padding(toLength: 8, withPad: " ", startingAt: 0)
+        print("\(padded) used=\(used ?? "none")  daemon=\(fromDaemon ?? "none")  "
+            + "config=\(pinned ?? "none")")
+    }
+    print(running == nil
+        ? "daemon: not reachable, so every answer below falls back to config.json"
+        : "daemon: reachable")
+    line("speech", "stt_model", running?.sttModel)
+    line("local", "llm_model", running?.llmModel)
+    line("cloud", "cloud_model", running?.cloudModel)
+    line("backend", "cloud_backend", running?.cloudBackend)
+    exit(0)
+}
+
 if CommandLine.arguments.contains("--check-mute") {
     OutputMute.report()
     exit(0)
