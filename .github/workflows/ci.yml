@@ -13,7 +13,14 @@ concurrency:
 jobs:
   build-and-test:
     # Apple Silicon, which the Swift build needs. Free for public repositories.
-    runs-on: macos-15
+    #
+    # macOS 26 rather than 15, because the HUD's material is Liquid Glass and
+    # `glassEffect(_:in:)` only exists in the macOS 26 SDK. The call is guarded with
+    # `#available(macOS 26, *)` so the app still runs on macOS 14, which is what
+    # LSMinimumSystemVersion and the package's platform both still say, but an availability
+    # check does not conjure a declaration the SDK does not have. Building on 15 fails to
+    # compile.
+    runs-on: macos-26
 
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +66,12 @@ jobs:
           codesign -d -r- build/Phona.app 2>&1 | tee /tmp/dr.txt
           grep -q 'designated => identifier "com.basalona.phona"' /tmp/dr.txt \
             || { echo "designated requirement is not pinned to the identifier"; exit 1; }
+
+      - name: Check the render fixture
+        working-directory: macapp
+        run: |
+          swift build
+          ./.build/debug/PhonaApp --check-fixtures
 
       - name: Render the interface and check the screenshots are opaque
         working-directory: macapp

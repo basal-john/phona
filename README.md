@@ -56,7 +56,9 @@ per sentence rather than once, which is why it is a key and not a preference.
 | **Second tap to text on screen** | **~1.2 s** |
 
 Needs an Apple Silicon Mac (M1 or later), macOS 14 or later, and about 6.5 GB of disk for the
-models.
+models. Building it from source needs macOS 26 or later, because the HUD's material is Liquid
+Glass and that API only exists in the macOS 26 SDK. The call is availability-guarded, so a
+binary built on 26 still runs on 14 and falls back to the vibrancy layer there.
 
 ## Install
 

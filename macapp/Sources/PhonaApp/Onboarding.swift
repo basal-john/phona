@@ -44,8 +44,9 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 14) {
                 Image(systemName: "waveform")
-                    .font(.system(size: 30, weight: .medium))
+                    .font(.system(.largeTitle, weight: .medium))
                     .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Welcome to Phona").font(.title2).fontWeight(.semibold)
                     Text("Tap Option, speak, tap again. Your words arrive corrected, where the cursor is.")
@@ -60,7 +61,7 @@ struct OnboardingView: View {
                 granted: state.accessibility,
                 title: "Accessibility",
                 detail: "Lets Phona notice the Option key and type into the app you are using.",
-                action: "Open Settings",
+                action: "Open Settings…",
                 perform: {
                     _ = HotkeyMonitor.hasAccessibility(prompt: true)
                     open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
@@ -110,6 +111,8 @@ struct OnboardingView: View {
 }
 
 private struct PermissionRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let granted: Bool
     let title: String
     let detail: String
@@ -119,13 +122,15 @@ private struct PermissionRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: granted ? "checkmark.circle.fill" : "circle.dashed")
-                .font(.system(size: 18))
+                .font(.title3)
                 .foregroundStyle(granted ? Color.green : Color.secondary)
                 .frame(width: 22)
-                .animation(.spring(duration: 0.34, bounce: 0.2), value: granted)
+                .animation(reduceMotion ? nil : .spring(duration: 0.34, bounce: 0.2),
+                           value: granted)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).fontWeight(.medium)
+                Text(title).font(.headline)
                 Text(detail)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -141,5 +146,8 @@ private struct PermissionRow: View {
             }
         }
         .padding(.vertical, 9)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(title)
+        .accessibilityValue(granted ? "granted" : "not granted")
     }
 }

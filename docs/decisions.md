@@ -575,3 +575,92 @@ coverage, it is there so the same mistake cannot ship twice:
 What CI cannot cover, and why: anything needing a granted permission, a microphone, or the
 language model. A TCC bug is invisible to any test that does not run on a real machine with
 real grants. That gap is real and worth knowing rather than papering over.
+
+## The window follows the platform rather than imitating it
+
+The window was built against an older macOS and it showed. It painted its own version of the
+system's grouped container, a fill in `controlBackgroundColor` inside an 8pt rounded
+rectangle with a quaternary stroke, in eleven places. It set its own point sizes, including
+body text at 9.5, 10 and 10.5pt. It upper-cased every section header. It built a search field
+out of a `TextField`, a magnifying-glass image and a rounded rectangle. None of that was
+wrong when it was written, and all of it was wrong by the time the platform's own containers
+grew a larger radius, its lists and forms stopped rendering headers in small capitals, and
+its controls started taking their shape from the shape of the hardware.
+
+So the parallel design system is gone and the components underneath it are the platform's:
+`GroupBox` for the containers, `ContentUnavailableView` for the empty states,
+`LabeledContent` for the label-value pairs, `.badge` for the sidebar counts, `.searchable`
+for the search, `HSplitView` for the History columns and `Capsule` for the chips. This is
+worth less as a change of appearance than as a change of who maintains it: Reduce
+Transparency, Increase Contrast, the accent colour, the sidebar icon size and the next
+release's corner radius are now the system's problem rather than eleven copies of this app's
+guess at them.
+
+Three things came out of it that were not cosmetic.
+
+The route legend was pinned to the bottom of the sidebar. It is the only explanation of the
+app's privacy claim, and the bottom edge of a window is the part people drag off the screen.
+It is now a popover behind a toolbar button and an item in the Help menu, reachable from
+every pane.
+
+The settings window's apply button was in a bar along the bottom, which is the same mistake
+for the same reason. It is now a notice at the top of whichever pane has something waiting,
+which
+also means a pane with nothing pending shows nothing. The window also sizes itself to the
+pane it is showing instead of holding one 520x560 frame for a pane with five controls and a
+pane with two text editors.
+
+The main window could not be resized to anything smaller than its content, because
+`NSHostingView` reports the SwiftUI content's intrinsic size and AppKit sizes the window to
+it. That is the same fault that once opened this window 1541pt tall on a 1290pt screen and
+autosaved it off the bottom of the display. Clearing `sizingOptions` says the content fits
+the window rather than the other way round.
+
+### The route mark is a shape, not only a colour
+
+Green for text that stayed on this Mac and blue for text that did not is the one design idea
+that appears on every dictation in the window, and on the Home pane it was the only route
+signal on the row. Green against blue is a pairing a colour-blind reader may not be able to
+separate, and a 5pt dot carries nothing else. The mark is now a filled circle against an
+upward arrow, so the shape carries the distinction on its own and the colour reinforces it.
+
+### Liquid Glass is on the HUD and nowhere else
+
+The guidance is to use the material sparingly, on the most important functional elements,
+and to let standard components pick it up on their own everywhere else. In this app that
+resolves cleanly: the capsule is the only thing on screen during a dictation and the app's
+single most-seen surface, so it gets the material, and every window uses standard components
+and inherits whatever they do.
+
+Regular glass rather than clear, because the capsule floats over arbitrary app windows rather
+than over media, and regular is the variant for a component whose background might otherwise
+cost legibility. Under Reduce Transparency it is an opaque fill with a real border instead,
+and under Reduce Motion the spring, the lift and the scale are gone and the capsule
+cross-fades.
+
+The question that had to be answered rather than assumed: `NSVisualEffectView` with
+`behindWindow` blending samples across app boundaries, which is why the HUD has always looked
+like it is sitting on your work, and a SwiftUI glass effect samples its own window's
+backdrop. The HUD's window is a borderless panel with a clear background, so whether glass
+still reaches the app underneath is a property of the panel. It does. `phona --shots` captures
+the real panel over a bright window by screen region rather than by window number, because
+`screencapture -l` returns a window's own contents without whatever it was compositing
+against, which is the part in question.
+
+### Screenshots are of the window, not of a render of it
+
+`phona --render` uses `ImageRenderer`, which cannot draw an `NSViewRepresentable`. On macOS
+the pieces this app is built from are all AppKit views underneath: `NavigationSplitView`,
+`List`, `ScrollView`, `TabView` and `Form`. The settings render had been shipping as the
+system's "cannot draw this" placeholder, a red circle on a yellow field, and nobody noticed
+because the README does not embed it.
+
+So `phona --shots` opens the real windows and points `screencapture` at each one. It draws
+them on `Fixtures` rather than on the live history, because a screenshot of this window
+otherwise carries whatever its owner last dictated.
+
+`phona --check-fixtures` checks that fixture, and it exists because it caught two faults in
+it immediately. The fixture was built newest-first, and `HistoryOrder.newestFirst` reverses
+file position rather than sorting by timestamp, deliberately, so the History pane came out
+with its oldest day at the top. And the row meant to be slow totalled 7.5 s against a
+threshold of 10, so the slow chip and the slow note never rendered at all.

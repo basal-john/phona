@@ -17,6 +17,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Held on the delegate rather than inside the window's view, because the reload trigger
     /// is the window becoming key and only a window delegate can see that.
     private let historyStore = HistoryStore()
+
+    /// What the window is showing.
+    ///
+    /// Owned here rather than inside `MainWindowView`, because the pane and the history
+    /// filter both need to be menu commands. A toolbar can be hidden or customised, so it
+    /// may not be the only route to a command, and a `@State` inside the view is reachable
+    /// from no menu at all.
+    private let windowModel = WindowModel()
     private let permissions = PermissionState()
     private var tapInstalled = false
 
@@ -521,11 +529,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
+        /// No minimise and no zoom button, because the window sizes itself to whichever
+        /// pane is showing and Command-comma reopens it in a keystroke, so neither control
+        /// has anything to do here.
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 540, height: 400),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Phona Settings"
-        window.contentView = NSHostingView(rootView: SettingsView())
+        let hosting = NSHostingView(
+            rootView: SettingsView(setWindowTitle: { [weak window] title in
+                window?.title = title
+            }))
+        window.contentView = hosting
+        /// Unlike the main window, this one is meant to take its height from its content.
+        /// The default `sizingOptions` already ask AppKit to do that as the pane changes;
+        /// this is the first fit, so it opens at the right height rather than resizing
+        /// itself a frame later.
+        window.setContentSize(hosting.fittingSize)
         window.center()
         window.isReleasedWhenClosed = false
         settingsWindow = window
@@ -630,14 +650,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.title = "Phona"
-        /// The sidebar is a fixed 210pt, so this is that plus the detail minimum. Kept in
-        /// step with `MainWindowView`'s own floor rather than guessed: a window minimum
-        /// larger than the view needs is indistinguishable from a window that cannot be
-        /// resized, which is how the 900x620 pair was reported.
-        window.contentMinSize = NSSize(width: 770, height: 340)
-        window.contentView = NSHostingView(
+        /// The sidebar's own minimum plus the detail floor, kept in step with
+        /// `MainWindowView` rather than guessed. A window minimum larger than the view
+        /// needs is indistinguishable from a window that cannot be resized, which is how
+        /// the old 900x620 pair was reported.
+        window.contentMinSize = NSSize(width: 700, height: 340)
+        let hosting = NSHostingView(
             rootView: MainWindowView(store: historyStore,
+                                     model: windowModel,
                                      flag: { [weak self] in self?.flagLastDictation() }))
+        /// The window's size is the window's business.
+        ///
+        /// `NSHostingView` reports the SwiftUI content's intrinsic size by default and
+        /// AppKit sizes the window to it, which is how this window once opened 1541pt tall
+        /// on a 1290pt screen and autosaved itself off the bottom of the display. Clearing
+        /// `sizingOptions` is the supported way to say the content fits the window rather
+        /// than the other way round, and it is what lets the reader drag it to any size the
+        /// platform expects a window to reach.
+        hosting.sizingOptions = []
+        window.contentView = hosting
         /// `NSHostingView` reports the SwiftUI content's intrinsic size and AppKit sizes the
         /// window to it, which silently overrode the 980x660 above. The home pane's chart and
         /// sections add up to about 1541pt, so the window opened 1541pt tall on a 1290pt
@@ -709,7 +740,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
                         keyEquivalent: "")
         appMenu.addItem(.separator())
-        let settings = NSMenuItem(title: "Settings...",
+        let settings = NSMenuItem(title: "Settings\u{2026}",
                                   action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
         appMenu.addItem(settings)
@@ -746,6 +777,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editItem.submenu = editMenu
         main.addItem(editItem)
 
+        /// A View menu, because the window's toolbar is not allowed to be the only route to
+        /// a command. A toolbar can be hidden, and on this platform the expectation is a
+        /// keyboard route to every view a window can show, so the four panes get Command-1
+        /// through Command-4 and the five history filters get named items.
+        let viewItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        for pane in Pane.allCases {
+            let item = NSMenuItem(title: pane.title,
+                                  action: #selector(showPane(_:)),
+                                  keyEquivalent: String(pane.shortcut))
+            item.target = self
+            item.representedObject = pane.rawValue
+            item.image = NSImage(systemSymbolName: pane.symbol, accessibilityDescription: nil)
+            viewMenu.addItem(item)
+        }
+        viewMenu.addItem(.separator())
+        let filterItem = NSMenuItem(title: "Filter History", action: nil, keyEquivalent: "")
+        let filterMenu = NSMenu(title: "Filter History")
+        for filter in HistoryFilter.allCases {
+            let item = NSMenuItem(title: filter.title,
+                                  action: #selector(showFilter(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = filter.rawValue
+            item.image = NSImage(systemSymbolName: filter.symbol, accessibilityDescription: nil)
+            filterMenu.addItem(item)
+        }
+        filterItem.submenu = filterMenu
+        viewMenu.addItem(filterItem)
+        viewMenu.addItem(.separator())
+        /// A string selector, because `toggleSidebar:` is declared by AppKit's split view
+        /// controller rather than by anything this file can see, and it is sent to the
+        /// first responder with no target so whichever window is in front handles it.
+        viewMenu.addItem(withTitle: "Toggle Sidebar",
+                         action: NSSelectorFromString("toggleSidebar:"), keyEquivalent: "s")
+        viewItem.submenu = viewMenu
+        main.addItem(viewItem)
+
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
         let home = NSMenuItem(title: "Phona Home",
@@ -769,8 +838,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowItem.submenu = windowMenu
         main.addItem(windowItem)
 
+        /// A Help menu, at the trailing end where the platform puts one. There was none at
+        /// all, which is the one menu a Mac app is expected to have and the first place
+        /// anyone looks when they do not understand what they are seeing.
+        ///
+        /// The route legend is here as well as behind the window's toolbar button, because
+        /// it is the only explanation of the app's privacy claim and it should not need a
+        /// window open to reach.
+        let helpItem = NSMenuItem()
+        let helpMenu = NSMenu(title: "Help")
+        let help = NSMenuItem(title: "Phona Help",
+                              action: #selector(openHelp), keyEquivalent: "?")
+        help.target = self
+        helpMenu.addItem(help)
+        let dots = NSMenuItem(title: "What the Marks on a Dictation Mean",
+                              action: #selector(explainRoutes), keyEquivalent: "")
+        dots.target = self
+        helpMenu.addItem(dots)
+        helpMenu.addItem(.separator())
+        let releases = NSMenuItem(title: "Release Notes",
+                                  action: #selector(openReleases), keyEquivalent: "")
+        releases.target = self
+        helpMenu.addItem(releases)
+        helpItem.submenu = helpMenu
+        main.addItem(helpItem)
+
         NSApp.mainMenu = main
         NSApp.windowsMenu = windowMenu
+        NSApp.helpMenu = helpMenu
+    }
+
+    /// Move the window to a pane, opening it first when it is closed.
+    ///
+    /// Command-1 with no window is a request to see that pane, not a request to do nothing,
+    /// so the window opens rather than the keystroke being swallowed.
+    @objc private func showPane(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let pane = Pane(rawValue: raw) else { return }
+        windowModel.pane = pane
+        openMainWindow()
+    }
+
+    @objc private func showFilter(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let filter = HistoryFilter(rawValue: raw) else { return }
+        windowModel.filter = filter
+        windowModel.pane = .history
+        openMainWindow()
+    }
+
+    /// The README, which is this app's documentation.
+    ///
+    /// Not a Help Book. Phona ships as a directory, not an installer, and its whole manual
+    /// is one README that is already kept current because it is the project's front page. A
+    /// bundled Help Book would be a second copy of it, out of date within a release.
+    @objc private func openHelp() {
+        guard let url = URL(string: "https://github.com/basal-john/phona#readme") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// The route legend, from the menu bar, with no window needed.
+    @objc private func explainRoutes() {
+        openMainWindow()
+        windowModel.legendShown = true
     }
 
     @objc private func openReleases() { NSWorkspace.shared.open(UpdateCheck.releasesPage) }
@@ -947,6 +1077,62 @@ if let idx = CommandLine.arguments.firstIndex(of: "--render") {
     renderApp.setActivationPolicy(.prohibited)
     MainActor.assumeIsolated { Previews.renderAll(into: dir) }
     exit(0)
+}
+
+/// Photograph the windows, on a fixture history, and exit.
+///
+/// A sibling of `--render` for everything `ImageRenderer` cannot draw, which on macOS is
+/// every window this app has. It needs a real `NSApplication` with a regular activation
+/// policy, because a window belonging to a prohibited or accessory app never reaches the
+/// compositor and `screencapture` photographs nothing.
+if let idx = CommandLine.arguments.firstIndex(of: "--shots") {
+    let dir = CommandLine.arguments.count > idx + 1
+        ? URL(fileURLWithPath: CommandLine.arguments[idx + 1])
+        : URL(fileURLWithPath: "/tmp/phona-shots")
+    let shotApp = NSApplication.shared
+    shotApp.setActivationPolicy(.regular)
+    MainActor.assumeIsolated { Previews.shoot(into: dir) }
+    exit(0)
+}
+
+/// Check the render fixture, and exit.
+///
+/// The fixture is what every screenshot in this repo is drawn from, so a fault in it reads
+/// as a fault in the window. This is here because it caught one: the fixture was built
+/// newest-first, `HistoryOrder.newestFirst` reverses file position rather than sorting, and
+/// the History pane came out with its oldest day at the top. The fixture lives in the
+/// executable target, which no test target can import, so the check runs here.
+if CommandLine.arguments.contains("--check-fixtures") {
+    let snapshot = Fixtures.snapshot()
+    let descending = HistoryOrder.newestFirst(snapshot.rows)
+    var failures: [String] = []
+
+    let stamps = descending.map(\.ts)
+    if let firstOutOfOrder = zip(stamps, stamps.dropFirst()).first(where: { $0 < $1 }) {
+        failures.append("descending is not newest first: \(firstOutOfOrder.0) precedes \(firstOutOfOrder.1)")
+    }
+    if snapshot.rows.count < 40 {
+        failures.append("only \(snapshot.rows.count) rows, too few to fill a list")
+    }
+    if snapshot.flaggedRowCount != 1 {
+        failures.append("expected exactly one flagged row, got \(snapshot.flaggedRowCount)")
+    }
+    if !snapshot.rows.contains(where: \.guarded) { failures.append("no guarded row") }
+    if !snapshot.rows.contains(where: \.trimmed) { failures.append("no trimmed row") }
+    if !snapshot.rows.contains(where: { $0.route == .cloud }) { failures.append("no cloud row") }
+    if !snapshot.rows.contains(where: { !$0.isSpoken }) { failures.append("no typed row") }
+    if !snapshot.rows.contains(where: { $0.sttSecs + $0.llmSecs > Insights.slowSeconds }) {
+        failures.append("no slow row")
+    }
+
+    if failures.isEmpty {
+        print("fixture ok: \(snapshot.rows.count) rows, "
+            + "newest \(descending.first.map { "\($0.ts)" } ?? "none"), "
+            + "oldest \(descending.last.map { "\($0.ts)" } ?? "none")")
+        exit(0)
+    }
+    for failure in failures { print("fixture FAIL: \(failure)") }
+    exit(1)
 }
 
 if CommandLine.arguments.contains("--check-mute") {

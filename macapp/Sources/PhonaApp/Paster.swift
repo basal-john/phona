@@ -186,6 +186,18 @@ enum Settings {
     /// Whether the output device is muted while the microphone is capturing.
     static var muteOthersWhileDictating: Bool { value("mute_others", default: true) }
 
+    /// A stored string, or nil when the key has never been written.
+    ///
+    /// Nil rather than a fallback, because the one caller is the settings window restoring
+    /// the pane it was last on, and "never chosen" and "chose General" want different
+    /// behaviour on a first run.
+    static func string(_ key: String) -> String? {
+        guard let data = try? Data(contentsOf: Paths.config),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return obj[key] as? String
+    }
+
     /// Whether a message dictated into a chat app drops its closing full stop.
     ///
     /// App-side rather than an engine setting, even though the daemon does the work, because

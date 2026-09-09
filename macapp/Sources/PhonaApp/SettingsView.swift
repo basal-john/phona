@@ -2,8 +2,48 @@ import PhonaCore
 import ServiceManagement
 import SwiftUI
 
+/// Which pane the settings window is showing.
+///
+/// A named type rather than a tag on the tab items, so the choice can be written down and
+/// read back. The platform expects a settings window to reopen on the pane it was left on,
+/// because people adjust related settings more than once.
+enum SettingsPane: String, CaseIterable, Identifiable {
+    case general
+    case dictation
+    case words
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: return "General"
+        case .dictation: return "Dictation"
+        case .words: return "Words"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: return "gearshape"
+        case .dictation: return "waveform"
+        case .words: return "text.book.closed"
+        }
+    }
+
+    /// The window title while this pane is showing.
+    var windowTitle: String { "\(title) Settings" }
+
+    static let storageKey = "settings_pane"
+}
+
 /// Real fields for the settings that previously meant hand-editing config.json.
 struct SettingsView: View {
+    /// Lets the window rename itself as the pane changes, which is what a settings window
+    /// on this platform does. The view cannot reach its own `NSWindow` from here, and
+    /// `navigationTitle` does not rename an `NSWindow` hosting a plain view.
+    var setWindowTitle: (String) -> Void = { _ in }
+
+    @State private var pane: SettingsPane = .general
     @State private var dictionary: String = ""
     @State private var replacements: String = ""
     @State private var launchAtLogin: Bool = false
@@ -16,30 +56,94 @@ struct SettingsView: View {
     @State private var status: String = ""
     @State private var loaded: EngineSettings?
 
+    /// The three panes, and nothing else.
+    ///
+    /// The apply control used to sit in a bar along the bottom of the window, which is the
+    /// one place on a Mac a control should not be: people drag a window so its bottom edge
+    /// leaves the screen, and the button that makes a setting take effect went with it. It
+    /// is now a notice at the top of the pane whose fields need it, where it appears only
+    /// when there is something to apply and cannot be dragged out of view.
+    ///
+    /// The tab items carry symbols. macOS draws a hosted `TabView` as a segmented control
+    /// in the title bar and shows the titles without them, which still satisfies what the
+    /// platform asks of a settings window: the switcher is not customisable, it is always
+    /// visible, and it always shows which pane is active. The symbols are declared anyway,
+    /// because they are what the switcher would use if this app ever moves to a SwiftUI
+    /// `Settings` scene, and because they already appear in the View menu.
     var body: some View {
-        VStack(spacing: 0) {
-            TabView {
-                general.tabItem { Text("General") }
-                dictation.tabItem { Text("Dictation") }
-                words.tabItem { Text("Words") }
-            }
-            Divider()
-            HStack {
-                Text(status).font(.callout).foregroundStyle(.secondary)
-                Spacer()
-                Button("Save and restart engine") { save() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!needsRestart)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+        TabView(selection: $pane) {
+            general
+                .tabItem { Label(SettingsPane.general.title,
+                                 systemImage: SettingsPane.general.symbol) }
+                .tag(SettingsPane.general)
+            dictation
+                .tabItem { Label(SettingsPane.dictation.title,
+                                 systemImage: SettingsPane.dictation.symbol) }
+                .tag(SettingsPane.dictation)
+            words
+                .tabItem { Label(SettingsPane.words.title,
+                                 systemImage: SettingsPane.words.symbol) }
+                .tag(SettingsPane.words)
         }
-        .frame(width: 520, height: 560)
-        .onAppear(perform: load)
+        /// A width, and no height. The window sizes itself to whichever pane is showing,
+        /// which is why its zoom button is of no use and why it does not have one. A fixed
+        /// 520x560 made the General pane, which has five controls, exactly as tall as the
+        /// Words pane, which has two text editors, and left the General pane two thirds
+        /// empty.
+        .frame(width: 540)
+        .onAppear {
+            if let saved = Settings.string(SettingsPane.storageKey),
+               let restored = SettingsPane(rawValue: saved) {
+                pane = restored
+            }
+            setWindowTitle(pane.windowTitle)
+            load()
+        }
+        .onChange(of: pane) { _, chosen in
+            Settings.set(SettingsPane.storageKey, chosen.rawValue)
+            setWindowTitle(chosen.windowTitle)
+        }
+    }
+
+    /// The notice that a change is waiting on an engine restart.
+    ///
+    /// Its own section at the top of the pane rather than a permanently visible button, so
+    /// a pane with nothing pending shows nothing, and so the sentence explaining why a
+    /// restart is needed sits next to the button that performs it.
+    @ViewBuilder
+    private var pendingRestart: some View {
+        if needsRestart || !status.isEmpty {
+            Section {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Image(systemName: needsRestart
+                          ? "arrow.trianglehead.2.clockwise.rotate.90" : "checkmark.circle")
+                        .foregroundStyle(needsRestart ? .orange : .green)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(needsRestart ? "Changes are waiting" : "Saved")
+                            .font(.headline)
+                        Text(needsRestart
+                             ? "The engine reads these once when it starts, so it has to be "
+                                + "restarted before they take effect."
+                             : status)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    if needsRestart {
+                        Button("Save and Restart") { save() }
+                            .keyboardShortcut(.defaultAction)
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+            }
+        }
     }
 
     private var general: some View {
         Form {
+            pendingRestart
             Section {
                 Picker("When done", selection: $outputAction) {
                     Text("Insert at cursor").tag(OutputAction.insert)
@@ -78,6 +182,7 @@ struct SettingsView: View {
 
     private var dictation: some View {
         Form {
+            pendingRestart
             Section("While dictating") {
                 Toggle("Mute other audio", isOn: $muteOthers)
                     .onChange(of: muteOthers) { _, wanted in
@@ -117,6 +222,7 @@ struct SettingsView: View {
 
     private var words: some View {
         Form {
+            pendingRestart
             Section("Vocabulary") {
                 Text("Words the transcriber tends to mangle. One per line.")
                     .font(.callout)

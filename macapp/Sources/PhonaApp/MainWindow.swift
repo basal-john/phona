@@ -28,74 +28,104 @@ enum Pane: String, Hashable, CaseIterable, Identifiable {
         case .models: return "slider.horizontal.3"
         }
     }
+
+    /// Command-1 through Command-4, in sidebar order.
+    ///
+    /// The platform expects a keyboard route to every view a window can show, and these are
+    /// the shortcuts every other Mac app with a four-item sidebar uses. They are declared
+    /// here rather than in the menu builder so the sidebar order and the shortcut order
+    /// cannot drift apart.
+    var shortcut: Character {
+        switch self {
+        case .home: return "1"
+        case .history: return "2"
+        case .dictionary: return "3"
+        case .models: return "4"
+        }
+    }
+}
+
+/// What the window is showing, held outside the view.
+///
+/// The pane and the history filter both need to be reachable from the menu bar, because a
+/// toolbar can be hidden or customised and so may not be the only route to a command. A
+/// `@State` inside `MainWindowView` is reachable from nothing, which is why this exists.
+final class WindowModel: ObservableObject {
+    @Published var pane: Pane = .home
+    @Published var filter: HistoryFilter = .all
+    @Published var legendShown = false
 }
 
 /// The window's root. A sidebar and one pane, nothing that owns state of its own.
 ///
-/// The store is passed in rather than created here, because the reload trigger is the window
-/// becoming key and only `AppDelegate` can see that. A `@StateObject` here would leave the
-/// window delegate with nothing to call.
+/// The store and the selection are both passed in rather than created here. The reload
+/// trigger is the window becoming key and only `AppDelegate` can see that, and the menu bar
+/// needs to move the selection, which it can only do through a value it also holds.
 struct MainWindowView: View {
     @ObservedObject var store: HistoryStore
-    @State private var pane: Pane = .home
+    @ObservedObject var model: WindowModel
 
     /// Runs the existing menu-bar flag flow, alert and all, so the window has exactly one
     /// way of flagging a dictation rather than a second copy of it.
     let flag: () -> Void
+
+    init(store: HistoryStore, model: WindowModel = WindowModel(), flag: @escaping () -> Void) {
+        self.store = store
+        self.model = model
+        self.flag = flag
+    }
 
     var body: some View {
         NavigationSplitView {
             sidebar
         } detail: {
             detail
-                /// Low enough to put the window on half a laptop screen. It was 690x620,
-                /// which with the 210pt sidebar made the window refuse to go under 900x620
-                /// and read as a window with no way to shrink it.
-                ///
-                /// Nothing clips at this size. Every pane owns its own scrolling container,
-                /// so the floor only has to keep the content legible rather than whole.
-                .frame(minWidth: 560, minHeight: 320)
+                /// Low enough to put the window on half a laptop screen. Nothing clips at
+                /// this size, because every pane owns its own scrolling container, so the
+                /// floor only has to keep the content legible rather than whole.
+                .frame(minWidth: 520, minHeight: 320)
         }
         .navigationTitle("Phona")
-        .navigationSubtitle(pane.title)
-    }
-
-    private var sidebar: some View {
-        VStack(spacing: 0) {
-            List(selection: $pane) {
-                ForEach(Pane.allCases) { item in
-                    Label {
-                        HStack(spacing: 6) {
-                            Text(item.title)
-                            Spacer(minLength: 4)
-                            if let badge = badge(for: item) {
-                                Text(badge)
-                                    .font(.caption)
-                                    .monospacedDigit()
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    } icon: {
-                        Image(systemName: item.symbol)
-                    }
-                    .tag(item)
+        .navigationSubtitle(model.pane.title)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    model.legendShown.toggle()
+                } label: {
+                    Label("What the dots mean", systemImage: "info.circle")
+                }
+                .help("What the dot on a dictation means")
+                .popover(isPresented: $model.legendShown, arrowEdge: .bottom) {
+                    RouteLegend().frame(width: 300)
                 }
             }
-            .listStyle(.sidebar)
-
-            Divider()
-            RouteLegend()
         }
-        .navigationSplitViewColumnWidth(210)
+    }
+
+    /// The sidebar, and only the sidebar.
+    ///
+    /// The route legend used to be pinned under this list. It is the one thing in the window
+    /// that explains the app's privacy claim, and the bottom edge of a window is the part
+    /// people drag off the screen, so it now lives behind a toolbar button and in the Help
+    /// menu instead, where it is reachable from every pane and cannot be hidden by a drag.
+    private var sidebar: some View {
+        List(selection: $model.pane) {
+            ForEach(Pane.allCases) { item in
+                Label(item.title, systemImage: item.symbol)
+                    .badge(badge(for: item))
+                    .tag(item)
+            }
+        }
+        .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 280)
     }
 
     @ViewBuilder
     private var detail: some View {
-        switch pane {
+        switch model.pane {
         case .home:
-            HomeView(store: store, showAll: { pane = .history })
+            HomeView(store: store, showAll: { model.pane = .history })
         case .history:
-            HistoryView(store: store, flag: flag)
+            HistoryView(store: store, filter: $model.filter, flag: flag)
         case .dictionary:
             DictionaryView(store: store)
         case .models:
@@ -103,74 +133,71 @@ struct MainWindowView: View {
         }
     }
 
-    private func badge(for item: Pane) -> String? {
+    /// Zero rather than nil for an empty count, because `badge` hides a zero on its own and
+    /// a badge that appears and disappears as rows arrive is noisier than one that does not.
+    private func badge(for item: Pane) -> Int {
         switch item {
-        case .history:
-            let count = store.rows.count
-            return count > 0 ? Figures.integer(count) : nil
-        case .dictionary:
-            let count = store.snapshot.dictionary.count
-            return count > 0 ? Figures.integer(count) : nil
-        default:
-            return nil
+        case .history: return store.rows.count
+        case .dictionary: return store.snapshot.dictionary.count
+        default: return 0
         }
     }
 }
 
-/// What the dot on every dictation means, in the one place that is always on screen.
+/// What the dot on every dictation means, in one place the whole window can reach.
 ///
 /// It names the dot rather than the Option keys, because the key and the dot can disagree.
 /// The key chooses which correction is asked for and the dot reports what happened to the
 /// text, so a right-Option dictation whose cloud reply was thrown away was corrected on this
-/// Mac and still carries the blue dot: the transcript had already gone. A legend that read
-/// "right ⌥ means cloud" would leave a reader thinking a green dot on that row was possible.
+/// Mac and still carries the blue mark: the transcript had already gone. A legend that read
+/// "right ⌥ means cloud" would leave a reader thinking a green mark on that row was possible.
 struct RouteLegend: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("The dot on a dictation")
-                .font(.caption2.weight(.semibold))
-                .textCase(.uppercase)
-                .foregroundStyle(.secondary)
-            row(route: .local, label: "stayed on this Mac")
-            row(route: .cloud, label: "went to the cloud")
+        VStack(alignment: .leading, spacing: 10) {
+            Text("The mark on a dictation")
+                .font(.headline)
+            row(route: .local, label: "Stayed on this Mac")
+            row(route: .cloud, label: "Went to the cloud")
             Text("Left ⌥ asks for the on-device correction, right ⌥ for the cloud one. A "
-                + "cloud request that was refused still went, so it keeps the blue dot.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                + "cloud request that was refused still went, so it keeps the blue mark.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(16)
     }
 
     private func row(route: Route, label: String) -> some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 8) {
             RouteDot(route: route)
             Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.callout)
         }
     }
 }
 
 /// The one design idea that appears on every dictation in the window.
 ///
-/// Green for text that stayed on this Mac, blue for text that did not. It is drawn from
-/// `HistoryRow.route`, which reads whether the transcript was handed to a cloud process
-/// rather than which key was held or whose answer was used, because those two both draw a
-/// green dot on a dictation the cloud has already seen.
+/// A filled dot for text that stayed on this Mac, an arrow for text that did not, green and
+/// blue behind them. The two shapes carry the whole distinction on their own, because a
+/// reader who cannot separate green from blue is a reader this mark has to work for, and on
+/// the Home pane it is the only route signal on the row.
 ///
-/// System colours rather than the mock-up's hex, so both dots stay legible when the window
-/// is in dark appearance.
+/// It is drawn from `HistoryRow.route`, which reads whether the transcript was handed to a
+/// cloud process rather than which key was held or whose answer was used, because those two
+/// both draw a green mark on a dictation the cloud has already seen.
+///
+/// A symbol at a text style rather than a `Circle` at a point size, so it sits on the
+/// baseline of whatever it is beside and grows with it.
 struct RouteDot: View {
     let route: Route
-    var diameter: CGFloat = 6
+    var font: Font = .caption
 
     var body: some View {
-        Circle()
-            .fill(Palette.route(route))
-            .frame(width: diameter, height: diameter)
+        Image(systemName: route == .local ? "circle.fill" : "arrow.up.circle.fill")
+            .font(font)
+            .foregroundStyle(Palette.route(route))
             .accessibilityLabel(route == .local ? "stayed on this Mac" : "went to the cloud")
     }
 }
@@ -178,37 +205,48 @@ struct RouteDot: View {
 /// The route as a word, for places that have room for one.
 ///
 /// A statement about the text rather than the route's own name, because "cloud" beside a
-/// dictation reads as the cloud having corrected it and the dot only claims the text went
+/// dictation reads as the cloud having corrected it and the mark only claims the text went
 /// there. Kept short because the master row carries up to three more chips beside it.
 struct RouteBadge: View {
     let route: Route
 
     var body: some View {
-        Text(route == .local ? "on this Mac" : "left this Mac")
-            .font(.system(size: 10))
-            .foregroundStyle(Palette.route(route))
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(Palette.route(route).opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+        Chip(text: route == .local ? "on this Mac" : "left this Mac",
+             tint: Palette.route(route))
     }
 }
 
-/// A short word for something notable about a row, in the same shape as `RouteBadge`.
+/// A short word for something notable about a row.
+///
+/// A capsule rather than a 3pt rounded rectangle, because the platform rounded every small
+/// control when the shape of the hardware started informing the shape of the interface, and
+/// a chip beside a capsule button with squarer corners than it reads as a mistake.
 struct Chip: View {
     let text: String
     let tint: Color
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10))
+            .font(.caption2)
             .foregroundStyle(tint)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(tint.opacity(0.14), in: Capsule())
     }
 }
 
-/// A titled box, which is the only container shape the mock-ups use.
+/// A titled container, which is the only grouping shape the window uses.
+///
+/// A `GroupBox` rather than a hand-drawn fill and hairline. The old version painted
+/// `controlBackgroundColor` inside an 8pt rounded rectangle with a quaternary stroke, which
+/// was a passable imitation of the system's grouped container on the OS it was written for
+/// and is now the wrong radius, the wrong fill and one border too many. `GroupBox` is the
+/// component the platform styles, so the corner radius, the material and the way it behaves
+/// under Reduce Transparency and Increase Contrast all arrive without being restated here.
+///
+/// The title is not upper-cased. Lists, tables and forms across the system now render
+/// section headers in title-style capitalisation, and a pane of small capitals beside them
+/// reads as a different app.
 struct Card<Content: View>: View {
     let title: String?
     var trailing: String?
@@ -223,38 +261,36 @@ struct Card<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, title == nil && trailing == nil ? 0 : 4)
+        } label: {
             if title != nil || trailing != nil {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     if let title {
                         Text(title)
-                            .font(.caption2.weight(.semibold))
-                            .textCase(.uppercase)
-                            .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
                     if let trailing {
                         Text(trailing)
-                            .font(.caption)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
-            content()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
     }
 }
 
 /// Every colour the window uses, all of them semantic.
 ///
-/// Nothing here is a hex value lifted from the mock-up HTML, because those were picked in
-/// light appearance only and a route dot that vanishes in dark appearance is the one thing
-/// this design cannot afford to lose.
+/// Nothing here is a hex value lifted from a mock-up, because those were picked in light
+/// appearance only and a route mark that vanishes in dark appearance is the one thing this
+/// design cannot afford to lose. The system colours also carry an increased-contrast
+/// variant, which a hex value does not.
 enum Palette {
     static func route(_ route: Route) -> Color {
         route == .local ? .green : .blue
@@ -264,6 +300,18 @@ enum Palette {
     static let flagged = Color.red
     static let slow = Color.orange
     static let activity = Color.green
+}
+
+/// The two display sizes the window uses, which are the only sizes here that are not a
+/// system text style.
+///
+/// macOS has no Dynamic Type, so a fixed size for a headline figure is legitimate. It is
+/// named rather than inlined because the same figure appears at two scales and the pair has
+/// to stay in proportion. Everything else in the window is a text style, which is what keeps
+/// it in step with the standard controls beside it.
+enum Display {
+    static let hero = Font.system(size: 40, weight: .semibold)
+    static let tile = Font.system(size: 26, weight: .semibold)
 }
 
 /// Every figure the window prints, formatted once.
@@ -304,13 +352,13 @@ enum Figures {
 
     private static let clockFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
+        formatter.setLocalizedDateFormatFromTemplate("jmm")
         return formatter
     }()
 
     private static let secondsFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
+        formatter.setLocalizedDateFormatFromTemplate("jmmss")
         return formatter
     }()
 
@@ -348,25 +396,21 @@ enum Figures {
 
 /// An empty state, used wherever a pane can legitimately have nothing to show.
 ///
-/// Its own view because every pane needs one and because a zero-row history has to render as
-/// a sentence rather than as a screen full of zeros, which reads as a broken app.
+/// `ContentUnavailableView` rather than a stack of a symbol and two labels. It is the
+/// component the system uses for this, so the symbol size, the spacing, the text styles and
+/// the way it centres itself in a resizing pane are all the platform's rather than this
+/// app's approximation of them, and the symbol is correctly hidden from VoiceOver instead of
+/// being read out as decoration.
 struct EmptyPane: View {
     let symbol: String
     let title: String
     let detail: String
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: symbol)
-                .font(.system(size: 28, weight: .light))
-                .foregroundStyle(.tertiary)
-            Text(title).font(.headline)
+        ContentUnavailableView {
+            Label(title, systemImage: symbol)
+        } description: {
             Text(detail)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 340)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
