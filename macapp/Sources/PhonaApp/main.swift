@@ -616,6 +616,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `NSApp.activate(ignoringOtherApps:)` is not optional here. When `show_in_dock` is off
     /// the app runs `.accessory`, and an accessory app that orders a window front without
     /// activating leaves it behind whatever was in front, with no menu bar of its own.
+    private static let mainWindowAutosaveName = "PhonaMainWindow"
+
     @objc private func openMainWindow() {
         if let window = mainWindow {
             historyStore.reload()
@@ -639,9 +641,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = NSHostingView(
             rootView: MainWindowView(store: historyStore,
                                      flag: { [weak self] in self?.flagLastDictation() }))
-        window.center()
+        /// `NSHostingView` reports the SwiftUI content's intrinsic size and AppKit sizes the
+        /// window to it, which silently overrode the 980x660 above. The home pane's chart and
+        /// sections add up to about 1541pt, so the window opened 1541pt tall on a 1290pt
+        /// screen and autosaved itself off-screen at y=-251, which is both "it takes the whole
+        /// vertical space" and "nothing appears when I open it".
+        ///
+        /// Every pane scrolls, so the window is entitled to pick its own size and let the
+        /// content fit inside it rather than the other way round.
+        window.setContentSize(NSSize(width: 980, height: 660))
+
+        /// Restore where it was left, and centre only on a first run, since centring after a
+        /// restore would throw the remembered position away.
+        let hadSavedFrame = UserDefaults.standard
+            .string(forKey: "NSWindow Frame \(Self.mainWindowAutosaveName)") != nil
+        window.setFrameAutosaveName(Self.mainWindowAutosaveName)
+        if !hadSavedFrame { window.center() }
+
+        /// A remembered frame can outlive the display it was saved on, and one saved before
+        /// the line above existed can be larger than any screen. Clamp on the way in so a bad
+        /// value corrects itself instead of persisting.
+        if let screen = window.screen ?? NSScreen.main {
+            let visible = screen.visibleFrame
+            var frame = window.frame
+            frame.size.width = min(frame.width, visible.width)
+            frame.size.height = min(frame.height, visible.height)
+            frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
+            frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
+            if frame != window.frame { window.setFrame(frame, display: false) }
+        }
         window.isReleasedWhenClosed = false
         window.delegate = self
+        /// Logged because the window's own size is what went wrong here and it is not
+        /// otherwise visible after the fact: it opened 1541pt tall on a 1290pt screen and
+        /// autosaved itself off-screen, which reads as the window never appearing.
+        Paths.log("main window opened at \(Int(window.frame.width))x\(Int(window.frame.height))")
         mainWindow = window
         historyStore.reload()
         window.makeKeyAndOrderFront(nil)
