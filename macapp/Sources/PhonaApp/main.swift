@@ -439,17 +439,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hud.dismiss()
     }
 
-    /// Quitting with a dictation in flight must not leave the Mac silent.
-    /// Clicking the Dock icon of an already-running app calls this, and doing nothing here is
-    /// what made the icon look dead: Phona keeps no window open between uses, so there was
-    /// nothing for macOS to bring forward and no handler to open anything.
     /// Opening the app shows the window, not the settings.
     ///
-    /// This opened Settings, which predates there being a window to open. Once one existed
-    /// the only ways to reach it were the menu bar item and Cmd-0, so clicking the Dock icon
-    /// answered "show me Phona" with the preferences pane. Reported three times as "I still
-    /// see the old UI", which is exactly what it looks like: the settings pane is unchanged
-    /// since before the window existed, so the app appears not to have updated at all.
+    /// Clicking the Dock icon of an already-running app calls this, and doing nothing here
+    /// is what made the icon look dead: Phona keeps no window open between uses, so there
+    /// was nothing for macOS to bring forward and no handler to open anything.
+    ///
+    /// It opened Settings, which predates there being a window to open. Once one existed the
+    /// only routes to it were the menu bar item and Cmd-0, so the gesture that means "show
+    /// me Phona" answered with the preferences pane. Reported three times as still seeing
+    /// the old UI, which is what it looks like: the settings pane is unchanged since before
+    /// the window existed, so an app that opens it appears not to have updated at all.
     ///
     /// Settings keeps its own menu item and its own Cmd-comma, which is where a preferences
     /// pane belongs.
@@ -458,6 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// Quitting with a dictation in flight must not leave the Mac silent.
     func applicationWillTerminate(_ notification: Notification) {
         OutputMute.release()
     }
