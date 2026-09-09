@@ -627,7 +627,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.title = "Phona"
-        window.contentMinSize = NSSize(width: 900, height: 620)
+        /// The sidebar is a fixed 210pt, so this is that plus the detail minimum. Kept in
+        /// step with `MainWindowView`'s own floor rather than guessed: a window minimum
+        /// larger than the view needs is indistinguishable from a window that cannot be
+        /// resized, which is how the 900x620 pair was reported.
+        window.contentMinSize = NSSize(width: 770, height: 340)
+        /// Remember whatever size the speaker drags it to. Without this the window came
+        /// back at 980x660 on every launch, so shrinking it never stuck.
+        window.setFrameAutosaveName("PhonaMainWindow")
         window.contentView = NSHostingView(
             rootView: MainWindowView(store: historyStore,
                                      flag: { [weak self] in self?.flagLastDictation() }))

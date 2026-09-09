@@ -48,7 +48,13 @@ struct MainWindowView: View {
             sidebar
         } detail: {
             detail
-                .frame(minWidth: 690, minHeight: 620)
+                /// Low enough to put the window on half a laptop screen. It was 690x620,
+                /// which with the 210pt sidebar made the window refuse to go under 900x620
+                /// and read as a window with no way to shrink it.
+                ///
+                /// Nothing clips at this size. Every pane owns its own scrolling container,
+                /// so the floor only has to keep the content legible rather than whole.
+                .frame(minWidth: 560, minHeight: 320)
         }
         .navigationTitle("Phona")
         .navigationSubtitle(pane.title)
