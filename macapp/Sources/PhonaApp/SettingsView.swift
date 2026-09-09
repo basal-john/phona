@@ -41,9 +41,15 @@ struct SettingsView: View {
     /// Lets the window rename itself as the pane changes, which is what a settings window
     /// on this platform does. The view cannot reach its own `NSWindow` from here, and
     /// `navigationTitle` does not rename an `NSWindow` hosting a plain view.
-    var setWindowTitle: (String) -> Void = { _ in }
+    var setWindowTitle: (String) -> Void
 
-    @State private var pane: SettingsPane = .general
+    /// Seeded in `init` rather than restored in `onAppear`.
+    ///
+    /// `onAppear` runs after the `TabView` has already laid out its first tab, and moving
+    /// the selection at that point retitled the window and persisted the choice without
+    /// moving the tab: the window said "Words Settings" over the General pane, with General
+    /// still lit in the switcher. The selection has to be right before the first render.
+    @State private var pane: SettingsPane
     @State private var dictionary: String = ""
     @State private var replacements: String = ""
     @State private var launchAtLogin: Bool = false
@@ -62,6 +68,13 @@ struct SettingsView: View {
     @State private var statusIsFailure = false
     @State private var loaded: EngineSettings?
 
+    init(setWindowTitle: @escaping (String) -> Void = { _ in }) {
+        self.setWindowTitle = setWindowTitle
+        let stored = Settings.string(SettingsPane.storageKey)
+            .flatMap(SettingsPane.init(rawValue:)) ?? .general
+        _pane = State(initialValue: stored)
+    }
+
     /// The three panes, and nothing else.
     ///
     /// The apply control used to sit in a bar along the bottom of the window, which is the
@@ -77,20 +90,7 @@ struct SettingsView: View {
     /// because they are what the switcher would use if this app ever moves to a SwiftUI
     /// `Settings` scene, and because they already appear in the View menu.
     var body: some View {
-        TabView(selection: $pane) {
-            general
-                .tabItem { Label(SettingsPane.general.title,
-                                 systemImage: SettingsPane.general.symbol) }
-                .tag(SettingsPane.general)
-            dictation
-                .tabItem { Label(SettingsPane.dictation.title,
-                                 systemImage: SettingsPane.dictation.symbol) }
-                .tag(SettingsPane.dictation)
-            words
-                .tabItem { Label(SettingsPane.words.title,
-                                 systemImage: SettingsPane.words.symbol) }
-                .tag(SettingsPane.words)
-        }
+        panes
         /// A width, and no height. The window sizes itself to whichever pane is showing,
         /// which is why its zoom button is of no use and why it does not have one. A fixed
         /// 520x560 made the General pane, which has five controls, exactly as tall as the
@@ -98,16 +98,49 @@ struct SettingsView: View {
         /// empty.
         .frame(width: 540)
         .onAppear {
-            if let saved = Settings.string(SettingsPane.storageKey),
-               let restored = SettingsPane(rawValue: saved) {
-                pane = restored
-            }
             setWindowTitle(pane.windowTitle)
             load()
         }
         .onChange(of: pane) { _, chosen in
             Settings.set(SettingsPane.storageKey, chosen.rawValue)
             setWindowTitle(chosen.windowTitle)
+        }
+    }
+
+    /// The three panes.
+    ///
+    /// `Tab(value:)` where the OS has it, because the classic `.tabItem` and `.tag` pair
+    /// with an explicit `selection` does not keep the rendered tab in step with the binding
+    /// on macOS 26. The older form is kept for macOS 14, which is still a supported target.
+    @ViewBuilder
+    private var panes: some View {
+        if #available(macOS 15, *) {
+            TabView(selection: $pane) {
+                Tab(SettingsPane.general.title,
+                    systemImage: SettingsPane.general.symbol,
+                    value: SettingsPane.general) { general }
+                Tab(SettingsPane.dictation.title,
+                    systemImage: SettingsPane.dictation.symbol,
+                    value: SettingsPane.dictation) { dictation }
+                Tab(SettingsPane.words.title,
+                    systemImage: SettingsPane.words.symbol,
+                    value: SettingsPane.words) { words }
+            }
+        } else {
+            TabView(selection: $pane) {
+                general
+                    .tabItem { Label(SettingsPane.general.title,
+                                     systemImage: SettingsPane.general.symbol) }
+                    .tag(SettingsPane.general)
+                dictation
+                    .tabItem { Label(SettingsPane.dictation.title,
+                                     systemImage: SettingsPane.dictation.symbol) }
+                    .tag(SettingsPane.dictation)
+                words
+                    .tabItem { Label(SettingsPane.words.title,
+                                     systemImage: SettingsPane.words.symbol) }
+                    .tag(SettingsPane.words)
+            }
         }
     }
 

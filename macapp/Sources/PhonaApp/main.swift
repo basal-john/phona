@@ -539,12 +539,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hosting = NSHostingView(
             rootView: SettingsView(setWindowTitle: { [weak window] title in
                 window?.title = title
+                /// And re-fit, because the panes are different heights and the window is
+                /// supposed to be the height of the one on screen. Setting the content
+                /// size once at open was not enough: the General pane is 254pt and the
+                /// Words pane, which is two text editors, needs more than twice that, so
+                /// switching to it left the editors squeezed into a General-sized window.
+                ///
+                /// On the next tick, because SwiftUI has not laid the new pane out yet
+                /// when this fires and `fittingSize` would still describe the old one.
+                DispatchQueue.main.async {
+                    guard let window, let content = window.contentView else { return }
+                    let fitted = content.fittingSize
+                    guard fitted.height > 0 else { return }
+                    window.setContentSize(fitted)
+                }
             }))
         window.contentView = hosting
-        /// Unlike the main window, this one is meant to take its height from its content.
-        /// The default `sizingOptions` already ask AppKit to do that as the pane changes;
-        /// this is the first fit, so it opens at the right height rather than resizing
-        /// itself a frame later.
+        /// The first fit, so it opens at the right height rather than resizing itself a
+        /// frame later.
         window.setContentSize(hosting.fittingSize)
         window.center()
         window.isReleasedWhenClosed = false
