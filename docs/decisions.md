@@ -580,8 +580,9 @@ real grants. That gap is real and worth knowing rather than papering over.
 
 The window was built against an older macOS and it showed. It painted its own version of the
 system's grouped container, a fill in `controlBackgroundColor` inside an 8pt rounded
-rectangle with a quaternary stroke, in eleven places. It set its own point sizes, including
-body text at 9.5, 10 and 10.5pt. It upper-cased every section header. It built a search field
+rectangle with a quaternary stroke, in five places, across sixteen hand-drawn rounded
+rectangles in all. It set its own point sizes in twenty-one places, including body text at
+9.5, 10 and 10.5pt. It upper-cased seven section headers. It built a search field
 out of a `TextField`, a magnifying-glass image and a rounded rectangle. None of that was
 wrong when it was written, and all of it was wrong by the time the platform's own containers
 grew a larger radius, its lists and forms stopped rendering headers in small capitals, and
@@ -593,8 +594,10 @@ So the parallel design system is gone and the components underneath it are the p
 for the search, `HSplitView` for the History columns and `Capsule` for the chips. This is
 worth less as a change of appearance than as a change of who maintains it: Reduce
 Transparency, Increase Contrast, the accent colour, the sidebar icon size and the next
-release's corner radius are now the system's problem rather than eleven copies of this app's
-guess at them.
+release's corner radius are now the system's problem rather than sixteen copies of this
+app's guess at them. Counted after the change: no `textCase(.uppercase)`, no
+`strokeBorder(.quaternary)`, and no `font(.system(size:))` outside two named display sizes
+for the one headline figure.
 
 Three things came out of it that were not cosmetic.
 
