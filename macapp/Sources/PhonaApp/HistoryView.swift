@@ -133,6 +133,11 @@ struct HistoryView: View {
             Label(filter.title, systemImage: filter.symbol)
         }
         .menuStyle(.button)
+        /// A toolbar draws a menu button's label icon-only by default, which leaves this one
+        /// as a tray glyph and a disclosure arrow: the reader cannot tell what the history
+        /// is filtered to without opening it. The whole point of the control is that the
+        /// current filter is legible at rest.
+        .labelStyle(.titleAndIcon)
         .fixedSize()
         .help("Show only some of the history")
     }
