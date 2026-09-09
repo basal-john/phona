@@ -2364,6 +2364,27 @@ def test_one_unreadable_line_costs_neither_its_file_nor_the_archives_after_it(tm
     assert [r["text"] for r in history_file.read(tmp_path)] == ["kept", "live"]
 
 
+def test_a_corrupt_archive_does_not_cost_the_archives_after_it(tmp_path):
+    """`read_text` raises `UnicodeDecodeError`, which is a `ValueError` and so escaped the
+    guard entirely. One bad byte in one old archive took `phona history` down with it.
+    """
+    (tmp_path / "history.jsonl.1").write_text(json.dumps(_row("2026-01-01T09:00:00", "kept")) + "\n")
+    (tmp_path / "history.jsonl.2").write_bytes(b"\xff\xfe not utf 8 \x80\n")
+    (tmp_path / "history.jsonl").write_text(json.dumps(_row("2026-03-01T09:00:00", "live")) + "\n")
+
+    assert [r["text"] for r in history_file.read(tmp_path)] == ["kept", "live"]
+
+
+def test_a_row_survives_one_bad_byte_inside_an_otherwise_valid_line(tmp_path):
+    """Dropping the dictation would lose more than the character does."""
+    good = json.dumps(_row("2026-01-01T09:00:00", "caf")).encode()
+    (tmp_path / "history.jsonl").write_bytes(good.replace(b'"caf"', b'"caf\xe9"') + b"\n")
+
+    rows = history_file.read(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["text"].startswith("caf")
+
+
 def test_no_history_at_all_reads_as_no_rows(tmp_path):
     assert history_file.paths(tmp_path) == []
     assert history_file.read(tmp_path) == []

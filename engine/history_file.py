@@ -40,20 +40,25 @@ def paths(base, name=LIVE_NAME):
 def read(base, name=LIVE_NAME):
     """Every history row under `base`, in the order it was written.
 
-    A line that will not parse is skipped rather than costing the rest of the file it sits
-    in, and a file that will not open is skipped rather than costing the archives after it.
+    Read a line at a time rather than whole, because the archives are kept forever and the
+    record is the one thing here that grows without bound.
+
+    Nothing one archive can contain may cost the archives after it. A file that will not
+    open is skipped. A byte that is not valid UTF-8 becomes a replacement character instead
+    of raising, which `read_text` would have done for the whole file, and the line it sits
+    on is then kept if it still parses and skipped if it does not.
     """
     rows = []
     for path in paths(base, name):
         try:
-            text = path.read_text()
+            with path.open(encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
         except OSError:
             continue
-        for line in text.splitlines():
-            if not line.strip():
-                continue
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
     return rows
