@@ -49,10 +49,11 @@ import sys
 import time
 from pathlib import Path
 
+import history_file
+
 BASE = Path(os.environ.get("PHONA_HOME") or Path.home() / ".local/share/phona")
 SOCK = BASE / "phonad.sock"
 LOG = BASE / "phonad.log"
-HISTORY = BASE / "history.jsonl"
 CONFIG = BASE / "config.json"
 DAEMON = BASE / "phonad.py"
 PYTHON = BASE / "venv/bin/python"
@@ -456,15 +457,13 @@ def paste_at_cursor(text, restore=True):
 
 
 def load_history():
-    if not HISTORY.exists():
-        return []
-    entries = []
-    for line in HISTORY.read_text().splitlines():
-        try:
-            entries.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return entries
+    """The whole record, archives first, not just the live file.
+
+    `phonad.rotate_history` archives the history once it passes its size limit, so reading
+    `history.jsonl` alone would drop everything written before the first rotation and still
+    print a count as though nothing were missing.
+    """
+    return history_file.read(BASE)
 
 
 def show_history(count, search=None, since=None, export=None, plain=False, as_json=False):

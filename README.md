@@ -348,10 +348,10 @@ surprise if nobody says it: the history is a plain text record of everything you
 dictated, readable by anything running as you. Nothing is encrypted and nothing is uploaded.
 
 The record is not one file. Once `history.jsonl` passes 8 MB the engine renames it to
-`history.jsonl.1`, then `.2`, and keeps every one of them forever. The window reads the whole
-set, so deleting only `history.jsonl` erases nothing you can see: the lifetime totals and the
-full text of old dictations all come back. To actually erase the record, delete the archives
-with it:
+`history.jsonl.1`, then `.2`, and keeps every one of them forever. The window, `phona
+history` and the audit all read the whole set, so deleting only `history.jsonl` erases nothing
+you can see: the lifetime totals and the full text of old dictations all come back. To
+actually erase the record, delete the archives with it:
 
 ```bash
 rm ~/.local/share/phona/history.jsonl*

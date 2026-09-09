@@ -34,7 +34,7 @@ def png_first_pixel_alpha(path):
 def test_installer_copies_every_engine_module():
     """install.sh once shipped without audit.py, so a fresh install had no audit."""
     script = (ROOT / "install.sh").read_text()
-    for module in ("phonad.py", "client.py", "audit.py"):
+    for module in ("phonad.py", "client.py", "audit.py", "history_file.py"):
         assert module in script, f"install.sh does not install {module}"
 
 

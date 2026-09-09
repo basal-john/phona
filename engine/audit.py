@@ -36,8 +36,9 @@ import re
 import socket
 import sys
 
+import history_file
+
 BASE = pathlib.Path(os.environ.get("PHONA_HOME") or pathlib.Path.home() / ".local/share/phona")
-HISTORY = BASE / "history.jsonl"
 CORRECTIONS = BASE / "corrections.jsonl"
 CONFIG = BASE / "config.json"
 SOCK = BASE / "phonad.sock"
@@ -301,7 +302,7 @@ def collect(days):
     Proposals are limited to single words and short phrases. A longer replacement is too
     blunt an instrument and would fire on text the user never meant it to touch.
     """
-    history = [h for h in read_jsonl(HISTORY) if within(h, days)]
+    history = [h for h in history_file.read(BASE) if within(h, days)]
     corrections = [c for c in read_jsonl(CORRECTIONS) if within(c, days, "flagged_at")]
     findings = deterministic_findings(history, corrections)
     findings += inference_findings(history)
