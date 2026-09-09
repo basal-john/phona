@@ -2,12 +2,21 @@ import AppKit
 import PhonaCore
 import SwiftUI
 
-/// The four things the window can show.
+/// The five things the window can show.
 enum Pane: String, Hashable, CaseIterable, Identifiable {
     case home
     case history
     case dictionary
     case models
+    /// Settings, which used to be a window of its own opened from the App menu.
+    ///
+    /// The platform's own guidance puts settings in a separate window, and this app moved
+    /// them into the sidebar deliberately: the sidebar already lists everything else the
+    /// window can show, and Settings was the one thing that needed a menu instead.
+    ///
+    /// There is still exactly one settings surface. Command-comma selects this pane rather
+    /// than opening a second copy of the same form.
+    case settings
 
     var id: String { rawValue }
 
@@ -17,6 +26,7 @@ enum Pane: String, Hashable, CaseIterable, Identifiable {
         case .history: return "History"
         case .dictionary: return "Dictionary"
         case .models: return "Models"
+        case .settings: return "Settings"
         }
     }
 
@@ -26,21 +36,23 @@ enum Pane: String, Hashable, CaseIterable, Identifiable {
         case .history: return "clock"
         case .dictionary: return "book.closed"
         case .models: return "slider.horizontal.3"
+        case .settings: return "gearshape"
         }
     }
 
-    /// Command-1 through Command-4, in sidebar order.
+    /// Command-1 to Command-4 in sidebar order, and Command-comma for Settings, which is
+    /// the shortcut every Mac app uses for it.
     ///
-    /// The platform expects a keyboard route to every view a window can show, and these are
-    /// the shortcuts every other Mac app with a four-item sidebar uses. They are declared
-    /// here rather than in the menu builder so the sidebar order and the shortcut order
-    /// cannot drift apart.
+    /// The platform expects a keyboard route to every view a window can show. They are
+    /// declared here rather than in the menu builder, so the sidebar order and the
+    /// shortcut order cannot drift apart.
     var shortcut: Character {
         switch self {
         case .home: return "1"
         case .history: return "2"
         case .dictionary: return "3"
         case .models: return "4"
+        case .settings: return ","
         }
     }
 }
@@ -110,10 +122,19 @@ struct MainWindowView: View {
     /// menu instead, where it is reachable from every pane and cannot be hidden by a drag.
     private var sidebar: some View {
         List(selection: $model.pane) {
-            ForEach(Pane.allCases) { item in
-                Label(item.title, systemImage: item.symbol)
-                    .badge(badge(for: item))
-                    .tag(item)
+            /// The four views of the record, then Settings under a separator. Settings
+            /// changes what the app does rather than showing what it has done, and a
+            /// reader scanning for their history should not have to read past it.
+            Section {
+                ForEach(Pane.allCases.filter { $0 != .settings }) { item in
+                    Label(item.title, systemImage: item.symbol)
+                        .badge(badge(for: item))
+                        .tag(item)
+                }
+            }
+            Section {
+                Label(Pane.settings.title, systemImage: Pane.settings.symbol)
+                    .tag(Pane.settings)
             }
         }
         .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 280)
@@ -130,6 +151,8 @@ struct MainWindowView: View {
             DictionaryView(store: store)
         case .models:
             ModelsView(store: store)
+        case .settings:
+            SettingsView()
         }
     }
 

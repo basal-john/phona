@@ -2,54 +2,8 @@ import PhonaCore
 import ServiceManagement
 import SwiftUI
 
-/// Which pane the settings window is showing.
-///
-/// A named type rather than a tag on the tab items, so the choice can be written down and
-/// read back. The platform expects a settings window to reopen on the pane it was left on,
-/// because people adjust related settings more than once.
-enum SettingsPane: String, CaseIterable, Identifiable {
-    case general
-    case dictation
-    case words
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .general: return "General"
-        case .dictation: return "Dictation"
-        case .words: return "Words"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .general: return "gearshape"
-        case .dictation: return "waveform"
-        case .words: return "text.book.closed"
-        }
-    }
-
-    /// The window title while this pane is showing.
-    var windowTitle: String { "\(title) Settings" }
-
-    static let storageKey = "settings_pane"
-}
-
 /// Real fields for the settings that previously meant hand-editing config.json.
 struct SettingsView: View {
-    /// Lets the window rename itself as the pane changes, which is what a settings window
-    /// on this platform does. The view cannot reach its own `NSWindow` from here, and
-    /// `navigationTitle` does not rename an `NSWindow` hosting a plain view.
-    var setWindowTitle: (String) -> Void
-
-    /// Seeded in `init` rather than restored in `onAppear`.
-    ///
-    /// `onAppear` runs after the `TabView` has already laid out its first tab, and moving
-    /// the selection at that point retitled the window and persisted the choice without
-    /// moving the tab: the window said "Words Settings" over the General pane, with General
-    /// still lit in the switcher. The selection has to be right before the first render.
-    @State private var pane: SettingsPane
     @State private var dictionary: String = ""
     @State private var replacements: String = ""
     @State private var launchAtLogin: Bool = false
@@ -68,80 +22,118 @@ struct SettingsView: View {
     @State private var statusIsFailure = false
     @State private var loaded: EngineSettings?
 
-    init(setWindowTitle: @escaping (String) -> Void = { _ in }) {
-        self.setWindowTitle = setWindowTitle
-        let stored = Settings.string(SettingsPane.storageKey)
-            .flatMap(SettingsPane.init(rawValue:)) ?? .general
-        _pane = State(initialValue: stored)
-    }
-
-    /// The three panes, and nothing else.
+    /// Every setting, in one scrolling form.
     ///
-    /// The apply control used to sit in a bar along the bottom of the window, which is the
-    /// one place on a Mac a control should not be: people drag a window so its bottom edge
-    /// leaves the screen, and the button that makes a setting take effect went with it. It
-    /// is now a notice at the top of the pane whose fields need it, where it appears only
-    /// when there is something to apply and cannot be dragged out of view.
+    /// This was three tabs in a window of its own, opened from the App menu, which is where
+    /// the platform puts settings. It is a pane of the main window instead because that is
+    /// what its owner asked for: the sidebar already lists everything else the app can show
+    /// and Settings was the one thing missing from it.
     ///
-    /// The tab items carry symbols. macOS draws a hosted `TabView` as a segmented control
-    /// in the title bar and shows the titles without them, which still satisfies what the
-    /// platform asks of a settings window: the switcher is not customisable, it is always
-    /// visible, and it always shows which pane is active. The symbols are declared anyway,
-    /// because they are what the switcher would use if this app ever moves to a SwiftUI
-    /// `Settings` scene, and because they already appear in the View menu.
+    /// One form rather than tabs inside a pane. A segmented switcher nested inside a
+    /// sidebar selection is two levels of navigation for three groups of controls, and the
+    /// whole form is shorter than one screen of History.
+    ///
+    /// Capped at 640pt and centred. A grouped form stretched across an 840pt detail pane
+    /// puts its labels and its controls at opposite ends of the window, which is a long way
+    /// for the eye to travel to check whether a toggle is on.
     var body: some View {
-        panes
-        /// A width, and no height. The window sizes itself to whichever pane is showing,
-        /// which is why its zoom button is of no use and why it does not have one. A fixed
-        /// 520x560 made the General pane, which has five controls, exactly as tall as the
-        /// Words pane, which has two text editors, and left the General pane two thirds
-        /// empty.
-        .frame(width: 540)
-        .onAppear {
-            setWindowTitle(pane.windowTitle)
-            load()
-        }
-        .onChange(of: pane) { _, chosen in
-            Settings.set(SettingsPane.storageKey, chosen.rawValue)
-            setWindowTitle(chosen.windowTitle)
-        }
-    }
+        Form {
+            pendingRestart
 
-    /// The three panes.
-    ///
-    /// `Tab(value:)` where the OS has it, because the classic `.tabItem` and `.tag` pair
-    /// with an explicit `selection` does not keep the rendered tab in step with the binding
-    /// on macOS 26. The older form is kept for macOS 14, which is still a supported target.
-    @ViewBuilder
-    private var panes: some View {
-        if #available(macOS 15, *) {
-            TabView(selection: $pane) {
-                Tab(SettingsPane.general.title,
-                    systemImage: SettingsPane.general.symbol,
-                    value: SettingsPane.general) { general }
-                Tab(SettingsPane.dictation.title,
-                    systemImage: SettingsPane.dictation.symbol,
-                    value: SettingsPane.dictation) { dictation }
-                Tab(SettingsPane.words.title,
-                    systemImage: SettingsPane.words.symbol,
-                    value: SettingsPane.words) { words }
+            Section("Output") {
+                Picker("When done", selection: $outputAction) {
+                    Text("Insert at cursor").tag(OutputAction.insert)
+                    Text("Copy to clipboard").tag(OutputAction.clipboard)
+                    Text("Insert and copy").tag(OutputAction.both)
+                }
+                .pickerStyle(.radioGroup)
+                .onChange(of: outputAction) { _, wanted in
+                    Settings.set("output_action", wanted.rawValue)
+                }
+                Text(outputExplanation)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
-        } else {
-            TabView(selection: $pane) {
-                general
-                    .tabItem { Label(SettingsPane.general.title,
-                                     systemImage: SettingsPane.general.symbol) }
-                    .tag(SettingsPane.general)
-                dictation
-                    .tabItem { Label(SettingsPane.dictation.title,
-                                     systemImage: SettingsPane.dictation.symbol) }
-                    .tag(SettingsPane.dictation)
-                words
-                    .tabItem { Label(SettingsPane.words.title,
-                                     systemImage: SettingsPane.words.symbol) }
-                    .tag(SettingsPane.words)
+
+            Section("Phona itself") {
+                Toggle("Show Phona in the Dock", isOn: $showInDock)
+                    .onChange(of: showInDock) { _, wanted in
+                        Settings.set("show_in_dock", wanted)
+                        NSApp.setActivationPolicy(wanted ? .regular : .accessory)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
+                Toggle("Open Phona at login", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { _, wanted in
+                        do {
+                            if wanted { try SMAppService.mainApp.register() }
+                            else { try SMAppService.mainApp.unregister() }
+                        } catch {
+                            status = error.localizedDescription
+                            statusIsFailure = true
+                        }
+                    }
+            }
+
+            Section("While dictating") {
+                Toggle("Mute other audio", isOn: $muteOthers)
+                    .onChange(of: muteOthers) { _, wanted in
+                        Settings.set("mute_others", wanted)
+                    }
+                Text("Music, a video or a voice on a call reaches the microphone through the "
+                     + "room, and the transcriber cannot tell it apart from you. The output "
+                     + "device is muted once capture starts and restored when you let go.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Layout") {
+                Toggle("Act on spoken layout commands", isOn: $spokenLayout)
+                Text("Say \"new paragraph\", \"new line\" or \"bullet point\" as a sentence "
+                     + "of its own and it becomes a real break. Off means those words are "
+                     + "typed out.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Chat apps") {
+                Toggle("Drop the closing full stop", isOn: $casualInChat)
+                    .onChange(of: casualInChat) { _, wanted in
+                        Settings.set("casual_in_chat", wanted)
+                    }
+                Text("In Slack, Discord, WhatsApp, Teams, Messages and the same sites in a "
+                     + "browser, a message ends without a full stop, the way a typed one "
+                     + "does. Stops between sentences, question marks, exclamation marks and "
+                     + "lists are left alone.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Vocabulary") {
+                Text("Words the transcriber tends to mangle. One per line.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $dictionary)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(height: 120)
+                Toggle("Bias the transcriber toward these words", isOn: $biasVocabulary)
+                Text("Improves rare names, at the cost of occasionally inventing words in silence.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Replacements") {
+                Text("Applied literally, before the layout pass. One per line, as wrong = right.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $replacements)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(height: 120)
             }
         }
+        .formStyle(.grouped)
+        .frame(maxWidth: 640)
+        .frame(maxWidth: .infinity)
+        .onAppear(perform: load)
     }
 
     /// The notice that a change is waiting on an engine restart.
@@ -197,113 +189,8 @@ struct SettingsView: View {
             + "before they take effect."
     }
 
-    private var general: some View {
-        Form {
-            pendingRestart
-            Section {
-                Picker("When done", selection: $outputAction) {
-                    Text("Insert at cursor").tag(OutputAction.insert)
-                    Text("Copy to clipboard").tag(OutputAction.clipboard)
-                    Text("Insert and copy").tag(OutputAction.both)
-                }
-                .pickerStyle(.radioGroup)
-                .onChange(of: outputAction) { _, wanted in
-                    Settings.set("output_action", wanted.rawValue)
-                }
-                Text(outputExplanation)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
 
-            Section {
-                Toggle("Show Phona in the Dock", isOn: $showInDock)
-                    .onChange(of: showInDock) { _, wanted in
-                        Settings.set("show_in_dock", wanted)
-                        NSApp.setActivationPolicy(wanted ? .regular : .accessory)
-                        NSApp.activate(ignoringOtherApps: true)
-                    }
-                Toggle("Open Phona at login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { _, wanted in
-                        do {
-                            if wanted { try SMAppService.mainApp.register() }
-                            else { try SMAppService.mainApp.unregister() }
-                        } catch {
-                            status = error.localizedDescription
-                            statusIsFailure = true
-                        }
-                    }
-            }
-        }
-        .formStyle(.grouped)
-    }
 
-    private var dictation: some View {
-        Form {
-            pendingRestart
-            Section("While dictating") {
-                Toggle("Mute other audio", isOn: $muteOthers)
-                    .onChange(of: muteOthers) { _, wanted in
-                        Settings.set("mute_others", wanted)
-                    }
-                Text("Music, a video or a voice on a call reaches the microphone through the "
-                     + "room, and the transcriber cannot tell it apart from you. The output "
-                     + "device is muted once capture starts and restored when you let go.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Layout") {
-                Toggle("Act on spoken layout commands", isOn: $spokenLayout)
-                Text("Say \"new paragraph\", \"new line\" or \"bullet point\" as a sentence "
-                     + "of its own and it becomes a real break. Off means those words are "
-                     + "typed out.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Chat apps") {
-                Toggle("Drop the closing full stop", isOn: $casualInChat)
-                    .onChange(of: casualInChat) { _, wanted in
-                        Settings.set("casual_in_chat", wanted)
-                    }
-                Text("In Slack, Discord, WhatsApp, Teams, Messages and the same sites in a "
-                     + "browser, a message ends without a full stop, the way a typed one "
-                     + "does. Stops between sentences, question marks, exclamation marks and "
-                     + "lists are left alone.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private var words: some View {
-        Form {
-            pendingRestart
-            Section("Vocabulary") {
-                Text("Words the transcriber tends to mangle. One per line.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $dictionary)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(height: 120)
-                Toggle("Bias the transcriber toward these words", isOn: $biasVocabulary)
-                Text("Improves rare names, at the cost of occasionally inventing words in silence.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Replacements") {
-                Text("Applied literally, before the layout pass. One per line, as wrong = right.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $replacements)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(height: 120)
-            }
-        }
-        .formStyle(.grouped)
-    }
 
     private var outputExplanation: String {
         switch outputAction {

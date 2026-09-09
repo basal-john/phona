@@ -10,7 +10,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let recorder = Recorder()
     private let hotkeys = HotkeyMonitor()
     private var levelTimer: Timer?
-    private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
     private var mainWindow: NSWindow?
 
@@ -523,46 +522,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
+    /// Show the settings pane.
+    ///
+    /// Settings used to be a window of its own, built here the way `openMainWindow` builds
+    /// the main one. It is a pane of the main window now, so this selects it rather than
+    /// opening a second copy of the same form. The App menu keeps its item and
+    /// Command-comma keeps working, which is what anyone reaching for either expects.
     @objc private func openSettings() {
-        if let window = settingsWindow {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        /// No minimise and no zoom button, because the window sizes itself to whichever
-        /// pane is showing and Command-comma reopens it in a keystroke, so neither control
-        /// has anything to do here.
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 540, height: 400),
-            styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Phona Settings"
-        let hosting = NSHostingView(
-            rootView: SettingsView(setWindowTitle: { [weak window] title in
-                window?.title = title
-                /// And re-fit, because the panes are different heights and the window is
-                /// supposed to be the height of the one on screen. Setting the content
-                /// size once at open was not enough: the General pane is 254pt and the
-                /// Words pane, which is two text editors, needs more than twice that, so
-                /// switching to it left the editors squeezed into a General-sized window.
-                ///
-                /// On the next tick, because SwiftUI has not laid the new pane out yet
-                /// when this fires and `fittingSize` would still describe the old one.
-                DispatchQueue.main.async {
-                    guard let window, let content = window.contentView else { return }
-                    let fitted = content.fittingSize
-                    guard fitted.height > 0 else { return }
-                    window.setContentSize(fitted)
-                }
-            }))
-        window.contentView = hosting
-        /// The first fit, so it opens at the right height rather than resizing itself a
-        /// frame later.
-        window.setContentSize(hosting.fittingSize)
-        window.center()
-        window.isReleasedWhenClosed = false
-        settingsWindow = window
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        windowModel.pane = .settings
+        openMainWindow()
     }
 
     /// Flag the last dictation, and offer to capture what was actually said.
@@ -640,8 +608,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The window that replaced the history file and the README.
     ///
-    /// Built the way `openSettings` builds its window, for the same reason: nothing in this
-    /// app has a `Scene`, so there is no `WindowGroup` and no `openWindow` to reach for. The
+    /// Built by hand because nothing in this app has a `Scene`, so there is no
+    /// `WindowGroup` and no `openWindow` to reach for. The
     /// window is kept rather than released so a second open restores the pane and the
     /// selection the reader left behind.
     ///
@@ -791,11 +759,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         /// A View menu, because the window's toolbar is not allowed to be the only route to
         /// a command. A toolbar can be hidden, and on this platform the expectation is a
-        /// keyboard route to every view a window can show, so the four panes get Command-1
-        /// through Command-4 and the five history filters get named items.
+        /// keyboard route to every view a window can show, so the four record panes get
+        /// Command-1 through Command-4 and the five history filters get named items.
+        ///
+        /// Settings is left out on purpose, even though it is a pane like the others. Its
+        /// item belongs in the App menu, which already has it on Command-comma, and listing
+        /// it twice would put the same key equivalent on two menu items.
         let viewItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
-        for pane in Pane.allCases {
+        for pane in Pane.allCases where pane != .settings {
             let item = NSMenuItem(title: pane.title,
                                   action: #selector(showPane(_:)),
                                   keyEquivalent: String(pane.shortcut))
@@ -1059,7 +1031,7 @@ extension AppDelegate: NSMenuDelegate {
             menu.addItem(.separator())
         }
         add(menu, "Phona Home...", #selector(openMainWindow), key: "0")
-        add(menu, "Settings...", #selector(openSettings), key: ",")
+        add(menu, "Settings\u{2026}", #selector(openSettings), key: ",")
         add(menu, "Setup and permissions...", #selector(showOnboarding))
         add(menu, "Mark last dictation as wrong...", #selector(flagLastDictation))
         menu.addItem(.separator())

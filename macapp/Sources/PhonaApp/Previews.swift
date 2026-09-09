@@ -83,7 +83,8 @@ enum Previews {
         /// neither of those is visible on Home.
         for (name, pane) in [("window-history", Pane.history),
                              ("window-models", .models),
-                             ("window-dictionary", .dictionary)] {
+                             ("window-dictionary", .dictionary),
+                             ("window-settings", .settings)] {
             let model = WindowModel()
             model.pane = pane
             shot(name: name,
@@ -99,13 +100,7 @@ enum Previews {
              into: directory,
              view: MainWindowView(store: empty, flag: {}))
 
-        /// No size: the settings window takes its height from the pane it is showing, and
-        /// a screenshot that forces one shows an empty half-window that the app never does.
-        shot(name: "settings",
-             appearance: .aqua,
-             size: nil,
-             into: directory,
-             view: SettingsView())
+
 
         /// The capsule on a busy backdrop, which is the only way to see what the material
         /// is doing. Over a flat fill, glass and a plain blur look the same.
