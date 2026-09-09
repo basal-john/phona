@@ -635,9 +635,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         /// larger than the view needs is indistinguishable from a window that cannot be
         /// resized, which is how the 900x620 pair was reported.
         window.contentMinSize = NSSize(width: 770, height: 340)
-        /// Remember whatever size the speaker drags it to. Without this the window came
-        /// back at 980x660 on every launch, so shrinking it never stuck.
-        window.setFrameAutosaveName("PhonaMainWindow")
         window.contentView = NSHostingView(
             rootView: MainWindowView(store: historyStore,
                                      flag: { [weak self] in self?.flagLastDictation() }))
@@ -651,12 +648,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         /// content fit inside it rather than the other way round.
         window.setContentSize(NSSize(width: 980, height: 660))
 
-        /// Restore where it was left, and centre only on a first run, since centring after a
-        /// restore would throw the remembered position away.
-        let hadSavedFrame = UserDefaults.standard
-            .string(forKey: "NSWindow Frame \(Self.mainWindowAutosaveName)") != nil
+        /// Remember whatever size it is dragged to, and restore it.
+        ///
+        /// Called once, and only here, after `setContentSize`. An earlier version also
+        /// called it before the hosting view was installed, which restored the saved frame
+        /// first and let an oversized one survive the resize below it.
+        ///
+        /// `setFrameUsingName` reports whether anything was restored, so the centring is
+        /// conditional without hand-building AppKit's `NSWindow Frame <name>` defaults key,
+        /// which is private to the framework and not ours to depend on. Centring
+        /// unconditionally is what threw the remembered position away before.
         window.setFrameAutosaveName(Self.mainWindowAutosaveName)
-        if !hadSavedFrame { window.center() }
+        if !window.setFrameUsingName(Self.mainWindowAutosaveName) { window.center() }
 
         /// A remembered frame can outlive the display it was saved on, and one saved before
         /// the line above existed can be larger than any screen. Clamp on the way in so a bad
