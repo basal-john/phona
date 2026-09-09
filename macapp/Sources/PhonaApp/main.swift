@@ -698,6 +698,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         home.target = self
         windowMenu.addItem(home)
         windowMenu.addItem(.separator())
+        /// Here rather than under a File menu, where the standard AppKit menu puts it,
+        /// because this app has no files and closing is a window operation. The key
+        /// equivalent is the point: every window it opens is `.closable`, so the red button
+        /// worked while Cmd-W did nothing, which reads as a stuck window, not a thin menu.
+        windowMenu.addItem(withTitle: "Close",
+                           action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         windowMenu.addItem(withTitle: "Minimize",
                            action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom",
