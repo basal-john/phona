@@ -54,6 +54,12 @@ struct SettingsView: View {
     @State private var muteOthers: Bool = true
     @State private var showInDock: Bool = true
     @State private var status: String = ""
+    /// Whether `status` is reporting a save or reporting a fault.
+    ///
+    /// One string carried both, and the notice headlined all of it "Saved", so a login-item
+    /// failure appeared under the word Saved. They are different messages and the reader
+    /// has to be able to tell which one they are looking at.
+    @State private var statusIsFailure = false
     @State private var loaded: EngineSettings?
 
     /// The three panes, and nothing else.
@@ -115,17 +121,13 @@ struct SettingsView: View {
         if needsRestart || !status.isEmpty {
             Section {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Image(systemName: needsRestart
-                          ? "arrow.trianglehead.2.clockwise.rotate.90" : "checkmark.circle")
-                        .foregroundStyle(needsRestart ? .orange : .green)
+                    Image(systemName: noticeSymbol)
+                        .foregroundStyle(noticeTint)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(needsRestart ? "Changes are waiting" : "Saved")
+                        Text(noticeTitle)
                             .font(.headline)
-                        Text(needsRestart
-                             ? "The engine reads these once when it starts, so it has to be "
-                                + "restarted before they take effect."
-                             : status)
+                        Text(noticeDetail)
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -139,6 +141,27 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private var noticeSymbol: String {
+        if needsRestart { return "arrow.trianglehead.2.clockwise.rotate.90" }
+        return statusIsFailure ? "exclamationmark.triangle" : "checkmark.circle"
+    }
+
+    private var noticeTint: Color {
+        if needsRestart { return .orange }
+        return statusIsFailure ? .red : .green
+    }
+
+    private var noticeTitle: String {
+        if needsRestart { return "Changes are waiting" }
+        return statusIsFailure ? "That did not work" : "Saved"
+    }
+
+    private var noticeDetail: String {
+        guard needsRestart else { return status }
+        return "The engine reads these once when it starts, so it has to be restarted "
+            + "before they take effect."
     }
 
     private var general: some View {
@@ -173,6 +196,7 @@ struct SettingsView: View {
                             else { try SMAppService.mainApp.unregister() }
                         } catch {
                             status = error.localizedDescription
+                            statusIsFailure = true
                         }
                     }
             }
@@ -307,16 +331,19 @@ struct SettingsView: View {
         guard let data = try? JSONSerialization.data(
             withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) else {
             status = "Could not write settings."
+            statusIsFailure = true
             return
         }
         do {
             try data.write(to: Paths.config)
         } catch {
             status = error.localizedDescription
+            statusIsFailure = true
             return
         }
 
-        status = "Saved. Restarting the engine…"
+        status = "Restarting the engine…"
+        statusIsFailure = false
         loaded = current
         DispatchQueue.global().async {
             let kill = Process()
@@ -325,7 +352,11 @@ struct SettingsView: View {
             try? kill.run()
             kill.waitUntilExit()
             let ok = DaemonClient.startAndWait()
-            DispatchQueue.main.async { status = ok ? "Saved." : "Saved, but the engine did not restart." }
+            DispatchQueue.main.async {
+                status = ok ? "The engine restarted, so the changes are live."
+                            : "Written to config.json, but the engine did not come back up."
+                statusIsFailure = !ok
+            }
         }
     }
 }

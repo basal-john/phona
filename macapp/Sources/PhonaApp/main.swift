@@ -810,8 +810,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         /// A string selector, because `toggleSidebar:` is declared by AppKit's split view
         /// controller rather than by anything this file can see, and it is sent to the
         /// first responder with no target so whichever window is in front handles it.
-        viewMenu.addItem(withTitle: "Toggle Sidebar",
-                         action: NSSelectorFromString("toggleSidebar:"), keyEquivalent: "s")
+        ///
+        /// Control-Command-S, which is what every other Mac app uses for this. Command-S on
+        /// its own means save, and binding it here would train the wrong reflex in a window
+        /// that has nothing to save.
+        let sidebar = NSMenuItem(title: "Toggle Sidebar",
+                                 action: NSSelectorFromString("toggleSidebar:"),
+                                 keyEquivalent: "s")
+        sidebar.keyEquivalentModifierMask = [.control, .command]
+        viewMenu.addItem(sidebar)
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 
