@@ -75,8 +75,6 @@ final class InsightsTests: XCTestCase {
                          activityDays: activityDays)
     }
 
-    // MARK: - timestamps
-
     /// The engine writes a naive local wall clock with no zone. Reading it as UTC shifts
     /// every row by the machine's offset, which is how a dictation lands on the wrong day.
     func testNaiveTimestampIsParsedInThePassedZone() {
@@ -124,8 +122,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(insights.days[2].day.timeIntervalSince(insights.days[1].day), 23 * 3600)
     }
 
-    // MARK: - what counts as a word, and what counts as speech
-
     /// `text` is what was delivered, `raw` is what the transcriber heard. The correction
     /// stage adds and removes words, so counting `raw` measures the wrong thing.
     func testWordCountUsesDeliveredTextNotWhatWasHeard() {
@@ -159,8 +155,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(voiceRow?.isSpoken, true)
         XCTAssertEqual(typedRow?.isSpoken, false)
     }
-
-    // MARK: - absent is not empty
 
     /// `backend` is present-and-null on a local row and absent on an older one. Both mean the
     /// text stayed on the machine, and neither may crash the parser.
@@ -206,8 +200,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(insights.routeCounts[.cloud], 0)
     }
 
-    // MARK: - unusable lines
-
     /// One bad line must never cost the whole file.
     func testUnusableLinesAreSkippedWithoutLosingTheFile() {
         let contents = """
@@ -225,8 +217,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(rows.count, 2)
         XCTAssertEqual(rows.map(\.wordCount), [2, 3])
     }
-
-    // MARK: - impossible rates
 
     /// The real history contains words delivered with `seconds` at zero, which divides to
     /// infinity. The row still counts toward the totals and is dropped from the rate.
@@ -273,8 +263,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(insights.typingWordsPerMinute, 0)
         XCTAssertEqual(insights.minutesSaved, -1, accuracy: 0.0001)
     }
-
-    // MARK: - time saved
 
     func testMinutesSavedIsTypingTimeMinusSpeakingTime() {
         let insights = compute(voice("2026-09-08T09:00:00", text: words(200), seconds: 60),
@@ -326,8 +314,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertLessThan(insights.minutesSaved, 0)
     }
 
-    // MARK: - latency
-
     /// Nearest-rank over ten spoken rows with total latencies 1 through 10.
     func testLatencyPercentilesAreNearestRank() {
         let lines = (1...10).map {
@@ -363,8 +349,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(insights.latency.p99, 4)
         XCTAssertEqual(insights.latency.slowCount, 0)
     }
-
-    // MARK: - the day window
 
     func testDaysIsAscendingExactlyAsLongAsAskedAndZeroFilled() {
         let insights = compute("""
@@ -409,8 +393,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(insights.today.words, 10)
         XCTAssertEqual(insights.today.spokenSeconds, 20)
     }
-
-    // MARK: - streaks
 
     func testStreakEndingTodayCounts() {
         let insights = compute("""
@@ -478,8 +460,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(insights.bestStreak, 1)
     }
 
-    // MARK: - counts and flags
-
     func testGuardedTrimmedAndFlaggedCounts() {
         let insights = compute("""
         \(voice("2026-09-08T09:00:00", text: "hi", guarded: true, trimmed: false))
@@ -492,8 +472,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(insights.trimmedCount, 2)
         XCTAssertEqual(insights.flaggedCount, 1)
     }
-
-    // MARK: - per model
 
     /// Every row written before this release carries no model identity. Those rows are
     /// skipped rather than pooled under an invented name.
@@ -561,8 +539,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(insights.perModel.map(\.llmModel), ["alpaca", "zephyr"])
     }
 
-    // MARK: - nothing at all
-
     func testEmptyRowsComputeToAValidAllZeroResult() {
         let insights = Insights.compute(rows: [],
                                         typingWordsPerMinute: 40,
@@ -598,8 +574,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(insights.days.count, 1)
         XCTAssertEqual(insights.today.day, date("2026-09-08T00:00:00"))
     }
-
-    // MARK: - archives
 
     /// The engine keeps every archive as `history.jsonl.<n>` with `.1` the oldest. As strings
     /// `.10` sorts between `.1` and `.2`, which silently reorders a decade of history.
