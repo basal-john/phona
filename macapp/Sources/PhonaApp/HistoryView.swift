@@ -15,7 +15,10 @@ private struct Dictation: Identifiable, Equatable {
 }
 
 /// What the speaker is looking for, when they are looking for less than everything.
-private enum HistoryFilter: String, CaseIterable, Identifiable {
+///
+/// Internal rather than private because the filter is a toolbar control, and a toolbar can
+/// be hidden or customised, so every one of these has to also be a menu command.
+enum HistoryFilter: String, CaseIterable, Identifiable {
     case all
     case local
     case cloud
@@ -31,6 +34,16 @@ private enum HistoryFilter: String, CaseIterable, Identifiable {
         case .cloud: return "Left this Mac"
         case .guarded: return "Guard stepped in"
         case .flagged: return "You flagged"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .all: return "tray.full"
+        case .local: return "laptopcomputer"
+        case .cloud: return "arrow.up.circle"
+        case .guarded: return "shield.lefthalf.filled"
+        case .flagged: return "flag"
         }
     }
 
@@ -52,10 +65,12 @@ private enum HistoryFilter: String, CaseIterable, Identifiable {
 /// bad correction, which is the question anyone opening this pane is actually asking.
 struct HistoryView: View {
     @ObservedObject var store: HistoryStore
+    /// Held by the window rather than here, so the same filter is on the toolbar and in the
+    /// View menu and the two cannot disagree.
+    @Binding var filter: HistoryFilter
     let flag: () -> Void
 
     @State private var query = ""
-    @State private var filter: HistoryFilter = .all
     @State private var selection: Int?
 
     var body: some View {
@@ -65,49 +80,66 @@ struct HistoryView: View {
                           title: "Nothing in the history yet",
                           detail: "Every dictation is written to history.jsonl as it is delivered.")
             } else {
-                VStack(spacing: 0) {
-                    header
-                    Divider()
-                    HStack(spacing: 0) {
-                        master.frame(width: 330)
-                        Divider()
-                        detail.frame(maxWidth: .infinity)
-                    }
+                /// A split view rather than an `HStack` of a fixed 330pt list and a divider.
+                /// The platform reflows a split view continuously as the window resizes and
+                /// lets the reader drag the boundary to whichever side they are working on,
+                /// which a hard-coded width cannot do.
+                HSplitView {
+                    master
+                        .frame(minWidth: 260, idealWidth: 340, maxWidth: 480)
+                        .frame(maxHeight: .infinity)
+                    detail
+                        .frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
                 }
+                /// `HSplitView` takes its height from its content unless it is told to
+                /// fill, and a list of two rows is content, so without this the whole pane
+                /// collapsed to a couple of rows floating in the middle of the window.
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .onChange(of: store.loadToken) { selection = nil }
+            }
+        }
+        /// The system search field, in the toolbar where macOS puts search, instead of a
+        /// `TextField` inside a hand-drawn rounded rectangle with its own magnifying glass.
+        /// What that hand-built version did not have: the focus ring, the clear button,
+        /// Command-F, the token and recent-search behaviour, and a VoiceOver role that says
+        /// "search field".
+        .searchable(text: $query,
+                    placement: .toolbar,
+                    prompt: "What was heard or delivered")
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                filterPicker
             }
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("Search what was heard or delivered", text: $query)
-                    .textFieldStyle(.plain)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
-            .frame(width: 250)
-
-            Spacer(minLength: 8)
-
+    /// The filter, as a pull-down that says what it is set to.
+    ///
+    /// A `Picker` in a toolbar draws only the selected item's symbol, which reads as an
+    /// empty control with a mystery glyph in it. A `Menu` with an explicit label shows the
+    /// current filter by name, and a check beside the chosen row, so the control answers
+    /// "what am I looking at" without being opened.
+    private var filterPicker: some View {
+        Menu {
             Picker("Filter", selection: $filter) {
                 ForEach(HistoryFilter.allCases) { option in
-                    Text("\(option.title)  \(Figures.integer(count(for: option)))").tag(option)
+                    Label("\(option.title)  ·  \(Figures.integer(count(for: option)))",
+                          systemImage: option.symbol)
+                        .tag(option)
                 }
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(width: 210)
-            .controlSize(.small)
+            .pickerStyle(.inline)
+        } label: {
+            Label(filter.title, systemImage: filter.symbol)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 9)
+        .menuStyle(.button)
+        /// A toolbar draws a menu button's label icon-only by default, which leaves this one
+        /// as a tray glyph and a disclosure arrow: the reader cannot tell what the history
+        /// is filtered to without opening it. The whole point of the control is that the
+        /// current filter is legible at rest.
+        .labelStyle(.titleAndIcon)
+        .fixedSize()
+        .help("Show only some of the history")
     }
 
     /// Live, and over the whole history rather than over the current search, because a count
@@ -210,20 +242,22 @@ private struct MasterRow: View {
     let flagged: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 7) {
                 Text(Figures.clock(row.ts))
-                    .font(.system(size: 10.5, design: .monospaced))
+                    .font(.caption)
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
-                RouteDot(route: row.route, diameter: 5)
+                RouteDot(route: row.route)
                 RouteBadge(route: row.route)
                 if row.guarded { Chip(text: "guard", tint: Palette.guarded) }
                 if row.trimmed { Chip(text: "trimmed", tint: Palette.slow) }
                 if flagged { Chip(text: "flagged", tint: Palette.flagged) }
                 Spacer(minLength: 4)
                 Text(Figures.latency(row.sttSecs + row.llmSecs))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
             }
             Text(Figures.flatten(row.text))
                 .lineLimit(2)
@@ -270,12 +304,11 @@ private struct DetailPane: View {
     private var stamp: some View {
         HStack(spacing: 8) {
             Text(Figures.stamp(row.ts))
-                .font(.caption2.weight(.semibold))
-                .textCase(.uppercase)
-                .foregroundStyle(.secondary)
+                .font(.headline)
+                .monospacedDigit()
             RouteDot(route: row.route)
             Text(routeLabel)
-                .font(.system(size: 10))
+                .font(.callout)
                 .foregroundStyle(Palette.route(row.route))
         }
     }
@@ -298,39 +331,46 @@ private struct DetailPane: View {
         return "never left this Mac"
     }
 
+    /// One of the three texts, in the container the platform draws for grouped content.
+    ///
+    /// The delivered text is the one a reader came here to copy, so it keeps the text
+    /// background and the primary label colour, and the heard text sits in a plain group
+    /// beside it. Both used to be hand-painted rounded rectangles with a quaternary stroke,
+    /// at a 7pt radius that no longer matches anything the system draws.
     private func block(_ title: String, text: String, emphasised: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.caption2.weight(.semibold))
-                .textCase(.uppercase)
-                .foregroundStyle(.secondary)
+                .font(.headline)
             Text(text)
                 .textSelection(.enabled)
                 .foregroundStyle(emphasised ? .primary : .secondary)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 11)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: emphasised ? .textBackgroundColor : .controlBackgroundColor),
-                            in: RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.quaternary))
+                .padding(12)
+                .background(emphasised ? AnyShapeStyle(.background)
+                                       : AnyShapeStyle(.quaternary.opacity(0.5)),
+                            in: RoundedRectangle(cornerRadius: 10))
         }
     }
 
+    /// A remark about this dictation, in the shape the system uses for an inline notice.
+    ///
+    /// The symbol is decorative here, because the sentence beside it already says what it
+    /// means, so it is hidden from VoiceOver rather than read out as "clock badge
+    /// exclamation mark" before the sentence that explains it.
     private func note(_ text: String, symbol: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: symbol)
                 .foregroundStyle(Palette.slow)
+                .accessibilityHidden(true)
             Text(text)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 11)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.slow.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
-        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Palette.slow.opacity(0.3)))
+        .background(Palette.slow.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
     }
 
     /// Which of the three things the guard can leave behind actually landed.
@@ -409,25 +449,37 @@ private struct DetailPane: View {
         return "not recorded, this row predates model identity in the history"
     }
 
+    /// A label and its value, laid out by `LabeledContent`.
+    ///
+    /// It was an `HStack` with the label boxed at a hard 110pt, which is a guess at the
+    /// widest of five labels that breaks the moment a longer one is added or the pane is
+    /// narrowed. `LabeledContent` is the component for this and aligns the pair the way
+    /// every form on the platform does, and it reads to VoiceOver as one label-value pair
+    /// rather than as two unrelated strings.
     private func field(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 110, alignment: .leading)
+        LabeledContent(label) {
             Text(value)
-                .font(.caption)
                 .monospacedDigit()
                 .textSelection(.enabled)
+                .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .font(.callout)
     }
 
     private var actions: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Button(copied ? "Copied" : "Copy") { copy() }
-                Button("Mark as wrong", action: flag)
+            HStack(spacing: 10) {
+                /// The reason a reader opens this pane is to get the text back out, so the
+                /// copy is the default button rather than one of two equal ones.
+                Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
+                    copy()
+                }
+                .buttonStyle(.borderedProminent)
+
+                /// An ellipsis, because it opens an alert that asks for more. That is what
+                /// a trailing ellipsis promises everywhere else on the system.
+                Button("Mark as Wrong…", systemImage: "flag", action: flag)
                     .disabled(!canFlag)
             }
             if !canFlag {

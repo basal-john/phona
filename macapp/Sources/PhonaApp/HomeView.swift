@@ -29,15 +29,25 @@ struct HomeView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 16) {
-                        HStack(alignment: .top, spacing: 14) {
-                            hero
-                            tiles.frame(width: 250)
+                        /// Side by side while there is room, stacked when there is not.
+                        /// It was an `HStack` of a growing card beside a hard 250pt column,
+                        /// and below about 760pt of pane the two squeezed into each other.
+                        /// The platform now expects a window to be draggable to any width
+                        /// with the content reflowing rather than compressing.
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .top, spacing: 16) {
+                                hero
+                                tiles.frame(width: 260)
+                            }
+                            VStack(spacing: 16) {
+                                hero
+                                tiles
+                            }
                         }
                         activity
                         latest
                     }
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 20)
+                    .padding(20)
                 }
             }
         }
@@ -45,10 +55,11 @@ struct HomeView: View {
 
     private var hero: some View {
         Card("Typing time avoided") {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 10) {
                 heroFigure
                 Text(arithmetic)
-                    .font(.system(size: 10.5, design: .monospaced))
+                    .font(.callout)
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 typingSpeedPicker
@@ -56,20 +67,28 @@ struct HomeView: View {
         }
     }
 
+    /// The figure, and the same figure as one sentence for VoiceOver.
+    ///
+    /// Four separate labels on a baseline read out as "6", "h", "40", "m", which is not a
+    /// duration. The stack is one accessibility element saying what it means, and the
+    /// pieces underneath are hidden so they are not read twice.
     @ViewBuilder
     private var heroFigure: some View {
         let saved = Figures.hoursAndMinutes(fromMinutes: insights.minutesSaved)
         if insights.minutesSaved > 0 {
             HStack(alignment: .lastTextBaseline, spacing: 3) {
                 Text("\(saved.hours)")
-                    .font(.system(size: 40, weight: .semibold))
+                    .font(Display.hero)
                     .monospacedDigit()
                 Text("h").font(.title3).foregroundStyle(.secondary)
                 Text("\(saved.minutes)")
-                    .font(.system(size: 40, weight: .semibold))
+                    .font(Display.hero)
                     .monospacedDigit()
                 Text("m").font(.title3).foregroundStyle(.secondary)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Typing time avoided")
+            .accessibilityValue("\(saved.hours) hours \(saved.minutes) minutes")
         } else {
             Text("Nothing yet at this speed")
                 .font(.title2.weight(.semibold))
@@ -100,8 +119,8 @@ struct HomeView: View {
         }
         .pickerStyle(.menu)
         .labelsHidden()
-        .frame(width: 110)
-        .controlSize(.small)
+        .fixedSize()
+        .accessibilityLabel("Typing speed the figure above is divided by")
     }
 
     /// The stored speed is offered alongside the presets, so a hand-edited config.json value
@@ -118,42 +137,48 @@ struct HomeView: View {
     }
 
     private var tiles: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 14) {
+        VStack(spacing: 16) {
+            HStack(spacing: 16) {
                 Card {
-                    VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(Figures.integer(insights.today.count))
-                            .font(.system(size: 26, weight: .semibold))
+                            .font(Display.tile)
                             .monospacedDigit()
-                        Text("Today").font(.caption).foregroundStyle(.secondary)
+                        Text("Today").font(.callout).foregroundStyle(.secondary)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Dictations today")
+                    .accessibilityValue(Figures.integer(insights.today.count))
                 }
                 Card {
-                    VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .lastTextBaseline, spacing: 2) {
                             Text("\(insights.currentStreak)")
-                                .font(.system(size: 26, weight: .semibold))
+                                .font(Display.tile)
                                 .monospacedDigit()
                             Text("d").font(.callout).foregroundStyle(.secondary)
                         }
                         Text("Streak · best \(insights.bestStreak)")
-                            .font(.caption)
+                            .font(.callout)
                             .foregroundStyle(.secondary)
                     }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Streak")
+                    .accessibilityValue("\(insights.currentStreak) days, best \(insights.bestStreak)")
                 }
             }
             Card("Words delivered") {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .lastTextBaseline, spacing: 6) {
                         Text(Figures.integer(insights.words))
-                            .font(.title3.weight(.semibold))
+                            .font(.title2.weight(.semibold))
                             .monospacedDigit()
                         Text(spokenRate)
-                            .font(.caption)
+                            .font(.callout)
                             .foregroundStyle(.secondary)
                     }
                     Text(spokenShare)
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -179,19 +204,30 @@ struct HomeView: View {
         return "over \(Figures.integer(total)) dictations, \(Figures.integer(spoken)) of them spoken"
     }
 
+    /// The last five weeks as one bar a day.
+    ///
+    /// Every bar used to carry a tooltip and nothing else, so the whole chart was invisible
+    /// to VoiceOver and to anyone driving the app from the keyboard. Each bar is now a
+    /// labelled element in its own right, and the chart announces its own summary, so the
+    /// figures are reachable without a pointer hovering over a 11pt-wide rectangle.
     private var activity: some View {
         Card("Activity", trailing: activityRange) {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .bottom, spacing: 3) {
                     ForEach(insights.days, id: \.day) { day in
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(day.count > 0 ? Palette.activity.opacity(opacity(day)) : Color.secondary.opacity(0.18))
+                        Capsule()
+                            .fill(day.count > 0
+                                  ? AnyShapeStyle(Palette.activity.opacity(opacity(day)))
+                                  : AnyShapeStyle(.quaternary))
                             .frame(height: height(day))
                             .frame(maxWidth: 11)
                             .help("\(Figures.shortDay(day.day)) · \(day.count) dictations, \(Figures.integer(day.words)) words")
+                            .accessibilityLabel(Figures.shortDay(day.day))
+                            .accessibilityValue("\(day.count) dictations, \(Figures.integer(day.words)) words")
                     }
                 }
-                .frame(height: 54, alignment: .bottom)
+                .frame(height: 56, alignment: .bottom)
+                .accessibilityLabel("Dictations per day")
 
                 HStack {
                     Text(insights.days.first.map { Figures.shortDay($0.day) } ?? "")
@@ -202,8 +238,10 @@ struct HomeView: View {
                     Spacer()
                     Text(insights.days.last.map { Figures.shortDay($0.day) } ?? "")
                 }
-                .font(.system(size: 9.5, design: .monospaced))
-                .foregroundStyle(.tertiary)
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             }
         }
     }
@@ -232,31 +270,26 @@ struct HomeView: View {
         return 0.45 + 0.55 * Double(day.count) / Double(top)
     }
 
+    /// The six most recent dictations, in the container the platform draws for a group.
+    ///
+    /// It was a hand-built header bar in `controlBackgroundColor` over rows on
+    /// `textBackgroundColor`, inside an 8pt rounded rectangle with its own hairline. That is
+    /// three custom surfaces where the system has one, and it is the pattern the platform
+    /// now asks apps to stop drawing themselves.
     private var latest: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Latest")
-                    .font(.caption2.weight(.semibold))
-                    .textCase(.uppercase)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Show all", action: showAll)
-                    .buttonStyle(.link)
-                    .font(.caption)
+        Card("Latest") {
+            VStack(spacing: 0) {
+                ForEach(Array(store.descending.prefix(6).enumerated()), id: \.offset) { index, row in
+                    if index > 0 { Divider() }
+                    LatestRow(row: row)
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .padding(.horizontal, -4)
 
-            Divider()
-
-            ForEach(Array(store.descending.prefix(6).enumerated()), id: \.offset) { index, row in
-                if index > 0 { Divider() }
-                LatestRow(row: row)
-            }
+            Button("Show All in History", action: showAll)
+                .buttonStyle(.link)
+                .font(.callout)
         }
-        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
     }
 }
 
@@ -266,19 +299,20 @@ private struct LatestRow: View {
     let row: HistoryRow
 
     var body: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 10) {
             Text(Figures.clock(row.ts))
-                .font(.system(size: 10.5, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .frame(width: 38, alignment: .leading)
-            RouteDot(route: row.route, diameter: 5)
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .fixedSize()
+            RouteDot(route: row.route)
             Text(Figures.flatten(row.text))
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 8)
             latency
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 4)
         .padding(.vertical, 9)
     }
 
@@ -292,7 +326,7 @@ private struct LatestRow: View {
             Chip(text: Figures.latency(seconds), tint: Palette.slow)
         } else if seconds > 0 {
             Text(Figures.latency(seconds))
-                .font(.system(size: 10))
+                .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }

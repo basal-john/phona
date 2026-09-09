@@ -64,8 +64,7 @@ struct ModelsView: View {
                 speechSection
                 switching
             }
-            .padding(.horizontal, 22)
-            .padding(.vertical, 20)
+            .padding(20)
         }
     }
 
@@ -87,10 +86,9 @@ struct ModelsView: View {
             Text("Your usage").frame(width: 210, alignment: .leading)
             Text("").frame(width: 74, alignment: .trailing)
         }
-        .font(.caption2.weight(.semibold))
-        .textCase(.uppercase)
+        .font(.subheadline.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.bottom, 6)
+        .padding(.bottom, 4)
     }
 
     private func row(_ choice: ModelChoice) -> some View {
@@ -112,7 +110,7 @@ struct ModelsView: View {
                     Chip(text: "in use", tint: Palette.route(.local))
                 } else {
                     Text(choice.flag)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -192,7 +190,7 @@ struct ModelsView: View {
                                 Chip(text: "in use", tint: Palette.route(.local))
                             } else {
                                 Text(choice.flag)
-                                    .font(.system(size: 10, design: .monospaced))
+                                    .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -217,7 +215,7 @@ struct ModelsView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text("~/.local/share/phona/switch-model.sh with no argument prints what is "
                     + "running now.")
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.tertiary)
             }
         }

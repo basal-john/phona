@@ -71,6 +71,20 @@ final class HistoryStore: ObservableObject {
     private var loadGeneration = 0
     private var rateGeneration = 0
 
+    init() {}
+
+    /// A store holding a snapshot it was handed, for offscreen rendering.
+    ///
+    /// `phona --render` has to draw the panes without a history file, and the panes read
+    /// the store rather than a value they were passed, so the seam has to be here. It only
+    /// fills the published properties a load would have filled and starts no work, so a
+    /// rendered store never touches the disk.
+    init(previewing snapshot: HistorySnapshot) {
+        self.snapshot = snapshot
+        descending = HistoryOrder.newestFirst(snapshot.rows)
+        hasHistoryFile = true
+    }
+
     var rows: [HistoryRow] { snapshot.rows }
     var insights: Insights { snapshot.insights }
 

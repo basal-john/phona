@@ -168,12 +168,19 @@ struct HistoryEntry {
 
 /// App-side settings that the daemon does not need to know about.
 enum Settings {
-    private static func value<T>(_ key: String, default fallback: T) -> T {
+    /// config.json, or an empty dictionary when it is missing or unreadable.
+    ///
+    /// One reader for every accessor below. `value` and `string` each had their own copy of
+    /// this, which is two parses per read and two places to keep in step.
+    private static func config() -> [String: Any] {
         guard let data = try? Data(contentsOf: Paths.config),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let v = obj[key] as? T
-        else { return fallback }
-        return v
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [:] }
+        return obj
+    }
+
+    private static func value<T>(_ key: String, default fallback: T) -> T {
+        config()[key] as? T ?? fallback
     }
 
     static var outputAction: OutputAction {
@@ -185,6 +192,15 @@ enum Settings {
 
     /// Whether the output device is muted while the microphone is capturing.
     static var muteOthersWhileDictating: Bool { value("mute_others", default: true) }
+
+    /// A stored string, or nil when the key has never been written.
+    ///
+    /// Nil rather than a fallback, because the one caller is the settings window restoring
+    /// the pane it was last on, and "never chosen" and "chose General" want different
+    /// behaviour on a first run.
+    static func string(_ key: String) -> String? {
+        config()[key] as? String
+    }
 
     /// Whether a message dictated into a chat app drops its closing full stop.
     ///

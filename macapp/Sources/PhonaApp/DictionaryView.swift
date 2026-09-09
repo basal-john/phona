@@ -43,8 +43,7 @@ struct DictionaryView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.horizontal, 22)
-            .padding(.vertical, 20)
+            .padding(20)
         }
     }
 
@@ -61,11 +60,9 @@ struct DictionaryView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
     }
 
     /// Which of the four answers this Mac is actually in, from the loaded speech model, the
@@ -144,10 +141,9 @@ struct DictionaryView: View {
                         Text("Heard as").frame(maxWidth: .infinity, alignment: .leading)
                         Text("Becomes").frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .font(.caption2.weight(.semibold))
-                    .textCase(.uppercase)
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .padding(.bottom, 6)
+                    .padding(.bottom, 4)
 
                     ForEach(pairs, id: \.heard) { pair in
                         HStack {
@@ -184,10 +180,9 @@ private struct FlowRow: View {
                         Text(word)
                             .font(.callout)
                             .textSelection(.enabled)
-                            .padding(.horizontal, 7)
+                            .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(Color.secondary.opacity(0.12),
-                                        in: RoundedRectangle(cornerRadius: 5))
+                            .background(.quaternary, in: Capsule())
                     }
                     Spacer(minLength: 0)
                 }

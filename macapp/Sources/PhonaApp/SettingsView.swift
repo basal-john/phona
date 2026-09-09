@@ -14,33 +14,33 @@ struct SettingsView: View {
     @State private var muteOthers: Bool = true
     @State private var showInDock: Bool = true
     @State private var status: String = ""
+    /// Whether `status` is reporting a save or reporting a fault.
+    ///
+    /// One string carried both, and the notice headlined all of it "Saved", so a login-item
+    /// failure appeared under the word Saved. They are different messages and the reader
+    /// has to be able to tell which one they are looking at.
+    @State private var statusIsFailure = false
     @State private var loaded: EngineSettings?
 
+    /// Every setting, in one scrolling form.
+    ///
+    /// This was three tabs in a window of its own, opened from the App menu, which is where
+    /// the platform puts settings. It is a pane of the main window instead because that is
+    /// what its owner asked for: the sidebar already lists everything else the app can show
+    /// and Settings was the one thing missing from it.
+    ///
+    /// One form rather than tabs inside a pane. A segmented switcher nested inside a
+    /// sidebar selection is two levels of navigation for three groups of controls, and the
+    /// whole form is shorter than one screen of History.
+    ///
+    /// Capped at 640pt and centred. A grouped form stretched across an 840pt detail pane
+    /// puts its labels and its controls at opposite ends of the window, which is a long way
+    /// for the eye to travel to check whether a toggle is on.
     var body: some View {
-        VStack(spacing: 0) {
-            TabView {
-                general.tabItem { Text("General") }
-                dictation.tabItem { Text("Dictation") }
-                words.tabItem { Text("Words") }
-            }
-            Divider()
-            HStack {
-                Text(status).font(.callout).foregroundStyle(.secondary)
-                Spacer()
-                Button("Save and restart engine") { save() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!needsRestart)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-        }
-        .frame(width: 520, height: 560)
-        .onAppear(perform: load)
-    }
-
-    private var general: some View {
         Form {
-            Section {
+            pendingRestart
+
+            Section("Output") {
                 Picker("When done", selection: $outputAction) {
                     Text("Insert at cursor").tag(OutputAction.insert)
                     Text("Copy to clipboard").tag(OutputAction.clipboard)
@@ -55,7 +55,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section {
+            Section("Phona itself") {
                 Toggle("Show Phona in the Dock", isOn: $showInDock)
                     .onChange(of: showInDock) { _, wanted in
                         Settings.set("show_in_dock", wanted)
@@ -69,15 +69,11 @@ struct SettingsView: View {
                             else { try SMAppService.mainApp.unregister() }
                         } catch {
                             status = error.localizedDescription
+                            statusIsFailure = true
                         }
                     }
             }
-        }
-        .formStyle(.grouped)
-    }
 
-    private var dictation: some View {
-        Form {
             Section("While dictating") {
                 Toggle("Mute other audio", isOn: $muteOthers)
                     .onChange(of: muteOthers) { _, wanted in
@@ -111,12 +107,7 @@ struct SettingsView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-        }
-        .formStyle(.grouped)
-    }
 
-    private var words: some View {
-        Form {
             Section("Vocabulary") {
                 Text("Words the transcriber tends to mangle. One per line.")
                     .font(.callout)
@@ -140,7 +131,66 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .frame(maxWidth: 640)
+        .frame(maxWidth: .infinity)
+        .onAppear(perform: load)
     }
+
+    /// The notice that a change is waiting on an engine restart.
+    ///
+    /// Its own section at the top of the pane rather than a permanently visible button, so
+    /// a pane with nothing pending shows nothing, and so the sentence explaining why a
+    /// restart is needed sits next to the button that performs it.
+    @ViewBuilder
+    private var pendingRestart: some View {
+        if needsRestart || !status.isEmpty {
+            Section {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Image(systemName: noticeSymbol)
+                        .foregroundStyle(noticeTint)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(noticeTitle)
+                            .font(.headline)
+                        Text(noticeDetail)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    if needsRestart {
+                        Button("Save and Restart") { save() }
+                            .keyboardShortcut(.defaultAction)
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+            }
+        }
+    }
+
+    private var noticeSymbol: String {
+        if needsRestart { return "arrow.trianglehead.2.clockwise.rotate.90" }
+        return statusIsFailure ? "exclamationmark.triangle" : "checkmark.circle"
+    }
+
+    private var noticeTint: Color {
+        if needsRestart { return .orange }
+        return statusIsFailure ? .red : .green
+    }
+
+    private var noticeTitle: String {
+        if needsRestart { return "Changes are waiting" }
+        return statusIsFailure ? "That did not work" : "Saved"
+    }
+
+    private var noticeDetail: String {
+        guard needsRestart else { return status }
+        return "The engine reads these once when it starts, so it has to be restarted "
+            + "before they take effect."
+    }
+
+
+
 
     private var outputExplanation: String {
         switch outputAction {
@@ -201,16 +251,19 @@ struct SettingsView: View {
         guard let data = try? JSONSerialization.data(
             withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) else {
             status = "Could not write settings."
+            statusIsFailure = true
             return
         }
         do {
             try data.write(to: Paths.config)
         } catch {
             status = error.localizedDescription
+            statusIsFailure = true
             return
         }
 
-        status = "Saved. Restarting the engine…"
+        status = "Restarting the engine…"
+        statusIsFailure = false
         loaded = current
         DispatchQueue.global().async {
             let kill = Process()
@@ -219,7 +272,11 @@ struct SettingsView: View {
             try? kill.run()
             kill.waitUntilExit()
             let ok = DaemonClient.startAndWait()
-            DispatchQueue.main.async { status = ok ? "Saved." : "Saved, but the engine did not restart." }
+            DispatchQueue.main.async {
+                status = ok ? "The engine restarted, so the changes are live."
+                            : "Written to config.json, but the engine did not come back up."
+                statusIsFailure = !ok
+            }
         }
     }
 }

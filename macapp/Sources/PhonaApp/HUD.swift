@@ -36,8 +36,18 @@ final class HUDModel: ObservableObject {
     @Published var capturing = false
 }
 
-/// The capsule. Real vibrancy underneath, so it picks up whatever is behind it rather
-/// than faking depth with a flat dark fill.
+/// The capsule.
+///
+/// This is the one element in Phona that earns a custom material. It floats over whatever
+/// app the speaker is typing into, it is the only thing on screen during a dictation, and it
+/// is the app's single most-seen surface, which is exactly the "most important functional
+/// element" the platform reserves glass for. Everything else in the app uses standard
+/// components and inherits their appearance instead.
+///
+/// So the capsule is Liquid Glass where the OS has it, and a vibrancy layer underneath that,
+/// and a flat fill under Reduce Transparency. Regular glass rather than clear: it sits over
+/// arbitrary app windows rather than over media, and the guidance is that regular is the
+/// variant for a component whose background might create legibility problems.
 ///
 /// Lift, scale and opacity all derive from one condition, so it arrives as a single object
 /// instead of three properties landing at slightly different times.
@@ -46,6 +56,13 @@ struct HUDView: View {
     /// ImageRenderer cannot draw an NSViewRepresentable, so previews swap the
     /// vibrancy layer for a solid fill of comparable weight.
     var solidBackground = false
+
+    /// Both of these change what the capsule is allowed to do, and both are the reader's
+    /// choice rather than this app's. Reduce Transparency replaces the material with a
+    /// solid surface, and Reduce Motion removes the spring, the lift and the scale, so the
+    /// capsule cuts in and out instead of moving.
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let barCount = 5
     private let cloudBarCount = 3
@@ -58,16 +75,25 @@ struct HUDView: View {
     /// Apple parameterises springs as response plus bounce rather than mass, stiffness and
     /// damping. Critically damped, because overshoot on something that merely appeared reads
     /// as noise.
-    private var surfaceSpring: Animation { .spring(duration: 0.34, bounce: 0) }
+    ///
+    /// Under Reduce Motion the spring is gone entirely rather than shortened. The setting is
+    /// a request for no automatic motion, not for faster motion.
+    private var surfaceSpring: Animation? {
+        reduceMotion ? nil : .spring(duration: 0.34, bounce: 0)
+    }
     /// Presence is not motion, so it does not get the spring.
     ///
     /// A `spring(duration: 0.34)` settles in 0.500 s, not 0.34, and reaches only half opacity
     /// at 118 ms and 90 percent at 235 ms. Fading the capsule in on it was the difference
     /// between a HUD that has arrived and one that is still arriving. The lift and the scale
     /// keep the spring, because those are motion and reading as physical is the point.
+    ///
+    /// A cross-fade survives Reduce Motion. It is the substitution the setting asks for.
     private var presence: Animation { .easeOut(duration: 0.09) }
     /// Looser than the surface, since the bars track something physical.
-    private var barSpring: Animation { .spring(duration: 0.16, bounce: 0.28) }
+    private var barSpring: Animation? {
+        reduceMotion ? nil : .spring(duration: 0.16, bounce: 0.28)
+    }
 
     private var shown: Bool { model.state != .hidden }
 
@@ -133,7 +159,7 @@ struct HUDView: View {
             HStack(spacing: isCloud ? cloudBarGap : barGap) {
                 if isCloud {
                     Image(systemName: "cloud")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.headline)
                         .foregroundStyle(Color.blue)
                 }
 
@@ -149,37 +175,83 @@ struct HUDView: View {
             .opacity(showsGlyph ? 0 : 1)
 
             Image(systemName: glyphName)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.title3.weight(.semibold))
                 .foregroundStyle(glyphColour)
                 .opacity(showsGlyph ? 1 : 0)
                 .scaleEffect(showsGlyph ? 1 : 0.6)
                 .animation(surfaceSpring, value: model.state)
         }
         .frame(width: 124, height: 40)
-        .background(
-            Group {
-                if solidBackground {
-                    Capsule().fill(Color(white: 0.13).opacity(0.92))
-                } else {
-                    VisualEffect(material: .hudWindow, blending: .behindWindow)
-                        .clipShape(Capsule())
-                }
-            }
-            .overlay(
-                Capsule().strokeBorder(
-                    isCloud ? Color.blue.opacity(0.55) : Color.white.opacity(0.14),
-                    lineWidth: 1
-                )
-            )
-        )
+        .background(surface)
         .compositingGroup()
-        .shadow(color: .black.opacity(0.28), radius: 14, y: 6)
-        .scaleEffect(shown ? 1 : 0.94)
-        .offset(y: shown ? 0 : 14)
+        /// The material carries its own shadow on the OS that has it, so a second one drawn
+        /// here would double it.
+        .shadow(color: .black.opacity(glassAvailable ? 0 : 0.28), radius: 14, y: 6)
+        .scaleEffect(shown || reduceMotion ? 1 : 0.94)
+        .offset(y: shown || reduceMotion ? 0 : 14)
         .animation(surfaceSpring, value: shown)
         .opacity(shown ? 1 : 0)
         .animation(presence, value: shown)
         .frame(width: 260, height: 120)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Phona")
+        .accessibilityValue(spokenState)
+        .accessibilityHidden(!shown)
+    }
+
+    /// Whether this build is running where Liquid Glass exists.
+    ///
+    /// Phona still supports macOS 14, so the material cannot simply be used. Below 26 the
+    /// capsule keeps the `hudWindow` vibrancy layer it has always had, which is the same
+    /// material the system's own volume and dictation overlays use on those releases.
+    private var glassAvailable: Bool {
+        if #available(macOS 26, *) { return !reduceTransparency && !solidBackground }
+        return false
+    }
+
+    /// The capsule's surface, in the strongest form this Mac and this reader allow.
+    @ViewBuilder
+    private var surface: some View {
+        if #available(macOS 26, *), glassAvailable {
+            Capsule()
+                .fill(.clear)
+                .glassEffect(.regular.tint(isCloud ? .blue.opacity(0.18) : .clear),
+                             in: .capsule)
+        } else if solidBackground || reduceTransparency {
+            /// No material at all: an opaque surface, and a real border rather than a
+            /// hairline of white at 14 percent, because Reduce Transparency is usually
+            /// turned on alongside Increase Contrast.
+            Capsule()
+                .fill(Color(white: 0.13))
+                .overlay(Capsule().strokeBorder(isCloud ? Color.blue : Color.white.opacity(0.55),
+                                                lineWidth: 1))
+        } else {
+            VisualEffect(material: .hudWindow, blending: .behindWindow)
+                .clipShape(Capsule())
+                .overlay(Capsule().strokeBorder(
+                    isCloud ? Color.blue.opacity(0.55) : Color.white.opacity(0.14),
+                    lineWidth: 1))
+        }
+    }
+
+    /// What the capsule would say if it could be read out.
+    ///
+    /// The panel is non-activating and ignores the mouse, so VoiceOver will not land on it
+    /// on its own. The label is still worth having: it is what Accessibility Inspector and
+    /// screen-recording tools report, and it is the description that becomes correct the
+    /// moment the panel is ever made focusable.
+    private var spokenState: String {
+        switch model.state {
+        case .hidden: return "idle"
+        case .listening: return model.capturing ? "listening" : "starting to listen"
+        case .working: return "correcting on this Mac"
+        case .workingInCloud: return "correcting in the cloud"
+        case .done: return "delivered"
+        case .cancelled: return "nothing heard"
+        case .clipboard: return "copied to the clipboard"
+        case .trimmed: return "delivered, with a repeated ending cut off"
+        case .failed: return "failed"
+        }
     }
 }
 
