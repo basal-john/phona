@@ -606,12 +606,22 @@ app's privacy claim, and the bottom edge of a window is the part people drag off
 It is now a popover behind a toolbar button and an item in the Help menu, reachable from
 every pane.
 
-The settings window's apply button was in a bar along the bottom, which is the same mistake
-for the same reason. It is now a notice at the top of whichever pane has something waiting,
-which
-also means a pane with nothing pending shows nothing. The window also sizes itself to the
-pane it is showing instead of holding one 520x560 frame for a pane with five controls and a
-pane with two text editors.
+The settings apply button was in a bar along the bottom of its window, which is the same
+mistake for the same reason. It is now a notice at the top of the form, which appears only
+when something is waiting.
+
+Settings itself then moved out of its own window and into the sidebar, as a fifth pane, on
+its owner's instruction. The platform's guidance is a separate window opened from the App
+menu, and this is a deliberate departure from it: the sidebar already listed every other
+view the window has, and Settings was the only one that needed a menu to reach.
+
+It is one scrolling form rather than the three tabs it had in the window. A segmented
+switcher nested inside a sidebar selection is two levels of navigation for three groups of
+controls, and the whole form is shorter than one screen of History, so the tab titles became
+section headers and nothing sits behind a tab. There is still exactly one settings surface:
+Command-comma selects the pane rather than opening a second copy of the same form. Settings
+is deliberately absent from the View menu, because its item belongs in the App menu and
+listing it in both would put Command-comma on two menu items.
 
 The main window could not be resized to anything smaller than its content, because
 `NSHostingView` reports the SwiftUI content's intrinsic size and AppKit sizes the window to
