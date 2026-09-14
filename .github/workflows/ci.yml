@@ -48,7 +48,7 @@ jobs:
       - name: Python tests
         run: |
           python3 -m venv /tmp/ci-venv
-          /tmp/ci-venv/bin/python -m pip install -q --upgrade pip pytest
+          /tmp/ci-venv/bin/python -m pip install -q --upgrade pip pytest numpy
           /tmp/ci-venv/bin/python -m pytest tests/ -q
 
       - name: Package the app and assert the bundle is complete

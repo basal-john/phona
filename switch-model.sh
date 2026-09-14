@@ -1,23 +1,46 @@
 #!/bin/bash
 # Switch the correction or speech model and restart the engine.
 #
-#   ./switch-model.sh 8bit     correction: the 8-bit 4B, 29 of 29 on the suite, slower on long dictation
-#   ./switch-model.sh 4bit     correction: the 4-bit 4B, 28 of 29, the fastest
-#   ./switch-model.sh 8b       correction: Qwen3-8B, 28 of 29, no better and larger
+#   ./switch-model.sh 8bit     correction: the 8-bit 4B, the default, safest on real dictation
+#   ./switch-model.sh 4bit     correction: the 4-bit 4B, faster, changes meaning silently
+#   ./switch-model.sh 8b       correction: Qwen3-8B, no better and larger
 #   ./switch-model.sh qwen35   correction: Qwen3.5-4B, the successor to the current model
 #   ./switch-model.sh gemma4   correction: Gemma 4 E4B, the size-matched rival
 #   ./switch-model.sh whisper  speech: Whisper large-v3-turbo, slower, takes the dictionary hint
 #   ./switch-model.sh parakeet speech: Parakeet TDT 0.6b v3, the default, no dictionary hint
 #   ./switch-model.sh          print what is running now
 #
-# Measured on this machine, whole suite through the real daemon:
+# Measured 2026-09-14 on an M1 Pro, each model on its own daemon under PHONA_HOME so the
+# two ran under the same conditions, speech on Parakeet, second tap to text end to end:
 #
-#   4B-4bit   28 exact  1 failed   short 0.44s  mid 1.09s  long 2.95s
-#   4B-8bit   29 exact  0 failed   short 0.50s  mid 1.50s  long 4.19s
-#   8B-4bit   28 exact  0 failed   about the same as 8bit and 4 GB larger
+#              suite, 34 cases          median dictation
+#                                   short <10s   mid 10-25s   long >25s
+#   4B-4bit   32 exact  0 failed       0.75s       1.43s       2.65s
+#   4B-8bit   33 exact  0 failed       1.05s       1.82s       4.27s
 #
-# The one case 4-bit fails is "translate this into german for me", which it
-# translates instead of correcting. 8-bit corrects it and leaves it a request.
+# 4-bit is the faster model and it is still the wrong default. The suite does not separate
+# them, 0 strict failures either way, because the suite is one-line cases and the damage
+# shows up on real dictation. Replaying 40 real takes through both, 19 came back identical
+# and 21 differed, and three of the differences changed what the speaker said:
+#
+#   - "write it in my voice, the way I usually do" came back as "in your voice, the way you
+#     normally do", twice in one message, so the instruction is inverted
+#   - "Amazing achievements, Ashok. These are some of the big ones you've done" lost its
+#     first sentence, so the greeting and the name of the person it was addressed to went
+#   - "check my DMs with them", an instruction to the assistant, came back as "I'll check my
+#     DMs with each of them", which is the speaker doing it instead
+#
+# None of the three tripped the guard. 4-bit was guarded on 4 of 40 against 8-bit's 5, and
+# on the birthday dictation 8-bit caught itself and retried where 4-bit returned a confident
+# wrong answer. A dropped run of three words sits under MAX_DROPPED_RUN, which is four.
+# That is the case against 4-bit: not that it is worse on average, but that it is worse
+# silently, on messages addressed to named colleagues.
+#
+# The note this header used to carry, that 4-bit fails "translate this into german for me"
+# by translating it, no longer reproduces. Both models correct it and leave it a request.
+#
+# Qwen3-8B, Qwen3.5-4B and Gemma 4 were not re-measured in this run, so they carry no
+# numbers here rather than stale ones.
 #
 # Parakeet takes neither a language nor an initial prompt, so switching to it drops the
 # dictionary hint. The daemon logs that at startup rather than failing.
