@@ -2522,7 +2522,12 @@ def test_a_prefix_cache_that_keeps_failing_is_left_off():
 
 def test_peak_db_does_not_shell_out_for_an_ordinary_take(tmp_path, monkeypatch):
     """The point of the direct read is that ffmpeg never runs. Both paths return the same
-    number, so a test that only compares values passes either way and proves nothing."""
+    number, so a test that only compares values passes either way and proves nothing.
+
+    CI caught this one honestly. Without numpy installed the direct read returns None, the
+    fallback answers, and the whole change is inert while every value-comparing test still
+    passes."""
+    pytest.importorskip("numpy")
     import wave
 
     path = tmp_path / "take.wav"
