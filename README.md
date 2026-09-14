@@ -61,8 +61,8 @@ M1 Pro, Parakeet for speech and Qwen3-4B-8bit for the grammar pass.
 | 20 to 40 s | 0.48 s | 2.06 s | **2.52 s** |
 | over 40 s | 0.87 s | 3.74 s | **4.64 s** |
 
-A dictation the grammar guard rejects is corrected twice, which roughly doubles the second
-column. That is about one dictation in eight.
+A dictation the grammar guard rejects is corrected twice, which roughly doubles the grammar
+pass column. That is about one dictation in eight.
 
 Needs an Apple Silicon Mac (M1 or later), macOS 14 or later, and about 6.5 GB of disk for the
 models. Building it from source needs macOS 26 or later, because the HUD's material is Liquid

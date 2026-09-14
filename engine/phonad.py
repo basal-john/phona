@@ -2049,7 +2049,10 @@ class Engine:
         only costs one generation that comes back unchanged. "sorry" is an apology far more
         often than a correction, and that is fine here.
         """
-        if self.fix_cache is None or not SELF_CORRECTION_MARKER.search(text):
+        if not SELF_CORRECTION_MARKER.search(text):
+            return text
+        self._rebuild_fix_cache()
+        if self.fix_cache is None:
             return text
         try:
             from mlx_lm import generate
@@ -2086,21 +2089,33 @@ class Engine:
         return out
 
     def _drop_fix_cache(self):
-        """Rebuild the self-correction cache after a failure, on the same terms as the main one.
+        """Record that the self-correction cache failed.
 
-        This cache carried the same defect: a trim that did not take set it to None for the
-        life of the daemon, and the pass it serves then never ran again. That failure is
-        quieter than the main one, because the pass is gated on a marker and simply returning
-        the text unchanged looks exactly like a dictation with nothing to resolve.
+        This cache carried the same defect as the main one: a trim that did not take set it
+        to None for the life of the daemon, and the pass it serves then never ran again. That
+        failure is quieter, because the pass is gated on a marker and simply returning the
+        text unchanged looks exactly like a dictation with nothing to resolve.
         """
         self.fix_cache = None
         self.fix_cache_failures += 1
-        if self.fix_cache_failures > MAX_CACHE_REBUILDS:
-            log(f"self-correction cache failed {self.fix_cache_failures} times in a row, "
-                f"leaving the pass off")
+
+    def _rebuild_fix_cache(self):
+        """Rebuild the self-correction cache when it is missing, on the main cache's terms.
+
+        Called from behind the marker gate, so a dictation that could never use this pass
+        does not pay for a rebuild. `_build_fix_prefix` also returns without building when
+        `self_correction` is off in config, which leaves the cache None and spends the budget
+        rather than looping.
+        """
+        if self.fix_cache is not None or self.fix_cache_failures > MAX_CACHE_REBUILDS:
             return
-        log(f"rebuilding the self-correction cache, attempt {self.fix_cache_failures}")
+        log(f"rebuilding the self-correction cache, attempt {self.fix_cache_failures + 1}")
         self._build_fix_prefix()
+        if self.fix_cache is None:
+            self.fix_cache_failures += 1
+            if self.fix_cache_failures > MAX_CACHE_REBUILDS:
+                log(f"self-correction cache failed {self.fix_cache_failures} times in a row, "
+                    f"leaving the pass off")
 
     def _generate_cached(self, msgs):
         """Generate reusing the prefilled prefix, then return the cache to its prior size.
@@ -2443,6 +2458,7 @@ class Engine:
 
     def _attempt(self, text):
         msgs = self._prefix_messages() + [{"role": "user", "content": text}]
+        self._rebuild_prefix_cache()
         if self.cache is not None:
             try:
                 out = self._generate_cached(msgs)
@@ -2454,7 +2470,7 @@ class Engine:
         return self._generate_plain(msgs)
 
     def _drop_prefix_cache(self):
-        """Rebuild the prompt prefix cache after a failure, and give up once it keeps failing.
+        """Record that the prompt prefix cache failed. `_rebuild_prefix_cache` decides what next.
 
         Losing the cache is not free and it used to be permanent. A single transient failure
         set `self.cache = None` for the life of the daemon, and every correction after it
@@ -2467,6 +2483,19 @@ class Engine:
         through a daemon whose prefix cache never builds put the correction stage at 258.6
         seconds against 68.7 with it, and the median dictation at 5.94 seconds against 1.73.
         One transient exception bought that permanently, and the log said so in one line.
+        """
+        self.cache = None
+        self.cache_failures += 1
+
+    def _rebuild_prefix_cache(self):
+        """Rebuild the prefix cache when it is missing, until it has failed often enough.
+
+        Driven from `_attempt` rather than from the failure, because a rebuild can fail too.
+        `_build_prefix` catches its own exceptions and leaves the cache None, so rebuilding
+        at the point of failure meant one bad prefill was as permanent as the bug this
+        replaced: nothing would call the failure path again, and the counter would sit below
+        its limit forever. Asking here, where the cache is about to be used, covers a cache
+        that failed and a rebuild that failed with the same mechanism.
 
         Rebuilding unconditionally would be the opposite mistake. A cache that fails because
         of what it is, rather than because of one bad moment, would then be rebuilt on every
@@ -2475,13 +2504,14 @@ class Engine:
         a success clears the count, so a transient fault costs one rebuild and a persistent
         one costs at most MAX_CACHE_REBUILDS, three, before the cache is left off for good.
         """
-        self.cache = None
-        self.cache_failures += 1
-        if self.cache_failures > MAX_CACHE_REBUILDS:
-            log(f"prefix cache failed {self.cache_failures} times in a row, leaving it off")
+        if self.cache is not None or self.cache_failures > MAX_CACHE_REBUILDS:
             return
-        log(f"rebuilding the prefix cache, attempt {self.cache_failures}")
+        log(f"rebuilding the prefix cache, attempt {self.cache_failures + 1}")
         self._build_prefix()
+        if self.cache is None:
+            self.cache_failures += 1
+            if self.cache_failures > MAX_CACHE_REBUILDS:
+                log(f"prefix cache failed {self.cache_failures} times in a row, leaving it off")
 
     def postprocess(self, text, style=None):
         """Apply the replacements and settle the layout.
