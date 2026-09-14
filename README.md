@@ -49,11 +49,20 @@ cases and the audio is never uploaded. What the right Option key sends is the tr
 text, to whichever model you have configured. That is a real difference and worth deciding
 per sentence rather than once, which is why it is a key and not a preference.
 
-| Stage | Time |
-| --- | --- |
-| Transcription, short utterance | ~0.75 s |
-| Grammar pass | ~0.40 s |
-| **Second tap to text on screen** | **~1.2 s** |
+How long the second tap takes depends on how long you talked, so it is quoted per length
+rather than as one number. Median of 40 real dictations replayed through the engine on an
+M1 Pro, Parakeet for speech and Qwen3-4B-8bit for the grammar pass.
+
+| You spoke for | Transcription | Grammar pass | **Second tap to text on screen** |
+| --- | --- | --- | --- |
+| under 5 s | 0.15 s | 0.63 s | **0.80 s** |
+| 5 to 10 s | 0.21 s | 0.90 s | **1.09 s** |
+| 10 to 20 s | 0.34 s | 1.47 s | **1.81 s** |
+| 20 to 40 s | 0.48 s | 2.06 s | **2.52 s** |
+| over 40 s | 0.87 s | 3.74 s | **4.64 s** |
+
+A dictation the grammar guard rejects is corrected twice, which roughly doubles the second
+column. That is about one dictation in eight.
 
 Needs an Apple Silicon Mac (M1 or later), macOS 14 or later, and about 6.5 GB of disk for the
 models. Building it from source needs macOS 26 or later, because the HUD's material is Liquid
@@ -107,7 +116,7 @@ other Option shortcut you already use keeps working. The
 
 | | Grammar pass | Typical time | Leaves your Mac |
 | --- | --- | --- | --- |
-| left Option | Qwen3-4B, on your Mac | 2 to 5 s | no |
+| left Option | Qwen3-4B, on your Mac | 1 to 3 s | no |
 | right Option | Claude, Codex or Gemini | 7 to 20 s | the transcript, as text |
 
 The cloud pass is checked by the same guard as the local one, and a result the guard refuses

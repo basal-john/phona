@@ -2418,3 +2418,142 @@ def test_the_audit_counts_dictations_from_the_archives_too(monkeypatch, tmp_path
     monkeypatch.setattr(audit, "model_update_check", lambda: [])
 
     assert audit.collect(7)["dictations"] == 2
+
+
+def test_peak_db_reads_the_wav_directly_and_agrees_with_ffmpeg(tmp_path):
+    """volumedetect spawned ffmpeg on every dictation, before transcription, to read a
+    number that is sitting in the file. The direct read has to give the same answer, or the
+    silence gate moves when the fast path takes over."""
+    import struct
+    import wave
+
+    def write(path, samples):
+        with wave.open(str(path), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(16000)
+            handle.writeframes(b"".join(struct.pack("<h", s) for s in samples))
+
+    half = tmp_path / "half.wav"
+    write(half, [0, 16384, -16384, 0] * 400)
+    assert phonad.peak_db(half) == pytest.approx(-6.0, abs=0.1)
+
+    full = tmp_path / "full.wav"
+    write(full, [0, 32767, -32767, 0] * 400)
+    assert phonad.peak_db(full) == pytest.approx(0.0, abs=0.1)
+
+    quiet = tmp_path / "quiet.wav"
+    write(quiet, [0, 100, -100, 0] * 400)
+    assert phonad.peak_db(quiet) == pytest.approx(-50.3, abs=0.2)
+
+
+def test_peak_db_reports_digital_silence_the_way_ffmpeg_does(tmp_path):
+    """An all-zero buffer is negative infinity in dB and the gate compares it against a
+    finite threshold. ffmpeg answers -91.0 for this, so the direct path has to as well or
+    turning the fallback on would change whether a take is rejected."""
+    import wave
+
+    path = tmp_path / "silence.wav"
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 16000)
+    assert phonad.peak_db(path) == phonad.SILENT_PEAK_DB == -91.0
+
+
+def test_peak_db_falls_back_to_ffmpeg_for_anything_not_sixteen_bit(tmp_path, monkeypatch):
+    """The direct read only understands 16-bit PCM. Anything else has to reach ffmpeg
+    rather than return None, which the gate would read as "could not measure" and let
+    through."""
+    import wave
+
+    path = tmp_path / "eight.wav"
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(1)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x80" * 16000)
+
+    assert phonad.peak_db_wave(path) is None
+    called = []
+    monkeypatch.setattr(phonad, "peak_db_ffmpeg", lambda p: called.append(p) or -12.5)
+    assert phonad.peak_db(path) == -12.5
+    assert called == [path]
+
+
+def test_peak_db_returns_none_when_neither_path_can_measure(tmp_path, monkeypatch):
+    """A missing or unreadable file must not raise out of the request."""
+    monkeypatch.setattr(phonad, "peak_db_ffmpeg",
+                        lambda p: (_ for _ in ()).throw(OSError("no ffmpeg")))
+    assert phonad.peak_db(tmp_path / "missing.wav") is None
+
+
+def test_a_failed_prefix_cache_is_rebuilt_rather_than_lost_for_good():
+    """One transient failure used to set the cache to None for the life of the daemon, so
+    every later correction re-processed the whole shared prefix with nothing to say so."""
+    engine = phonad.Engine.__new__(phonad.Engine)
+    engine.cache = object()
+    engine.cache_failures = 0
+    rebuilds = []
+    engine._build_prefix = lambda: rebuilds.append(1) or setattr(engine, "cache", object())
+
+    engine._drop_prefix_cache()
+    assert len(rebuilds) == 1
+    assert engine.cache is not None
+    assert engine.cache_failures == 1
+
+
+def test_a_prefix_cache_that_keeps_failing_is_left_off():
+    """Rebuilding on every request would pay a full prefill before falling back to the plain
+    path that was going to run anyway, which is worse than carrying no cache."""
+    engine = phonad.Engine.__new__(phonad.Engine)
+    engine.cache = object()
+    engine.cache_failures = 0
+    rebuilds = []
+    engine._build_prefix = lambda: rebuilds.append(1) or setattr(engine, "cache", object())
+
+    for _ in range(phonad.MAX_CACHE_REBUILDS + 2):
+        engine._drop_prefix_cache()
+
+    assert len(rebuilds) == phonad.MAX_CACHE_REBUILDS
+    assert engine.cache is None
+
+
+def test_peak_db_does_not_shell_out_for_an_ordinary_take(tmp_path, monkeypatch):
+    """The point of the direct read is that ffmpeg never runs. Both paths return the same
+    number, so a test that only compares values passes either way and proves nothing."""
+    import wave
+
+    path = tmp_path / "take.wav"
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x40" * 16000)
+
+    monkeypatch.setattr(phonad, "peak_db_ffmpeg",
+                        lambda p: pytest.fail("peak_db shelled out to ffmpeg"))
+    monkeypatch.setattr(phonad.subprocess, "run",
+                        lambda *a, **k: pytest.fail("peak_db spawned a subprocess"))
+    assert phonad.peak_db(path) == pytest.approx(-6.0, abs=0.2)
+
+
+def test_a_failed_self_correction_cache_is_rebuilt_rather_than_lost_for_good():
+    """Same defect as the main prefix cache and quieter: the pass is gated on a marker, so a
+    dead cache looks exactly like a dictation with nothing to resolve."""
+    engine = phonad.Engine.__new__(phonad.Engine)
+    engine.fix_cache = object()
+    engine.fix_cache_failures = 0
+    rebuilds = []
+    engine._build_fix_prefix = (
+        lambda: rebuilds.append(1) or setattr(engine, "fix_cache", object()))
+
+    engine._drop_fix_cache()
+    assert len(rebuilds) == 1
+    assert engine.fix_cache is not None
+
+    for _ in range(phonad.MAX_CACHE_REBUILDS + 2):
+        engine._drop_fix_cache()
+    assert len(rebuilds) == phonad.MAX_CACHE_REBUILDS
+    assert engine.fix_cache is None

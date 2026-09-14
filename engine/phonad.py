@@ -1592,18 +1592,72 @@ def pinned_target(cfg, key):
     return str(local)
 
 
+SILENT_PEAK_DB = -91.0
+
+
+def peak_db_wave(path):
+    """Peak volume of a 16-bit PCM wav in dB, or None when the file is not that.
+
+    Every recording Phona makes is 16-bit mono PCM, which `wave` and numpy can scan
+    directly. Anything else, a compressed take or a foreign sample width, returns None so
+    the caller falls back to ffmpeg rather than guessing at the samples.
+
+    An all-zero buffer is negative infinity in dB and the gate compares against a finite
+    threshold, so it reports SILENT_PEAK_DB instead. That number is -91.0 because it is what
+    volumedetect answers for digital silence, checked against ffmpeg rather than derived:
+    keeping both paths on the same value means the fallback cannot move the silence
+    decision.
+    """
+    with wave.open(str(path)) as handle:
+        if handle.getsampwidth() != 2:
+            return None
+        frames = handle.getnframes()
+        if frames <= 0:
+            return None
+        raw = handle.readframes(frames)
+    import numpy as np
+
+    samples = np.frombuffer(raw, dtype=np.int16)
+    if samples.size == 0:
+        return None
+    peak = int(np.abs(samples.astype(np.int32)).max())
+    if peak == 0:
+        return SILENT_PEAK_DB
+    return round(float(20 * math.log10(peak / 32768.0)), 1)
+
+
+def peak_db_ffmpeg(path):
+    """Peak volume through ffmpeg's volumedetect, for anything `wave` cannot open."""
+    proc = subprocess.run(
+        [FFMPEG, "-hide_banner", "-i", str(path), "-af", "volumedetect", "-f", "null", "-"],
+        capture_output=True, text=True, timeout=30)
+    match = re.search(r"max_volume:\s*(-?[\d.]+) dB", proc.stderr)
+    return float(match.group(1)) if match else None
+
+
 def peak_db(path):
     """Return the peak volume of a wav file in dB, or None when it cannot be measured.
 
     Used as a cheap speech gate. Whisper emits loops of a single repeated word on
     near-silent input, so silence is rejected before it reaches the model.
+
+    It was not cheap. volumedetect decodes the whole file in a subprocess, and it ran on
+    every dictation before transcription even started: 39.9 ms on average over 20 real
+    takes, against 1.0 ms for the same peak read straight out of the wav, and the two
+    agreed to 0.0 dB on all 20. That is the largest single cost in this pipeline that is
+    not a model, so the direct read is the path and ffmpeg is the fallback.
+
+    ffmpeg still answers for anything `wave` will not open or that is not 16-bit PCM,
+    which is the only case where its decoding is doing real work.
     """
     try:
-        proc = subprocess.run(
-            [FFMPEG, "-hide_banner", "-i", str(path), "-af", "volumedetect", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=30)
-        match = re.search(r"max_volume:\s*(-?[\d.]+) dB", proc.stderr)
-        return float(match.group(1)) if match else None
+        direct = peak_db_wave(path)
+        if direct is not None:
+            return direct
+    except Exception as exc:
+        log(f"peak_db direct read failed, falling back to ffmpeg: {exc}")
+    try:
+        return peak_db_ffmpeg(path)
     except Exception as exc:
         log(f"peak_db failed: {exc}")
         return None
@@ -1757,6 +1811,8 @@ def trim_repetition(text):
 
 BUSY_TIMEOUT = 180
 
+MAX_CACHE_REBUILDS = 3
+
 
 class Engine:
     """Holds the warm models plus the prefilled KV cache for the static prompt prefix."""
@@ -1791,8 +1847,10 @@ class Engine:
         self.last_cloud_sent = False
         self.prefix_tokens = []
         self.cache = None
+        self.cache_failures = 0
         self.fix_prefix_tokens = []
         self.fix_cache = None
+        self.fix_cache_failures = 0
 
         import mlx_whisper
         from mlx_lm import load
@@ -2002,16 +2060,35 @@ class Engine:
                 if grew > 0:
                     trim_prompt_cache(self.fix_cache, grew)
                     if self.fix_cache[0].offset != before:
-                        log("self-correction cache trim did not take, disabling the pass")
-                        self.fix_cache = None
+                        log("self-correction cache trim did not take, rebuilding it")
+                        self._drop_fix_cache()
         except Exception as exc:
             log(f"self-correction pass failed: {exc}")
+            self._drop_fix_cache()
             return text
 
+        self.fix_cache_failures = 0
         if out == text or not only_deletes(text, out):
             return text
         log(f"self-correction resolved, dropped {len(text.split()) - len(out.split())} words")
         return out
+
+    def _drop_fix_cache(self):
+        """Rebuild the self-correction cache after a failure, on the same terms as the main one.
+
+        This cache carried the same defect: a trim that did not take set it to None for the
+        life of the daemon, and the pass it serves then never ran again. That failure is
+        quieter than the main one, because the pass is gated on a marker and simply returning
+        the text unchanged looks exactly like a dictation with nothing to resolve.
+        """
+        self.fix_cache = None
+        self.fix_cache_failures += 1
+        if self.fix_cache_failures > MAX_CACHE_REBUILDS:
+            log(f"self-correction cache failed {self.fix_cache_failures} times in a row, "
+                f"leaving the pass off")
+            return
+        log(f"rebuilding the self-correction cache, attempt {self.fix_cache_failures}")
+        self._build_fix_prefix()
 
     def _generate_cached(self, msgs):
         """Generate reusing the prefilled prefix, then return the cache to its prior size.
@@ -2040,8 +2117,8 @@ class Engine:
             if grew > 0:
                 trim_prompt_cache(self.cache, grew)
                 if self.cache[0].offset != before:
-                    log("cache trim did not take, disabling the prefix cache")
-                    self.cache = None
+                    log("cache trim did not take, rebuilding the prefix cache")
+                    self._drop_prefix_cache()
 
     def _prefill(self, tokens):
         """Build a KV cache for `tokens` and evaluate it, on the thread that owns the model.
@@ -2356,11 +2433,43 @@ class Engine:
         msgs = self._prefix_messages() + [{"role": "user", "content": text}]
         if self.cache is not None:
             try:
-                return self._generate_cached(msgs)
+                out = self._generate_cached(msgs)
+                self.cache_failures = 0
+                return out
             except Exception as exc:
                 log(f"cached generate failed, retrying plain: {exc}")
-                self.cache = None
+                self._drop_prefix_cache()
         return self._generate_plain(msgs)
+
+    def _drop_prefix_cache(self):
+        """Rebuild the prompt prefix cache after a failure, and give up once it keeps failing.
+
+        Losing the cache is not free and it used to be permanent. A single transient failure
+        set `self.cache = None` for the life of the daemon, and every correction after it
+        re-processed the whole shared prefix, 1253 tokens on this prompt, instead of starting
+        from a prefill done once at startup. Nothing restored it short of a restart, and
+        nothing said it had happened beyond one line in the log, so the daemon simply got
+        slower and stayed that way.
+
+        What that cost was is measured rather than guessed. Replaying the same 40 real takes
+        through a daemon whose prefix cache never builds put the correction stage at 258.6
+        seconds against 68.7 with it, and the median dictation at 5.94 seconds against 1.73.
+        One transient exception bought that permanently, and the log said so in one line.
+
+        Rebuilding unconditionally would be the opposite mistake. A cache that fails because
+        of what it is, rather than because of one bad moment, would then be rebuilt on every
+        request: a full prefill paid before falling back to the plain path that was going to
+        run anyway, which is worse than no cache at all. Consecutive failures are counted and
+        a success clears the count, so a transient fault costs one rebuild and a persistent
+        one costs at most MAX_CACHE_REBUILDS, three, before the cache is left off for good.
+        """
+        self.cache = None
+        self.cache_failures += 1
+        if self.cache_failures > MAX_CACHE_REBUILDS:
+            log(f"prefix cache failed {self.cache_failures} times in a row, leaving it off")
+            return
+        log(f"rebuilding the prefix cache, attempt {self.cache_failures}")
+        self._build_prefix()
 
     def postprocess(self, text, style=None):
         """Apply the replacements and settle the layout.
