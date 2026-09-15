@@ -30,11 +30,17 @@ public enum CaptureBuffer {
     /// a second contract violation on top of the one being fixed.
     public static func frames(forSampleRate sampleRate: Double) -> UInt32 {
         guard sampleRate.isFinite, sampleRate > 0 else {
-            return UInt32(48_000 * minimumSeconds)
+            return UInt32((48_000 * minimumSeconds).rounded(.up))
         }
-        let wanted = sampleRate * minimumSeconds
-        let ceiling = sampleRate * maximumSeconds
-        return UInt32(min(max(wanted, 1), ceiling).rounded())
+        /// Rounded up, not to nearest. `(rate * 0.1).rounded()` goes the wrong way whenever
+        /// the rate is not a multiple of ten: 44,101 Hz asks for 4,410.1 frames, rounds to
+        /// 4,410 and lands on 99.998 ms, under the floor it exists to respect. That is 35,200
+        /// of the 88,001 integer rates between 8 and 96 kHz, and the first version of this
+        /// function got all of them wrong while its tests passed, because every rate they
+        /// checked happened to divide by ten.
+        ///
+        /// The ceiling never binds, since a tenth of a rate is always below four tenths of it.
+        return UInt32(max(1, (sampleRate * minimumSeconds).rounded(.up)))
     }
 
     /// Whether a frame count lands inside the documented window at a given rate.
