@@ -1,11 +1,23 @@
 import AVFoundation
 import Foundation
+import PhonaCore
 
 /// Captures the microphone straight into a 16 kHz mono wav and publishes a live level.
 ///
 /// This replaces shelling out to ffmpeg. AVAudioEngine hands us buffers as they arrive,
 /// so the level meter is the actual signal rather than a re-read of a file being written,
 /// and stopping is immediate instead of a signal plus a wait.
+///
+/// Every take gets its own `AVAudioEngine`. An earlier version kept one for the life of the
+/// app and called `reset()` before each take on the belief that this refreshed the graph after
+/// an input device change. It does not. `AVAudioEngine.h` says `reset` "will reset all of the
+/// nodes in the engine. This is useful, for example, for silencing reverb and delay tails",
+/// and that is all it does: it removes no taps and re-reads no hardware format. So a take that
+/// followed a route change installed a second tap on a bus that still had the first, or
+/// installed one whose format disagreed with the hardware, and `installTapOnBus` answers both
+/// by throwing an Objective-C exception that Swift cannot catch and the process aborts on.
+/// A new engine has no taps and materialises an input node that asks the hardware fresh, which
+/// is the only thing that actually makes both true again.
 final class Recorder {
     enum Failure: LocalizedError {
         case noPermission
@@ -73,17 +85,44 @@ final class Recorder {
         return receivedAnyAudio
     }
 
-    private let engine = AVAudioEngine()
+    /// Guards the engine, the tapped node and the take's identity.
+    ///
+    /// `start`, `stop` and `cancel` are already serialised by the caller's audio queue. This
+    /// exists for the one thing that is not on that queue: the configuration-change
+    /// notification, which CoreAudio posts on a thread of its own choosing and which tears the
+    /// same state down.
+    private let engineLock = NSLock()
+    private var engine: AVAudioEngine?
+    private var tapped: AVAudioInputNode?
+
     private var file: AVAudioFile?
     private var converter: AVAudioConverter?
     private var startedAt: Date?
+    /// Guards the file, which the tap callback writes to from an audio thread.
     private let lock = NSLock()
     private var outputURL: URL?
+    /// Set when a route change ended the take early, so the partial wav is still delivered
+    /// rather than reported as a microphone that never opened.
+    private var interrupted = false
 
     static let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true)!
 
-    var isRecording: Bool { engine.isRunning }
+    /// True while a take is open.
+    ///
+    /// Deliberately not `engine.isRunning`. The engine stops itself on a route change, and a
+    /// take whose engine has died is still a take with a wav on disk that has to be closed and
+    /// handed back. Asking the engine was what let the old `stop` return early and leave the
+    /// tap installed for the next `start` to collide with.
+    var isRecording: Bool {
+        engineLock.lock()
+        defer { engineLock.unlock() }
+        return outputURL != nil
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
 
     func requestPermission(_ done: @escaping (Bool) -> Void) {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -98,10 +137,73 @@ final class Recorder {
         }
     }
 
+    /// The input device changed under a live take.
+    ///
+    /// `AVAudioEngine.h`: "When the engine's I/O unit observes a change to the audio input or
+    /// output hardware's channel count or sample rate, the engine stops itself and issues this
+    /// notification." So there is nothing left to salvage on the old device. Closing the take
+    /// here keeps what was said up to the switch, which is most of a sentence, and leaves no
+    /// tap behind for the next take to collide with. Doing nothing was the old behaviour, and
+    /// that is what produced the crash one dictation later.
+    ///
+    /// The teardown is handed to another queue rather than run here, because the same header
+    /// warns that "the engine must not be deallocated from within the client's notification
+    /// handler because the callback happens on an internal dispatch queue and can deadlock
+    /// while trying to synchronously teardown the engine". Dropping the last reference inline
+    /// would trade the crash for a hang, which is the worse of the two.
+    @objc private func configurationChanged(_ note: Notification) {
+        engineLock.lock()
+        let live = outputURL != nil
+        if live { interrupted = true }
+        let doomed = engine
+        let node = tapped
+        engine = nil
+        tapped = nil
+        if let doomed {
+            NotificationCenter.default.removeObserver(
+                self, name: .AVAudioEngineConfigurationChange, object: doomed)
+        }
+        engineLock.unlock()
+
+        guard doomed != nil || node != nil else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            node?.removeTap(onBus: 0)
+            if let doomed, doomed.isRunning { doomed.stop() }
+            self?.closeFile()
+            _ = doomed
+        }
+        if live { Paths.log("the input device changed mid-dictation, keeping what was captured") }
+    }
+
+    /// Drop the tap and the engine. Safe to call when there is neither.
+    ///
+    /// The tap comes off the node this recorder installed it on rather than off
+    /// `engine.inputNode`, and it comes off whether or not the engine is still running. Both
+    /// were the bug: a stopped engine skipped the removal, and the tap then survived into a
+    /// take that installed a second one on the same bus.
+    private func releaseEngineLocked() {
+        if let tapped {
+            tapped.removeTap(onBus: 0)
+            self.tapped = nil
+        }
+        if let engine {
+            NotificationCenter.default.removeObserver(
+                self, name: .AVAudioEngineConfigurationChange, object: engine)
+            if engine.isRunning { engine.stop() }
+            self.engine = nil
+        }
+    }
+
+    private func closeFile() {
+        lock.lock()
+        file = nil          // closing the AVAudioFile flushes the header
+        lock.unlock()
+    }
+
     /// Open the input and begin writing 16-bit PCM wav, which is what the Whisper path
     /// on the daemon side expects.
     func start() throws {
-        guard !engine.isRunning else { return }
+        guard !isRecording else { return }
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             throw Failure.noPermission
         }
@@ -110,14 +212,12 @@ final class Recorder {
         receivedAnyAudio = false
         meterLock.unlock()
 
-        /// A stale node graph from a route change since the last `start()` (input device
-        /// switched, Bluetooth mic connected/disconnected, sleep/wake) is exactly what makes
-        /// `installTap` below throw an uncatchable Objective-C exception rather than a Swift
-        /// error: the format read from `outputFormat` no longer matches what the engine's
-        /// graph considers current. `reset()` invalidates that stale graph so the format read
-        /// right after it is fresh.
-        engine.reset()
+        engineLock.lock()
+        releaseEngineLocked()
+        interrupted = false
+        engineLock.unlock()
 
+        let engine = AVAudioEngine()
         let input = engine.inputNode
         let hardware = input.outputFormat(forBus: 0)
         guard hardware.sampleRate > 0, hardware.channelCount > 0 else {
@@ -125,7 +225,6 @@ final class Recorder {
         }
 
         let url = Paths.base.appendingPathComponent("take-\(UUID().uuidString).wav")
-        outputURL = url
 
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
@@ -135,16 +234,21 @@ final class Recorder {
             AVLinearPCMIsFloatKey: false,
             AVLinearPCMIsBigEndianKey: false,
         ]
-        file = try AVAudioFile(forWriting: url, settings: settings,
-                               commonFormat: .pcmFormatInt16, interleaved: true)
-        converter = AVAudioConverter(from: hardware, to: Self.targetFormat)
+        let file = try AVAudioFile(forWriting: url, settings: settings,
+                                   commonFormat: .pcmFormatInt16, interleaved: true)
+        let converter = AVAudioConverter(from: hardware, to: Self.targetFormat)
 
-        /// Smaller than the 2048 it used to be, because the first buffer is what the speaker is
-        /// waiting for. At 48 kHz, 2048 frames is 43 ms of audio before anything is handed over,
-        /// against 21 ms at 1024. The engine treats the size as a hint and may decline it. When
-        /// it does honour it the callback runs twice as often, which is more CPU on an audio
-        /// thread, and that is the price of halving the wait for the first buffer.
-        input.installTap(onBus: 0, bufferSize: 1024, format: hardware) { [weak self] buffer, _ in
+        lock.lock()
+        self.file = file
+        lock.unlock()
+        self.converter = converter
+
+        /// The frame count has to follow the device's rate to stay inside the window
+        /// `installTapOnBus` documents, because the same 1024 frames is 21 ms on the USB
+        /// microphone and 43 ms on the AirPods. `CaptureBuffer` holds that arithmetic and the
+        /// reasoning behind it.
+        let frames = AVAudioFrameCount(CaptureBuffer.frames(forSampleRate: hardware.sampleRate))
+        input.installTap(onBus: 0, bufferSize: frames, format: hardware) { [weak self] buffer, _ in
             self?.handle(buffer)
         }
 
@@ -153,41 +257,63 @@ final class Recorder {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
+            closeFile()
+            try? FileManager.default.removeItem(at: url)
+            self.converter = nil
             throw Failure.engine(error.localizedDescription)
         }
+
+        engineLock.lock()
+        self.engine = engine
+        self.tapped = input
+        outputURL = url
+        /// Scoped to this engine, the way the header's own example registers it. A process-wide
+        /// registration would let a notification for the engine that just died tear down the
+        /// one that replaced it.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(configurationChanged),
+            name: .AVAudioEngineConfigurationChange, object: engine)
+        engineLock.unlock()
         startedAt = Date()
     }
 
     /// Stop and hand back the finished file, or nil when nothing usable was captured.
+    ///
+    /// Keyed on whether a take is open rather than on whether the engine is still running, so
+    /// a take a route change cut short still comes back with its audio instead of being
+    /// reported as a device that never opened.
     func stop() -> (url: URL, seconds: Double)? {
-        guard engine.isRunning else { return nil }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        engineLock.lock()
+        releaseEngineLocked()
+        let url = outputURL
+        outputURL = nil
+        let wasInterrupted = interrupted
+        interrupted = false
+        engineLock.unlock()
 
-        lock.lock()
-        file = nil          // closing the AVAudioFile flushes the header
-        lock.unlock()
-
+        closeFile()
+        converter = nil
         setMeter(level: 0, hasAudio: false)
         let seconds = startedAt.map { Date().timeIntervalSince($0) } ?? 0
         startedAt = nil
-        guard let url = outputURL else { return nil }
-        outputURL = nil
+        guard let url else { return nil }
+        if wasInterrupted { Paths.log("delivering the part of the take captured before the switch") }
         return (url, seconds)
     }
 
     func cancel() {
-        if engine.isRunning {
-            engine.inputNode.removeTap(onBus: 0)
-            engine.stop()
-        }
-        lock.lock()
-        file = nil
-        lock.unlock()
+        engineLock.lock()
+        releaseEngineLocked()
+        let url = outputURL
+        outputURL = nil
+        interrupted = false
+        engineLock.unlock()
+
+        closeFile()
+        converter = nil
         setMeter(level: 0, hasAudio: false)
         startedAt = nil
-        if let url = outputURL { try? FileManager.default.removeItem(at: url) }
-        outputURL = nil
+        if let url { try? FileManager.default.removeItem(at: url) }
     }
 
     /// Open and immediately close the device so the first real dictation is not delayed.
@@ -196,12 +322,12 @@ final class Recorder {
     /// stop use. Hopping to the main thread for the close would let a warm-up cancel land in the
     /// middle of a real open.
     func warm() {
-        /// Only ever cancel what this call opened. `start` returns without error when the
-        /// engine is already running, so warming during a live dictation used to stop it,
-        /// delete the wav in progress and lose what the speaker had already said. The launch
-        /// warm-up fires 1.5 s in, which is comfortably inside the window where someone can
-        /// already be holding the key.
-        guard !engine.isRunning else { return }
+        /// Only ever cancel what this call opened. `start` returns without error when a take is
+        /// already open, so warming during a live dictation used to stop it, delete the wav in
+        /// progress and lose what the speaker had already said. The launch warm-up fires 1.5 s
+        /// in, which is comfortably inside the window where someone can already be holding the
+        /// key.
+        guard !isRecording else { return }
         try? start()
         Thread.sleep(forTimeInterval: 0.4)
         cancel()
