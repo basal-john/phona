@@ -1823,6 +1823,11 @@ def trim_repetition(text):
 
 BUSY_TIMEOUT = 180
 
+# How recently the models must have run for a prewarm to be pointless. A dictation inside
+# this window has already faulted the weights in, so warming again buys nothing and only
+# burns power.
+PREWARM_MIN_IDLE = 300
+
 MAX_CACHE_REBUILDS = 3
 
 
@@ -1848,12 +1853,14 @@ class Engine:
             yield
         finally:
             self.busy_since = None
+            self.last_ran = time.time()
             self.lock.release()
 
     def __init__(self, cfg):
         self.cfg = cfg
         self.lock = threading.Lock()
         self.busy_since = None
+        self.last_ran = time.time()
         self.last_guarded = False
         self.last_guard_reason = None
         self.last_cloud_sent = False
@@ -2538,17 +2545,80 @@ class Engine:
             text = expand_contractions(text)
         return text
 
+    @staticmethod
+    def _silent_wav(path, seconds=1.0, rate=16_000):
+        """Write a silent 16-bit mono wav.
+
+        The wave module rather than ffmpeg, because ffmpeg is no longer on the dictation
+        path and a warm-up that shells out is a warm-up that fails silently on a machine
+        where the binary moved.
+        """
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(b"\x00\x00" * int(rate * seconds))
+
     def _warm_stt(self):
         silent = BASE / "_warm.wav"
-        subprocess.run(
-            [FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi",
-             "-i", "anullsrc=r=16000:cl=mono", "-t", "1", str(silent)], check=False)
-        if silent.exists():
-            try:
-                self.transcribe(silent)
-            except Exception as exc:
-                log(f"stt warmup failed: {exc}")
+        try:
+            self._silent_wav(silent)
+            self.transcribe(silent)
+        except Exception as exc:
+            log(f"stt warmup failed: {exc}")
+        finally:
             silent.unlink(missing_ok=True)
+
+    def _touch_llm(self):
+        """Read the LLM weights once, without paying for a reply nobody reads.
+
+        One token, because the point is to fault the weights in rather than to generate
+        anything. `_generate_plain` caps at 400, which on a warm-up is 399 tokens of work
+        spent on a string that is thrown away.
+        """
+        from mlx_lm import generate
+        from mlx_lm.sample_utils import make_sampler
+
+        self.llm_thread.call(
+            generate, self.model, self.tokenizer,
+            prompt=self._render([{"role": "user", "content": "ok"}], True),
+            max_tokens=1, sampler=make_sampler(temp=0.0), verbose=False)
+
+    def prewarm(self):
+        """Run both models once so their weights are resident before the speaker finishes.
+
+        macOS evicts the model weights while the daemon sits idle, most reliably across a
+        sleep, and the next dictation pays for faulting them back in. Measured over 1826
+        logged requests, transcription after more than an hour of idle has a median of
+        1.08s and a 90th percentile of 7.95s, against 0.69s and 0.99s for a request inside
+        two minutes of the last one. The single worst request in the log, 26.6s, followed
+        an overnight gap.
+
+        The lock is taken without blocking and dropped immediately if a real request holds
+        it. A warm-up that made a dictation wait would cost more than the eviction it is
+        trying to avoid, so this never queues behind anything and never makes anything
+        queue behind it beyond the one call already in flight.
+        """
+        idle = time.time() - self.last_ran
+        if idle < PREWARM_MIN_IDLE:
+            return {"state": "skipped", "reason": f"last ran {idle:.0f}s ago"}
+        if not self.lock.acquire(blocking=False):
+            return {"state": "skipped", "reason": "busy"}
+        try:
+            self.busy_since = time.time()
+            t0 = time.time()
+            self._warm_stt()
+            self._touch_llm()
+            took = time.time() - t0
+            log(f"prewarmed after {idle / 60:.0f} min idle, took {took:.2f}s")
+            return {"state": "done", "seconds": round(took, 2)}
+        except Exception as exc:
+            log(f"prewarm failed: {exc}")
+            return {"state": "error", "error": str(exc)}
+        finally:
+            self.busy_since = None
+            self.last_ran = time.time()
+            self.lock.release()
 
     # -- requests ----------------------------------------------------------
 
@@ -2709,6 +2779,11 @@ def handle(conn, engine):
         style = req.get("style")
 
         if cmd == "PING":
+            reply = {"state": "ready"}
+        elif cmd == "PREWARM":
+            # Answered before the work starts, because the caller sends this on its way to
+            # doing something else and must never wait on it.
+            threading.Thread(target=engine.prewarm, name="prewarm", daemon=True).start()
             reply = {"state": "ready"}
         elif cmd == "PROCESS":
             reply = engine.process(req.get("path", ""), float(req.get("seconds") or 0),

@@ -128,6 +128,18 @@ enum DaemonClient {
         return (reply["state"] as? String) == "ready"
     }
 
+    /// Ask the daemon to run both models once, so the next dictation does not pay for
+    /// faulting their weights back in.
+    ///
+    /// Fire and forget. The daemon answers before it starts the work and decides for itself
+    /// whether a warm-up is worth doing, so this neither waits nor needs a reply. A daemon
+    /// that predates the command answers with an error, which is also nothing to act on.
+    static func prewarm() {
+        DispatchQueue.global(qos: .utility).async {
+            _ = try? request(["cmd": "PREWARM"], timeout: 5)
+        }
+    }
+
     /// Ask the daemon to transcribe and correct a recording.
     ///
     /// The style says what kind of app the text is going into. It is omitted rather than sent

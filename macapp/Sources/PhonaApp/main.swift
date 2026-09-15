@@ -124,6 +124,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         DispatchQueue.global().async { DaemonClient.startAndWait() }
 
+        /// Waking is when the weights are most likely to have been evicted, and it is the one
+        /// moment the warm-up is free: nobody is dictating yet, so the models are idle and a
+        /// warm-up cannot delay anything.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
+            DaemonClient.prewarm()
+        }
+
         if HotkeyMonitor.hasAccessibility(prompt: false) {
             tapInstalled = hotkeys.start()
             recorder.requestPermission { granted in
@@ -201,6 +209,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The waveform idles until the first buffer lands, because a flat waveform and a waveform
     /// with nothing behind it look identical.
     private func beginDictation(cloud: Bool = false) {
+        /// Sent on the way into the recording rather than after it, so a warm-up the daemon
+        /// decides to run overlaps with the speaking instead of being added to the wait. The
+        /// daemon skips it outright when the models ran recently, which is the common case.
+        DaemonClient.prewarm()
         session += 1
         let mine = session
         rememberCloud(cloud, session: mine)

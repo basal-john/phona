@@ -2664,3 +2664,99 @@ def test_the_self_correction_gate_asks_for_a_rebuild_before_giving_up(quiet_log)
     assert phonad.SELF_CORRECTION_MARKER.search(marked)
     assert engine.resolve_self_correction(marked) == marked
     assert len(rebuilds) == 1
+
+
+def _idle_engine(idle_seconds):
+    """An Engine with no models, wound back so it looks idle.
+
+    `prewarm` only touches the lock, the clock and the two warm-up calls, so the rest of
+    the object is never reached and loading 4 GB of weights to test a rate limit would be
+    the only slow test in the file.
+    """
+    import threading
+    import time
+
+    engine = object.__new__(phonad.Engine)
+    engine.lock = threading.Lock()
+    engine.busy_since = None
+    engine.last_ran = time.time() - idle_seconds
+    engine.ran = []
+    engine._warm_stt = lambda: engine.ran.append("stt")
+    engine._touch_llm = lambda: engine.ran.append("llm")
+    return engine
+
+
+def test_prewarm_skips_when_the_models_ran_recently():
+    """The common case. A dictation a minute ago already faulted the weights in, so warming
+    again is power spent for nothing."""
+    engine = _idle_engine(phonad.PREWARM_MIN_IDLE - 1)
+    reply = engine.prewarm()
+    assert reply["state"] == "skipped"
+    assert engine.ran == []
+
+
+def test_prewarm_runs_both_models_once_when_idle():
+    engine = _idle_engine(phonad.PREWARM_MIN_IDLE + 1)
+    reply = engine.prewarm()
+    assert reply["state"] == "done"
+    assert engine.ran == ["stt", "llm"]
+
+
+def test_prewarm_never_queues_behind_a_real_request():
+    """The whole safety property. A warm-up that waited for the lock would add its own cost
+    to the dictation it was supposed to speed up, so a held lock has to mean give up now.
+
+    The elapsed time is asserted, not just the answer. A blocking acquire with a timeout
+    returns the same "skipped" once it gives up, so an outcome-only test passes while the
+    warm-up sits on the lock for the whole timeout, which is the behaviour being forbidden.
+    """
+    import time
+
+    engine = _idle_engine(phonad.PREWARM_MIN_IDLE + 1)
+    engine.lock.acquire()
+    try:
+        t0 = time.monotonic()
+        reply = engine.prewarm()
+        elapsed = time.monotonic() - t0
+    finally:
+        engine.lock.release()
+    assert reply == {"state": "skipped", "reason": "busy"}
+    assert engine.ran == []
+    assert elapsed < 0.5, f"prewarm waited {elapsed:.1f}s for a lock it must never wait for"
+
+
+def test_prewarm_resets_the_idle_clock_so_it_does_not_repeat():
+    engine = _idle_engine(phonad.PREWARM_MIN_IDLE + 1)
+    assert engine.prewarm()["state"] == "done"
+    assert engine.prewarm()["state"] == "skipped"
+    assert engine.ran == ["stt", "llm"]
+
+
+def test_prewarm_releases_the_lock_when_a_model_raises():
+    """A warm-up that died holding the lock would wedge every later dictation behind a
+    request nobody made."""
+    engine = _idle_engine(phonad.PREWARM_MIN_IDLE + 1)
+
+    def boom():
+        raise RuntimeError("no weights")
+
+    engine._warm_stt = boom
+    assert engine.prewarm()["state"] == "error"
+    assert engine.lock.acquire(blocking=False), "the lock was not released"
+    engine.lock.release()
+
+
+def test_silent_wav_is_readable_and_silent(tmp_path):
+    """The warm-up reads this back through the real transcribe path, so a file ffmpeg would
+    have written and the wave module would not is the failure to catch here."""
+    import wave
+
+    path = tmp_path / "warm.wav"
+    phonad.Engine._silent_wav(path, seconds=0.5, rate=16_000)
+    with wave.open(str(path), "rb") as handle:
+        assert handle.getnchannels() == 1
+        assert handle.getsampwidth() == 2
+        assert handle.getframerate() == 16_000
+        assert handle.getnframes() == 8_000
+        assert set(handle.readframes(8_000)) == {0}
+    assert phonad.wav_seconds(path) == pytest.approx(0.5)
