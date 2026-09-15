@@ -35,6 +35,27 @@ final class CaptureBufferTests: XCTestCase {
 
     /// A device mid-disconnect reports zero, and a zero frame count would be a second contract
     /// violation on the call the whole change exists to keep legal.
+    /// The first version rounded to nearest, which is under the floor for any rate that is
+    /// not a multiple of ten. The device list in the other tests is all round numbers, so it
+    /// passed. This sweeps instead of sampling.
+    func testEveryIntegerRateFromEightToNinetySixKilohertzIsInsideTheWindow() {
+        var offenders: [Double] = []
+        for rate in stride(from: 8_000.0, through: 96_000.0, by: 1.0) {
+            if !CaptureBuffer.isSupported(frames: CaptureBuffer.frames(forSampleRate: rate),
+                                          atSampleRate: rate) {
+                offenders.append(rate)
+            }
+        }
+        XCTAssertEqual(offenders.count, 0,
+                       "rates outside the window, first few: \(offenders.prefix(5))")
+    }
+
+    func testANonMultipleOfTenRateRoundsUpRatherThanUnderTheFloor() {
+        XCTAssertEqual(CaptureBuffer.frames(forSampleRate: 44_101), 4_411,
+                       "4410 frames at 44101 Hz is 99.998 ms, under the 100 ms floor")
+        XCTAssertEqual(CaptureBuffer.frames(forSampleRate: 8_001), 801)
+    }
+
     func testAnUnusableRateStillProducesALegalFrameCount() {
         for bad in [0, -1, Double.nan, Double.infinity] {
             let frames = CaptureBuffer.frames(forSampleRate: bad)

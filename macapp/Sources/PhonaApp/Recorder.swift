@@ -153,9 +153,20 @@ final class Recorder {
     /// would trade the crash for a hang, which is the worse of the two.
     @objc private func configurationChanged(_ note: Notification) {
         engineLock.lock()
+        /// The notification must be for the engine this recorder is currently holding.
+        /// `removeObserver` stops future deliveries but does nothing about one already in
+        /// flight, and this handler blocks on `engineLock` while `stop` and `start` run. A
+        /// notification for the engine that just died could therefore wake up holding the
+        /// lock after its replacement was published, and tear down a take that had only just
+        /// begun. Identity is checked here, inside the lock, because that is the only place
+        /// the answer cannot change underneath the check.
+        guard let current = engine, (note.object as AnyObject?) === current else {
+            engineLock.unlock()
+            return
+        }
         let live = outputURL != nil
         if live { interrupted = true }
-        let doomed = engine
+        let doomed: AVAudioEngine? = current
         let node = tapped
         engine = nil
         tapped = nil
@@ -224,8 +235,23 @@ final class Recorder {
             throw Failure.engine("the input device reported no usable format")
         }
 
-        let url = Paths.base.appendingPathComponent("take-\(UUID().uuidString).wav")
+        /// Installed immediately after the format is read, with nothing in between.
+        /// `hardware` is a snapshot, and `installTapOnBus` aborts the process when the format
+        /// it is handed disagrees with the node. Opening the wav and building the converter
+        /// first left a window where a route change could invalidate the snapshot before it
+        /// was used, which is a smaller version of the bug this whole file exists to fix. The
+        /// tap block cannot run before `engine.start()`, so the file and the converter it
+        /// reads are free to be built afterwards.
+        ///
+        /// The frame count follows the device's rate to stay inside the window
+        /// `installTapOnBus` documents, because the same 1024 frames is 21 ms on the USB
+        /// microphone and 43 ms on the AirPods. `CaptureBuffer` holds that arithmetic.
+        let frames = AVAudioFrameCount(CaptureBuffer.frames(forSampleRate: hardware.sampleRate))
+        input.installTap(onBus: 0, bufferSize: frames, format: hardware) { [weak self] buffer, _ in
+            self?.handle(buffer)
+        }
 
+        let url = Paths.base.appendingPathComponent("take-\(UUID().uuidString).wav")
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: 16_000.0,
@@ -234,26 +260,15 @@ final class Recorder {
             AVLinearPCMIsFloatKey: false,
             AVLinearPCMIsBigEndianKey: false,
         ]
-        let file = try AVAudioFile(forWriting: url, settings: settings,
-                                   commonFormat: .pcmFormatInt16, interleaved: true)
-        let converter = AVAudioConverter(from: hardware, to: Self.targetFormat)
-
-        lock.lock()
-        self.file = file
-        lock.unlock()
-        self.converter = converter
-
-        /// The frame count has to follow the device's rate to stay inside the window
-        /// `installTapOnBus` documents, because the same 1024 frames is 21 ms on the USB
-        /// microphone and 43 ms on the AirPods. `CaptureBuffer` holds that arithmetic and the
-        /// reasoning behind it.
-        let frames = AVAudioFrameCount(CaptureBuffer.frames(forSampleRate: hardware.sampleRate))
-        input.installTap(onBus: 0, bufferSize: frames, format: hardware) { [weak self] buffer, _ in
-            self?.handle(buffer)
-        }
-
-        engine.prepare()
         do {
+            let file = try AVAudioFile(forWriting: url, settings: settings,
+                                       commonFormat: .pcmFormatInt16, interleaved: true)
+            lock.lock()
+            self.file = file
+            lock.unlock()
+            self.converter = AVAudioConverter(from: hardware, to: Self.targetFormat)
+
+            engine.prepare()
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)

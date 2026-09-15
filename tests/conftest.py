@@ -15,8 +15,14 @@ An autouse fixture would be too late. The environment has to be set before pytes
 the test module, which is what a conftest at collection time gives us.
 """
 
+import atexit
 import os
+import shutil
 import tempfile
 
 _SANDBOX = tempfile.mkdtemp(prefix="phona-tests-")
 os.environ["PHONA_HOME"] = _SANDBOX
+
+# mkdtemp does not clean up after itself, so without this every run leaves a phona-tests-*
+# directory, and the log this file exists to redirect just accumulates somewhere else.
+atexit.register(shutil.rmtree, _SANDBOX, ignore_errors=True)
